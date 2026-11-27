@@ -1,6 +1,7 @@
 export * from './modTagEval.js';
 export * from './modDb.js';
 export * from './modParser.js';
+export * from './modParserPoe1.js';
 export * from './localItem.js';
 export * from './gemBonus.js';
 export * from './engine.js';
