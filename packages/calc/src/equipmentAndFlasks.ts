@@ -861,9 +861,14 @@ export function evaluateSpecialUniqueGearMechanics(
       const mNegMaxEle = line.match(/^-(\d+)% to all maximum Elemental Resistances$/i);
       if (mNegMaxEle) {
         const neg = -Number(mNegMaxEle[1]);
-        db.addMod({ name: 'FireResistMax', type: 'BASE', value: neg, flags: 0, keywordFlags: 0, source: src });
-        db.addMod({ name: 'ColdResistMax', type: 'BASE', value: neg, flags: 0, keywordFlags: 0, source: src });
-        db.addMod({ name: 'LightningResistMax', type: 'BASE', value: neg, flags: 0, keywordFlags: 0, source: src });
+        const alreadyParsed = db
+          .calcStat('FireResistMax')
+          .sources.some((s) => s.type === 'BASE' && s.value === neg && s.source.includes(item.name));
+        if (!alreadyParsed) {
+          db.addMod({ name: 'FireResistMax', type: 'BASE', value: neg, flags: 0, keywordFlags: 0, source: src });
+          db.addMod({ name: 'ColdResistMax', type: 'BASE', value: neg, flags: 0, keywordFlags: 0, source: src });
+          db.addMod({ name: 'LightningResistMax', type: 'BASE', value: neg, flags: 0, keywordFlags: 0, source: src });
+        }
         continue;
       }
 

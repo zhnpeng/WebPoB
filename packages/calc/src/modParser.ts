@@ -1,6 +1,7 @@
 import { KeywordFlag, ModFlag, type Mod, type ModType } from '@webpob/core';
 import { normalizeStatLineToEn } from '@webpob/i18n';
 import { normalizeGemFilterTokens } from './gemBonus.js';
+import { parseModCompositional } from './compositionalModParser.js';
 import { POE1_EXTRA_MOD_RULES } from './modParserPoe1.js';
 import { POE2_EXTRA_MOD_RULES } from './modParserPoe2.js';
 
@@ -1022,7 +1023,7 @@ export function parseModLine(rawLine: string, source: string, opts?: ParseModOpt
       if (built.length > 0) return built;
     }
   }
-  return [];
+  return parseModCompositional(canonical, source, { allowBonded: opts?.allowBonded });
 }
 
 export function parseModLines(

@@ -20,7 +20,7 @@ import { computePoe2CritMultiplier } from './offenceUpgrade.js';
 // Shared Types & Constants
 // ============================================================================
 
-export type ActorTarget = 'player' | 'enemy' | 'minion' | 'parent';
+export type ActorTarget = 'skill' | 'player' | 'enemy' | 'minion' | 'parent';
 
 /**
  * Pre-compiled modifier produced directly from PoB's `SkillStatMap` / `baseMods`
@@ -134,7 +134,20 @@ export interface MinionBaseProfile {
  * Structurally accepts any `@webpob/core` `GemDefinition` as-is while unlocking
  * PoB RPN `SkillType` matching, `CompiledGemMod` (`cmods`), and `skillData`.
  */
-export interface SkillGemDef extends Omit<GemDefinition, 'minionBase' | 'levelScaling'> {
+export interface SkillGemDef
+  extends Omit<
+    GemDefinition,
+    | 'minionBase'
+    | 'levelScaling'
+    | 'skillTypes'
+    | 'minionSkillTypes'
+    | 'requireSkillTypes'
+    | 'excludeSkillTypes'
+    | 'addSkillTypes'
+    | 'compiledMods'
+    | 'qualityCompiledMods'
+    | 'skillData'
+  > {
   minionBase?: MinionBaseProfile;
   /** Official PoB active `SkillType` list (e.g. `['Spell', 'Damage', 'Hit', 'Totemable', 'Triggerable']`). */
   skillTypes?: readonly string[];
@@ -154,6 +167,8 @@ export interface SkillGemDef extends Omit<GemDefinition, 'minionBase' | 'levelSc
   fromItem?: boolean;
   /** Pre-compiled `SkillStatMap` modifiers for zero-regex injection. */
   cmods?: readonly CompiledGemMod[];
+  compiledMods?: readonly CompiledGemMod[];
+  qualityCompiledMods?: readonly CompiledGemMod[];
   /** Structured PoB `skillData` table. */
   skillData?: SkillDataMap;
   /** Optional per-level scaling table (compatible with `GemDefinition['levelScaling']`). */
@@ -166,6 +181,7 @@ export interface SkillGemDef extends Omit<GemDefinition, 'minionBase' | 'levelSc
       manaCost?: number;
       stats?: string[];
       cmods?: readonly CompiledGemMod[];
+      compiledMods?: readonly CompiledGemMod[];
       skillData?: SkillDataMap;
     }
   >;
@@ -571,6 +587,26 @@ export function canSupportActiveSkill(
     return canSupportByTagFallback(support, active, activeTypes, minionTypes);
   }
 
+  // Dual-part PoB trigger supports (`Cast On Critical Strike`, `Cast while Channelling`, `Spellslinger`)
+  // carry part-1 trigger reqTypes (`Attack` / `Channel`) in compact gem tables while part-2 supports
+  // any triggerable Spell in the same linked group.
+  const supNameLower = support.name.en.trim().toLowerCase().replace(/\s+support$/i, '');
+  if (
+    (supNameLower === 'cast on critical strike' ||
+      supNameLower === 'awakened cast on critical strike' ||
+      supNameLower === 'cast while channelling' ||
+      supNameLower === 'awakened cast while channelling' ||
+      supNameLower === 'spellslinger') &&
+    activeTypes.has('spell') &&
+    !activeTypes.has('trapped') &&
+    !activeTypes.has('remotemined') &&
+    !activeTypes.has('summonstotem') &&
+    !activeTypes.has('hasreservation') &&
+    !activeTypes.has('disallowtriggersupports')
+  ) {
+    return true;
+  }
+
   const effectiveMinionCheck = support.ignoreMinionTypes ? undefined : minionTypes;
 
   if (support.requireSkillTypes && support.requireSkillTypes.length > 0) {
@@ -891,9 +927,15 @@ function normalizeEnemyStat(mod: Mod, game: GameId = 'poe1'): Mod[] {
       ];
     }
     if (rest === 'CritChance') {
+      if (mod.type !== 'BASE' || (typeof mod.value === 'number' && mod.value < 0)) {
+        return [{ ...mod, name: 'MonsterCritChance' }];
+      }
       return [{ ...mod, name: 'SelfCritChance' }];
     }
     if (rest === 'CritMultiplier') {
+      if (mod.type !== 'BASE' || (typeof mod.value === 'number' && mod.value < 0)) {
+        return [{ ...mod, name: 'MonsterCritMultiplier' }];
+      }
       return [{ ...mod, name: 'SelfCritMultiplier' }];
     }
     return [{ ...mod, name: rest }];
@@ -918,14 +960,14 @@ function normalizeEnemyStat(mod: Mod, game: GameId = 'poe1'): Mod[] {
 
 export function isMinionRoutedMod(mod: Mod, target?: ActorTarget): boolean {
   if (target === 'minion') return true;
-  if (target === 'enemy' || target === 'player' || target === 'parent') return false;
+  if (target === 'enemy' || target === 'player' || target === 'skill' || target === 'parent') return false;
   if (PLAYER_SCOPED_MINION_STATS.has(mod.name)) return false;
   return mod.name.startsWith('Minion') && mod.name.length > 6;
 }
 
 export function isEnemyRoutedMod(mod: Mod, target?: ActorTarget): boolean {
   if (target === 'enemy') return true;
-  if (target === 'minion' || target === 'player' || target === 'parent') return false;
+  if (target === 'minion' || target === 'player' || target === 'skill' || target === 'parent') return false;
   if (mod.name.startsWith('Enemy') && mod.name.length > 5) return true;
   if (ENEMY_DEBUFF_STAT_NAMES.has(mod.name)) return true;
   if (
@@ -1171,6 +1213,45 @@ export interface InjectCompiledGemModsOptions {
  * Directly injects `SkillStatMap`-compiled `cmods` into the three actor ModDBs
  * (`skillDb`, `enemyDb`, `minionDb`) without any regex parsing.
  */
+function expandCanonicalCompiledMod(mod: Mod, target?: ActorTarget): Mod[] {
+  const convMatch = mod.name.match(
+    /^Skill(Physical|Lightning|Cold|Fire)Damage(ConvertTo|GainAs)(Lightning|Cold|Fire|Chaos)$/,
+  );
+  if (convMatch) {
+    return [{ ...mod, name: `${convMatch[1]}Damage${convMatch[2]}${convMatch[3]}` }];
+  }
+  if (mod.name === 'CannotMultiplePoison' && mod.type === 'FLAG' && mod.value === true) {
+    return [mod, { ...mod, name: 'CannotPoisonAlreadyPoisoned' }];
+  }
+  if (target !== 'enemy') {
+    if (mod.name === 'EnemyIgniteChance') return [{ ...mod, name: 'IgniteChance' }];
+    if (mod.name === 'EnemyFreezeChance') return [{ ...mod, name: 'FreezeChance' }];
+    if (mod.name === 'EnemyShockChance') return [{ ...mod, name: 'ShockChance' }];
+  }
+  if (target !== 'enemy' && mod.name === 'ElementalResist') {
+    return [
+      { ...mod, name: 'FireResist' },
+      { ...mod, name: 'ColdResist' },
+      { ...mod, name: 'LightningResist' },
+    ];
+  }
+  if (target !== 'enemy' && mod.name === 'ElementalResistMax') {
+    return [
+      { ...mod, name: 'FireResistMax' },
+      { ...mod, name: 'ColdResistMax' },
+      { ...mod, name: 'LightningResistMax' },
+    ];
+  }
+  if (mod.name === 'AllAttributes') {
+    return [
+      { ...mod, name: 'Str' },
+      { ...mod, name: 'Dex' },
+      { ...mod, name: 'Int' },
+    ];
+  }
+  return [mod];
+}
+
 export function injectCompiledGemMods(
   skillDb: ModDB,
   enemyDb: ModDB,
@@ -1199,7 +1280,18 @@ export function injectCompiledGemMods(
         : Math.trunc(val * mult * 100) / 100;
     }
 
-    const mod: Mod = {
+    if (cm.name.startsWith('Condition:') && cm.type === 'FLAG' && val === true) {
+      skillDb.setCondition(cm.name.slice('Condition:'.length), true);
+    } else if (cm.name.startsWith('Multiplier:') && cm.type === 'BASE' && typeof val === 'number') {
+      const multKey = cm.name.slice('Multiplier:'.length);
+      skillDb.setMultiplier(multKey, val);
+      if (multKey === 'WindDancerStacksLimit') {
+        skillDb.setMultiplier('WindDancerStage', val);
+        skillDb.setMultiplier('WindDancerStages', val);
+      }
+    }
+
+    const baseMod: Mod = {
       name: cm.name,
       type: cm.type,
       value: val,
@@ -1210,10 +1302,12 @@ export function injectCompiledGemMods(
       ...(cm.tags && cm.tags.length > 0 ? { tags: cm.tags } : {}),
     };
 
-    const dest = routeModToActorBuses(buses, mod, { target: cm.target, game: opts.game });
-    if (dest === 'player') playerCount++;
-    else if (dest === 'enemy') enemyCount++;
-    else minionCount++;
+    for (const mod of expandCanonicalCompiledMod(baseMod, cm.target)) {
+      const dest = routeModToActorBuses(buses, mod, { target: cm.target, game: opts.game });
+      if (dest === 'player') playerCount++;
+      else if (dest === 'enemy') enemyCount++;
+      else minionCount++;
+    }
   }
 
   return { playerCount, enemyCount, minionCount };
@@ -1403,7 +1497,13 @@ export function computeAuthenticAilmentAndSkillDots(input: AuthenticDotInput): A
 
   const critFrac = clamp(input.critChancePct ?? 0, 0, 100) / 100;
   const noCritAilments = skillDb.flag('NoCritAilments', flags, kwFlags);
-  const dealNoEle = skillDb.flag('DealNoElemental', flags, kwFlags);
+  const dealNoPhys = skillDb.flag('DealNoPhysical', flags, kwFlags);
+  const dealNoFire = skillDb.flag('DealNoFire', flags, kwFlags);
+  const dealNoCold = skillDb.flag('DealNoCold', flags, kwFlags);
+  const dealNoLight = skillDb.flag('DealNoLightning', flags, kwFlags);
+  const dealNoEle =
+    skillDb.flag('DealNoElemental', flags, kwFlags) ||
+    (dealNoFire && dealNoCold && dealNoLight);
   const dealNoChaos = skillDb.flag('DealNoChaos', flags, kwFlags);
   const dealNoNonFire = skillDb.flag('DealNoNonFire', flags, kwFlags);
 
@@ -1422,14 +1522,24 @@ export function computeAuthenticAilmentAndSkillDots(input: AuthenticDotInput): A
   const poisonChanceFrac = poisonChancePct / 100;
 
   const allCanPoison = skillDb.flag('AllDamageCanPoison', flags, poisonKw);
-  const poisonFasterPct = skillDb.sum('INC', ['AilmentFaster', 'PoisonFaster'], ailmentFlags, poisonKw);
+  const poisonFasterPct = skillDb.sum('INC', ['AilmentFaster', 'PoisonFaster', 'AilmentDealDamageFaster'], ailmentFlags, poisonKw);
   const poisonSlowerPct = skillDb.sum('INC', ['AilmentSlower', 'PoisonSlower'], ailmentFlags, poisonKw);
   const poisonFasterMult =
     Math.max(0.1, 1 + poisonFasterPct / 100) / Math.max(0.1, 1 + poisonSlowerPct / 100);
 
-  const poisonBaseDuration = Math.max(0.1, skillData?.poisonDuration ?? 2.0);
+  const rawSkillDuration =
+    typeof skillData?.duration === 'number' && skillData.duration > 0 ? skillData.duration : undefined;
+  const poisonBaseDuration = Math.max(
+    0.1,
+    skillData?.poisonDuration ??
+      (skillData?.poisonDurationIsSkillDuration ? rawSkillDuration : undefined) ??
+      2.0,
+  );
   const poisonDurStats =
-    input.skillHasDurationTag || skillData?.durationAppliesToPoison
+    input.skillHasDurationTag ||
+    skillData?.durationAppliesToPoison ||
+    Boolean(skillData?.poisonDurationIsSkillDuration) ||
+    Boolean(skillData?.poisonIsSkillEffect)
       ? ['PoisonDuration', 'AilmentDuration', 'Duration']
       : ['PoisonDuration', 'AilmentDuration'];
   const poisonDurInc = skillDb.sum('INC', poisonDurStats, ailmentFlags, poisonKw);
@@ -1471,12 +1581,13 @@ export function computeAuthenticAilmentAndSkillDots(input: AuthenticDotInput): A
     const poisonEnemyMult = enemyChaosResMult * enemyChaosTakenMult;
 
     if (game === 'poe2') {
-      const prePhys = dealNoNonFire ? 0 : resolvePoe2PreMitigationTypeAvg('Physical', input, flags, kwFlags);
+      const prePhys = dealNoPhys || dealNoNonFire ? 0 : resolvePoe2PreMitigationTypeAvg('Physical', input, flags, kwFlags);
       const preChaos = dealNoChaos || dealNoNonFire ? 0 : resolvePoe2PreMitigationTypeAvg('Chaos', input, flags, kwFlags);
       let preTotal = prePhys + preChaos;
       if (allCanPoison && !dealNoEle) {
         for (const el of ['Fire', 'Cold', 'Lightning'] as const) {
           if (dealNoNonFire && el !== 'Fire') continue;
+          if ((el === 'Fire' && dealNoFire) || (el === 'Cold' && dealNoCold) || (el === 'Lightning' && dealNoLight)) continue;
           preTotal += resolvePoe2PreMitigationTypeAvg(el, input, flags, kwFlags);
         }
       }
@@ -1494,7 +1605,7 @@ export function computeAuthenticAilmentAndSkillDots(input: AuthenticDotInput): A
       const effectiveDotMulti =
         1 + (chaosDotMulti + critFrac * critAilmentMultiBonus) / 100;
 
-      const basePhys = dealNoNonFire ? 0 : Math.max(0, input.baseDamageByType.Physical ?? 0);
+      const basePhys = dealNoPhys || dealNoNonFire ? 0 : Math.max(0, input.baseDamageByType.Physical ?? 0);
       const baseChaos = dealNoChaos || dealNoNonFire ? 0 : Math.max(0, input.baseDamageByType.Chaos ?? 0);
 
       let scaledBase = 0;
@@ -1575,7 +1686,7 @@ export function computeAuthenticAilmentAndSkillDots(input: AuthenticDotInput): A
   let singleStackBleedDps = 0;
   let effectiveBleedStacks = 0;
 
-  if ((isAttack || game === 'poe2') && !dealNoNonFire && bleedChanceFrac > 0) {
+  if ((isAttack || game === 'poe2') && !dealNoPhys && !dealNoNonFire && bleedChanceFrac > 0) {
     const enemyPhysTakenMult = getEnemyDotTakenMult('Physical', 'BleedDamageTaken', enemyDb, ailmentFlags, bleedKw);
 
     if (game === 'poe2') {
@@ -1655,7 +1766,7 @@ export function computeAuthenticAilmentAndSkillDots(input: AuthenticDotInput): A
   let singleStackIgniteDps = 0;
   let effectiveIgniteStacks = 0;
 
-  if (!cannotIgnite && !dealNoEle && effIgniteChanceFrac > 0) {
+  if (!cannotIgnite && !dealNoEle && !dealNoFire && effIgniteChanceFrac > 0) {
     const enemyFireRes = getEnemyResistForDot('Fire', enemyDb, enemyConfig, ailmentFlags, igniteKw);
     const enemyFireResMult = Math.max(0.05, 1 - enemyFireRes / 100);
     const enemyFireTakenMult = getEnemyDotTakenMult('Fire', 'IgniteDamageTaken', enemyDb, ailmentFlags, igniteKw);
@@ -1750,14 +1861,20 @@ export function computeAuthenticAilmentAndSkillDots(input: AuthenticDotInput): A
 
     const hasAnySkillDot = DAMAGE_TYPES.some((dt) => (rawDots[dt] ?? 0) > 0);
     if (hasAnySkillDot) {
+      const spellApplies = Boolean(skillData.spellDmgAppliesToDot || skillData.dotIsSpell);
+      const dotCanStack = Boolean(skillData.dotCanStack || skillDb.flag('DotCanStack', flags, kwFlags));
       const dotFlags =
         ModFlag.Dot |
-        (skillData.spellDmgAppliesToDot ? ModFlag.Spell : 0) |
+        (spellApplies ? ModFlag.Spell : 0) |
         (skillData.dotIsArea ? ModFlag.Area : 0) |
         (skillData.dotIsProjectile ? ModFlag.Projectile : 0);
 
-      if (skillData.dotCanStack) {
-        const baseDur = Math.max(0.1, skillData.dotBaseDuration ?? 1.0);
+      if (dotCanStack) {
+        const baseDur = Math.max(
+          0.1,
+          skillData.dotBaseDuration ??
+            (typeof skillData.duration === 'number' && skillData.duration > 0 ? skillData.duration : 1.0),
+        );
         const durInc = skillDb.sum('INC', 'Duration', dotFlags, kwFlags);
         const durMore = skillDb.more('Duration', dotFlags, kwFlags);
         const effDur = baseDur * Math.max(0.1, 1 + durInc / 100) * durMore;
@@ -1773,7 +1890,15 @@ export function computeAuthenticAilmentAndSkillDots(input: AuthenticDotInput): A
         const baseDot = rawDots[dt] ?? 0;
         if (baseDot <= 0) continue;
         const isEle = dt === 'Fire' || dt === 'Cold' || dt === 'Lightning';
-        if ((isEle && dealNoEle) || (dt === 'Chaos' && dealNoChaos) || (dealNoNonFire && dt !== 'Fire')) {
+        if (
+          (dt === 'Physical' && dealNoPhys) ||
+          (dt === 'Fire' && dealNoFire) ||
+          (dt === 'Cold' && dealNoCold) ||
+          (dt === 'Lightning' && dealNoLight) ||
+          (isEle && dealNoEle) ||
+          (dt === 'Chaos' && dealNoChaos) ||
+          (dealNoNonFire && dt !== 'Fire')
+        ) {
           continue;
         }
         const statNames = ['Damage', 'DotDamage', `${dt}Damage`, ...(isEle ? ['ElementalDamage'] : [])];
@@ -2068,15 +2193,24 @@ export function resolveActiveMinionCount(input: Pick<
 
   const baseLimit = input.minionBase.baseLimit ?? 0;
   let extraLimit = 0;
+  let limitIncludesSkillBase = false;
   if (input.minionBase.limitStat) {
     if (input.playerDb) {
-      extraLimit += Math.floor(input.playerDb.sum('BASE', input.minionBase.limitStat));
+      const evalPlayer = input.playerDb.calcStat(input.minionBase.limitStat);
+      extraLimit += Math.floor(evalPlayer.base);
+      if (evalPlayer.sources.some((s) => s.type === 'BASE' && s.source.startsWith('Skill:'))) {
+        limitIncludesSkillBase = true;
+      }
     }
     if (extraLimit === 0 && input.minionDb) {
-      extraLimit += Math.floor(input.minionDb.sum('BASE', input.minionBase.limitStat));
+      const evalMinion = input.minionDb.calcStat(input.minionBase.limitStat);
+      extraLimit += Math.floor(evalMinion.base);
+      if (evalMinion.sources.some((s) => s.type === 'BASE' && s.source.startsWith('Skill:'))) {
+        limitIncludesSkillBase = true;
+      }
     }
   }
-  const combinedLimit = baseLimit + extraLimit;
+  const combinedLimit = limitIncludesSkillBase ? extraLimit : baseLimit + extraLimit;
   if (combinedLimit > 0) {
     return Math.max(1, combinedLimit);
   }
@@ -2258,11 +2392,13 @@ export function computeMinionGroupOffence(input: MinionOffenceInput): MinionGrou
     }
   }
 
-  // Step C: Minion Accuracy / Hit Chance
+  // Step C: Minion Accuracy / Hit Chance (Lv.20 minion gem summons Lv.70 monster per PoB monsterAccuracyTable)
   let hitChance = 100;
   const enemyEva = Math.max(0, (enemyConfig?.enemyEvasion ?? 0) + enemyDb.sum('BASE', 'Evasion'));
   if (!isSpell && enemyEva > 0 && !minionDb.flag('HitsCantBeEvaded', flags, kwFlags)) {
-    const baseAcc = minionDb.sum('BASE', 'Accuracy', flags, kwFlags) || 300 + effLevel * 50;
+    const monsterLv = effLevel <= 20 ? Math.round(4 + effLevel * 3.3) : 70 + (effLevel - 20) * 2;
+    const inherentMonsterAcc = Math.round(200 * Math.pow(1.07, monsterLv));
+    const baseAcc = inherentMonsterAcc + minionDb.sum('BASE', 'Accuracy', flags, kwFlags);
     const acc = Math.max(
       1,
       baseAcc * Math.max(0, 1 + minionDb.sum('INC', 'Accuracy', flags, kwFlags) / 100) * minionDb.more('Accuracy', flags, kwFlags),
@@ -2283,7 +2419,9 @@ export function computeMinionGroupOffence(input: MinionOffenceInput): MinionGrou
   const enemyCritMulti = enemyDb.sum('BASE', 'SelfCritMultiplier', flags, kwFlags);
   const baseCrit = Math.max(
     0,
-    minionBase.critChance + minionDb.sum('BASE', 'BaseCritChance', flags, kwFlags) + enemyCritBonus,
+    minionBase.critChance +
+      minionDb.sum('BASE', ['BaseCritChance', 'CritChance'], flags, kwFlags) +
+      enemyCritBonus,
   );
   const critInc = minionDb.sum('INC', 'CritChance', flags, kwFlags);
   const critMore = minionDb.more('CritChance', flags, kwFlags);
@@ -2333,11 +2471,20 @@ export function computeMinionGroupOffence(input: MinionOffenceInput): MinionGrou
   // Step E: Scaled Hit Damage + Enemy Mitigation (Resistances, Curses, Penetration, Armour, Damage Taken)
   const doubleDamagePct = clamp(minionDb.sum('BASE', 'DoubleDamageChance', flags, kwFlags), 0, 100);
   const doubleDamageMult = 1 + doubleDamagePct / 100;
-  const dealNoEle = minionDb.flag('DealNoElemental', flags, kwFlags);
+  const dealNoPhys = minionDb.flag('DealNoPhysical', flags, kwFlags);
+  const dealNoFire = minionDb.flag('DealNoFire', flags, kwFlags);
+  const dealNoCold = minionDb.flag('DealNoCold', flags, kwFlags);
+  const dealNoLight = minionDb.flag('DealNoLightning', flags, kwFlags);
+  const dealNoEle =
+    minionDb.flag('DealNoElemental', flags, kwFlags) ||
+    (dealNoFire && dealNoCold && dealNoLight);
   const dealNoChaos = minionDb.flag('DealNoChaos', flags, kwFlags);
   const dealNoNonFire = minionDb.flag('DealNoNonFire', flags, kwFlags);
 
-  const enemyGlobalTaken = enemyDb.sum('INC', 'DamageTaken', flags, kwFlags);
+  const enemyGlobalTaken =
+    enemyDb.sum('INC', 'DamageTaken', flags, kwFlags) +
+    ((flags & ModFlag.Projectile) !== 0 ? enemyDb.sum('INC', 'ProjectileDamageTaken', flags, kwFlags) : 0) +
+    ((flags & ModFlag.Area) !== 0 ? enemyDb.sum('INC', 'AreaDamageTaken', flags, kwFlags) : 0);
   const enemyGlobalTakenMore = enemyDb.more('DamageTaken', flags, kwFlags);
   const enemyMaxRes = enemyConfig?.enemyMaxResist ?? 75;
   const enemyArmour = Math.max(
@@ -2359,7 +2506,15 @@ export function computeMinionGroupOffence(input: MinionOffenceInput): MinionGrou
 
   for (const dt of DAMAGE_TYPES) {
     const isEle = dt === 'Fire' || dt === 'Cold' || dt === 'Lightning';
-    if ((isEle && dealNoEle) || (dt === 'Chaos' && dealNoChaos) || (dealNoNonFire && dt !== 'Fire')) {
+    if (
+      (dt === 'Physical' && dealNoPhys) ||
+      (dt === 'Fire' && dealNoFire) ||
+      (dt === 'Cold' && dealNoCold) ||
+      (dt === 'Lightning' && dealNoLight) ||
+      (isEle && dealNoEle) ||
+      (dt === 'Chaos' && dealNoChaos) ||
+      (dealNoNonFire && dt !== 'Fire')
+    ) {
       continue;
     }
 

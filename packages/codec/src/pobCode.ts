@@ -588,14 +588,21 @@ export function xmlToBuild(xml: string): Build {
   const activeTreeSpec = treeSpecs[activeTreeSpecIndex]!;
 
   // Parse <Skills activeSkillSet="..."> & all <SkillSet> blocks
-  const parseSkillGroupsFromBlock = (blockXml: string, prefix: string): SkillGroup[] => {
+  // Track exact 1-based XML <Skill> ordinal so `mainSocketGroup` never shifts when empty or item-source <Skill/> tags precede it.
+  const parseSkillGroupsFromBlock = (
+    blockXml: string,
+    prefix: string,
+  ): { groups: SkillGroup[]; byXmlOrdinal: Map<number, string> } => {
     const parsed: SkillGroup[] = [];
-    const skillRegex = /<Skill\b([^>]*)>([\s\S]*?)<\/Skill>/gi;
+    const byXmlOrdinal = new Map<number, string>();
+    const skillRegex = /<Skill(?=\s|>|\/)([^>]*?)(?:\/>|>([\s\S]*?)<\/Skill>)/gi;
     let skillMatch: RegExpExecArray | null;
+    let xmlOrdinal = 0;
     let groupCounter = 1;
     while ((skillMatch = skillRegex.exec(blockXml)) !== null) {
+      xmlOrdinal++;
       const attrs = parseAttributes(skillMatch[1]!);
-      const inner = skillMatch[2]!;
+      const inner = skillMatch[2] ?? '';
       const gems: GemInstance[] = [];
       const gemRegex = /<Gem\b([^>]*)\/?>/gi;
       let gemMatch: RegExpExecArray | null;
@@ -621,13 +628,28 @@ export function xmlToBuild(xml: string): Build {
           });
         }
       }
+      if (gems.length === 0 && attrs.skillId) {
+        const itemSkillMatched = matchGemId(game, undefined, attrs.label, attrs.skillId, undefined);
+        if (itemSkillMatched) {
+          const isFreeSceptreOrItemAura = Boolean(attrs.source && /^Item:/i.test(attrs.source));
+          gems.push({
+            instanceId: `${prefix}_g_${groupCounter}_1`,
+            gemId: itemSkillMatched,
+            level: Number(attrs.level ?? 20) || 20,
+            quality: 0,
+            enabled: true,
+            ...(isFreeSceptreOrItemAura && game === 'poe2' ? { spiritReservationOverride: 0 } : {}),
+          });
+        }
+      }
       if (gems.length > 0) {
         const weaponSets = parseSkillWeaponSets(attrs, game);
         const mainActiveRaw = Number(attrs.mainActiveSkill ?? attrs.mainActiveSkillCalcs ?? 1);
         const groupEnabled =
           attrs.enabled !== undefined ? attrs.enabled !== 'false' : attrs.active !== 'false';
+        const groupId = `${prefix}_sg_${groupCounter}`;
         parsed.push({
-          id: `${prefix}_sg_${groupCounter}`,
+          id: groupId,
           label: attrs.label || `Skill Group ${groupCounter}`,
           enabled: groupEnabled,
           ...(attrs.includeInFullDPS === 'true' ? { includeInFullDps: true } : {}),
@@ -636,10 +658,11 @@ export function xmlToBuild(xml: string): Build {
           ...(Number.isFinite(mainActiveRaw) && mainActiveRaw > 1 ? { mainActiveSkillIndex: mainActiveRaw } : {}),
           gems,
         });
+        byXmlOrdinal.set(xmlOrdinal, groupId);
         groupCounter++;
       }
     }
-    return parsed;
+    return { groups: parsed, byXmlOrdinal };
   };
 
   const makeFallbackSkillGroup = (prefix: string): SkillGroup => {
@@ -664,13 +687,17 @@ export function xmlToBuild(xml: string): Build {
     const ssAttrs = parseAttributes(ssMatch[1]!);
     const ssInner = ssMatch[2] ?? '';
     const setId = ssAttrs.id || String(skillSets.length + 1);
-    const parsedGroups = parseSkillGroupsFromBlock(ssInner, `imp_ss${setId}`);
+    const { groups: parsedGroups, byXmlOrdinal } = parseSkillGroupsFromBlock(ssInner, `imp_ss${setId}`);
     const setSkills = parsedGroups.length > 0 ? parsedGroups : [makeFallbackSkillGroup(`imp_ss${setId}`)];
+    const resolvedMainId =
+      byXmlOrdinal.get(mainSocketGroupIdx) ??
+      setSkills[mainSocketGroupIdx - 1]?.id ??
+      setSkills[0]!.id;
     skillSets.push({
       id: setId,
       title: ssAttrs.title || (skillSets.length === 0 ? 'Default' : `Skill Set ${skillSets.length + 1}`),
       skills: setSkills,
-      mainSkillGroupId: setSkills[mainSocketGroupIdx - 1]?.id ?? setSkills[0]!.id,
+      mainSkillGroupId: resolvedMainId,
     });
   }
 
@@ -686,11 +713,14 @@ export function xmlToBuild(xml: string): Build {
     }
     const activeSkillSet = skillSets[activeSkillSetIndex]!;
     skills = activeSkillSet.skills;
-    mainSkillGroupId = activeSkillSet.skills[mainSocketGroupIdx - 1]?.id ?? activeSkillSet.skills[0]!.id;
+    mainSkillGroupId = activeSkillSet.mainSkillGroupId ?? activeSkillSet.skills[0]!.id;
   } else {
-    const parsedGroups = parseSkillGroupsFromBlock(xml, 'imp');
+    const { groups: parsedGroups, byXmlOrdinal } = parseSkillGroupsFromBlock(xml, 'imp');
     skills = parsedGroups.length > 0 ? parsedGroups : [makeFallbackSkillGroup('imp')];
-    mainSkillGroupId = skills[mainSocketGroupIdx - 1]?.id ?? skills[0]!.id;
+    mainSkillGroupId =
+      byXmlOrdinal.get(mainSocketGroupIdx) ??
+      skills[mainSocketGroupIdx - 1]?.id ??
+      skills[0]!.id;
   }
 
   // Parse <Config> inputs using clean official PoB defaults (all optional buffs OFF unless specified in XML)

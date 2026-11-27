@@ -1,6 +1,7 @@
 import {
   ModFlag,
   type Build,
+  type CompiledGemMod,
   type EquipmentSlotId,
   type GameId,
   type GemDefinition,
@@ -20,6 +21,7 @@ import { parseSocketedGemBonuses, resolveGemBonuses } from './gemBonus.js';
 import { resolveItemEffectiveStats } from './localItem.js';
 import { ModDB } from './modDb.js';
 import { parseModLines } from './modParser.js';
+import { injectCompiledGemMods } from './skillActorRuntime.js';
 
 // ============================================================================
 // Shared Helpers
@@ -1623,6 +1625,10 @@ export interface AuraAndWatchersEyeContext {
   playerDb: ModDB;
   /** Optional separate Minion ModDB (a fresh ModDB is created if omitted). */
   minionDb?: ModDB;
+  /** Optional separate Enemy ModDB for Curses, Marks, and enemy-debuff Auras like Pride. */
+  enemyDb?: ModDB;
+  /** Optional equipped main-hand weapon type (e.g. for PoE 2 Wind Dancer weapon restriction). */
+  mainWeaponType?: string;
   /** Optional gem resolver override (defaults to `@webpob/data`'s `getGemById`). */
   getGemByIdFn?: (game: GameId, gemId: string) => GemDefinition | undefined;
   /** Optional socketed jewels override (defaults to resolving `build.tree.socketedJewels`). */
@@ -1640,6 +1646,7 @@ export interface AuraAndWatchersEyeContext {
 export interface AuraAndWatchersEyeResult {
   playerDb: ModDB;
   minionDb: ModDB;
+  enemyDb: ModDB;
   hasHandOfPhrecia: boolean;
   activeAurasAffectingPlayer: Set<string>;
   activeAurasAffectingMinions: Set<string>;
@@ -1654,6 +1661,34 @@ export interface AuraAndWatchersEyeResult {
   totalSpiritReserved: number;
   watchersEyeLines: WatchersEyeEvaluatedLine[];
   watchersEyeMods: Mod[];
+}
+
+function resolveAuraLevelCompiledMods(def: GemDefinition, level: number): CompiledGemMod[] | undefined {
+  if (!def.levelScaling || level === 20) return def.compiledMods;
+  if (def.levelScaling[level]?.compiledMods) return def.levelScaling[level]!.compiledMods;
+  const keys = Object.keys(def.levelScaling)
+    .map(Number)
+    .concat([20])
+    .sort((a, b) => a - b);
+  let bestKey = 20;
+  let bestDist = Math.abs(level - 20);
+  for (const k of keys) {
+    const d = Math.abs(level - k);
+    if (d < bestDist || (d === bestDist && k <= level)) {
+      bestDist = d;
+      bestKey = k;
+    }
+  }
+  if (bestKey === 20) return def.compiledMods;
+  return def.levelScaling[bestKey]?.compiledMods ?? def.compiledMods;
+}
+
+function collectModsFromDb(db: ModDB): Mod[] {
+  const out: Mod[] = [];
+  for (const [, list] of db.entriesByPrefix('')) {
+    out.push(...list);
+  }
+  return out;
 }
 
 function resolveAuraLevelStats(def: GemDefinition, level: number): string[] {
@@ -1983,6 +2018,7 @@ export function evaluateAurasAndWatchersEye(
 ): AuraAndWatchersEyeResult {
   const { build, playerDb } = ctx;
   const minionDb = ctx.minionDb ?? new ModDB();
+  const enemyDb = ctx.enemyDb ?? new ModDB();
   const lookupGem = ctx.getGemByIdFn ?? getGemById;
 
   const equipped = getActiveEquippedItemsSimple(build);
@@ -2138,7 +2174,8 @@ export function evaluateAurasAndWatchersEye(
         !isHerald &&
         (tags.has('aura') || (def.manaReservationPct ?? 0) > 0 || canonicalAuraName !== null);
       const isGlobalBuff =
-        Boolean(def.isAuraOrBuff) || (def.category === 'active' && (isAura || isCurseOrMark));
+        Boolean(def.isAuraOrBuff) ||
+        (def.category === 'active' && (isAura || isCurseOrMark || (def.spiritReservation ?? 0) > 0));
       if (!isGlobalBuff) continue;
 
       const isEnemyOnlyAura = canonicalAuraName === 'Pride';
@@ -2200,9 +2237,14 @@ export function evaluateAurasAndWatchersEye(
 
   for (const cand of deduped.values()) {
     const { def, gemInst, effLevel, isAura, isCurseOrMark, isHerald, isEnemyOnlyAura } = cand;
-    const rawStats = resolveAuraLevelStats(def, effLevel);
+    const windDancerDisallowed =
+      def.id === 'poe2_winddancer' &&
+      (ctx.mainWeaponType === 'Quarterstaff' || ctx.mainWeaponType === 'Wand');
+    const rawStats = windDancerDisallowed ? [] : resolveAuraLevelStats(def, effLevel);
+    const compiledMods = windDancerDisallowed ? undefined : resolveAuraLevelCompiledMods(def, effLevel);
     const sourceLabel = `Aura/Buff: ${def.name.en}${effLevel !== gemInst.level ? ` (Lv.${effLevel})` : ''}`;
-    const parsedBaseMods = parseModLines(rawStats, sourceLabel);
+    const parsedBaseMods =
+      compiledMods && compiledMods.length > 0 ? [] : parseModLines(rawStats, sourceLabel);
 
     const blockedFromPlayerBy: EvaluatedAuraEntry['blockedFromPlayerBy'] = [];
     const affectedByGenerosity = isAura && !isEnemyOnlyAura && cand.groupHasGenerosity;
@@ -2308,26 +2350,81 @@ export function evaluateAurasAndWatchersEye(
     let playerMods: Mod[] = [];
     let minionMods: Mod[] = [];
 
-    if (appliesToPlayer) {
-      if (isAura && (auraEffectPctForPlayer > 0 || supremeEgoMoreMult !== 1)) {
-        const totalMult = (1 + auraEffectPctForPlayer / 100) * supremeEgoMoreMult;
-        playerMods = scaleNumericMods(parsedBaseMods, totalMult, true);
-      } else if (isCurseOrMark && baseCurseEffectPct > 0) {
-        playerMods = scaleNumericMods(parsedBaseMods, 1 + baseCurseEffectPct / 100, false);
-      } else {
-        playerMods = [...parsedBaseMods];
-      }
-      playerDb.addMods(playerMods);
-    }
+    if (compiledMods && compiledMods.length > 0) {
+      const enemyCmods = compiledMods.filter((m) => m.target === 'enemy');
+      // Only `target === 'player'` modifiers are global aura/buff grants; `target === undefined` or `'skill'`
+      // on Heralds / Tempest Shield are local to that skill's own secondary hit/orb.
+      const allyCmods = compiledMods.filter((m) => m.target === 'player');
 
-    if (appliesToMinions) {
-      const minionSource = `${sourceLabel} [Minion Aura]`;
-      const baseMinionMods = parsedBaseMods.map((m) => ({ ...m, source: minionSource }));
-      minionMods =
-        auraEffectPctForMinions > 0
-          ? scaleNumericMods(baseMinionMods, 1 + auraEffectPctForMinions / 100, true)
-          : baseMinionMods;
-      minionDb.addMods(minionMods);
+      if (enemyCmods.length > 0) {
+        const enemyMult = isCurseOrMark
+          ? 1 + baseCurseEffectPct / 100
+          : (1 + auraEffectPctForPlayer / 100) * supremeEgoMoreMult;
+        injectCompiledGemMods(playerDb, enemyDb, minionDb, enemyCmods, sourceLabel, {
+          game: build.game,
+          effectMultiplier: enemyMult,
+          scaleMore: !isCurseOrMark,
+        });
+      }
+
+      if (allyCmods.length > 0 && appliesToPlayer) {
+        const tmpPlayer = new ModDB();
+        const tmpEnemy = new ModDB();
+        const tmpMinion = new ModDB();
+        const playerMult = isAura
+          ? (1 + auraEffectPctForPlayer / 100) * supremeEgoMoreMult
+          : isCurseOrMark
+            ? 1 + baseCurseEffectPct / 100
+            : 1;
+        injectCompiledGemMods(tmpPlayer, tmpEnemy, tmpMinion, allyCmods, sourceLabel, {
+          game: build.game,
+          effectMultiplier: playerMult,
+          scaleMore: isAura,
+        });
+        playerMods = collectModsFromDb(tmpPlayer);
+        playerDb.addMods(playerMods);
+        enemyDb.addMods(collectModsFromDb(tmpEnemy));
+        minionDb.addMods(collectModsFromDb(tmpMinion));
+      }
+
+      if (allyCmods.length > 0 && appliesToMinions) {
+        const minionSource = `${sourceLabel} [Minion Aura]`;
+        const tmpMinion = new ModDB();
+        const tmpUnused = new ModDB();
+        const forcedMinionTarget = allyCmods.map((m) => ({
+          ...m,
+          target: 'player' as const,
+        }));
+        injectCompiledGemMods(tmpMinion, tmpUnused, tmpUnused, forcedMinionTarget, minionSource, {
+          game: build.game,
+          effectMultiplier: 1 + auraEffectPctForMinions / 100,
+          scaleMore: true,
+        });
+        minionMods = collectModsFromDb(tmpMinion);
+        minionDb.addMods(minionMods);
+      }
+    } else {
+      if (appliesToPlayer) {
+        if (isAura && (auraEffectPctForPlayer > 0 || supremeEgoMoreMult !== 1)) {
+          const totalMult = (1 + auraEffectPctForPlayer / 100) * supremeEgoMoreMult;
+          playerMods = scaleNumericMods(parsedBaseMods, totalMult, true);
+        } else if (isCurseOrMark && baseCurseEffectPct > 0) {
+          playerMods = scaleNumericMods(parsedBaseMods, 1 + baseCurseEffectPct / 100, false);
+        } else {
+          playerMods = [...parsedBaseMods];
+        }
+        playerDb.addMods(playerMods);
+      }
+
+      if (appliesToMinions) {
+        const minionSource = `${sourceLabel} [Minion Aura]`;
+        const baseMinionMods = parsedBaseMods.map((m) => ({ ...m, source: minionSource }));
+        minionMods =
+          auraEffectPctForMinions > 0
+            ? scaleNumericMods(baseMinionMods, 1 + auraEffectPctForMinions / 100, true)
+            : baseMinionMods;
+        minionDb.addMods(minionMods);
+      }
     }
 
     // Track active canonical aura names for Watcher's Eye & condition evaluation
@@ -2346,9 +2443,10 @@ export function evaluateAurasAndWatchersEye(
       }
     }
 
-    const spiritCost = gemInst.spiritReservationOverride ?? def.spiritReservation ?? 0;
-    if (spiritCost > 0) {
-      totalSpiritReserved += spiritCost;
+    const spiritUnitCost = gemInst.spiritReservationOverride ?? def.spiritReservation ?? 0;
+    if (spiritUnitCost > 0) {
+      const spiritCount = def.minionBase && (gemInst.count ?? 1) > 1 ? Math.floor(gemInst.count!) : 1;
+      totalSpiritReserved += spiritUnitCost * spiritCount;
     }
 
     auras.push({
@@ -2425,6 +2523,7 @@ export function evaluateAurasAndWatchersEye(
   return {
     playerDb,
     minionDb,
+    enemyDb,
     hasHandOfPhrecia,
     activeAurasAffectingPlayer,
     activeAurasAffectingMinions,

@@ -93,6 +93,7 @@ export interface CompactGemsPayload {
     color: 'red' | 'green' | 'blue' | 'white';
     tags: string[];
     stypes?: string[];
+    mstypes?: string[];
     reqTypes?: string[];
     addTypes?: string[];
     excTypes?: string[];
@@ -110,6 +111,7 @@ export interface CompactGemsPayload {
     mc?: number;
     st?: string[];
     cmods?: CompactCompiledMod[];
+    qmods?: CompactCompiledMod[];
     sdata?: Record<string, number>;
     mb?: CompactMinionBase;
     qs?: Array<{ t: string; q: number }> | Record<string, never>;
@@ -448,12 +450,14 @@ function synthesizeGemDefinition(
   const tagSet = new Set(entry.tags.map((t) => t.toLowerCase()));
   const isSpell = tagSet.has('spell');
   const isAttack = tagSet.has('attack');
+  const hasMinionProfile = Boolean(entry.mb);
+  const hasReservation =
+    (entry.mrp ?? 0) > 0 || (entry.mrf ?? 0) > 0 || (entry.sr ?? 0) > 0;
+  const hasSpellHitDamage = Boolean(entry.bd && Object.keys(entry.bd).length > 0);
   const isAura =
-    tagSet.has('aura') ||
-    tagSet.has('herald') ||
-    (entry.mrp ?? 0) > 0 ||
-    (entry.mrf ?? 0) > 0 ||
-    (entry.sr ?? 0) > 0;
+    !hasMinionProfile &&
+    !isAttack &&
+    (hasReservation || (!hasSpellHitDamage && (tagSet.has('aura') || tagSet.has('herald'))));
 
   let modFlags = ModFlag.None;
   let kwFlags = KeywordFlag.None;
@@ -477,10 +481,12 @@ function synthesizeGemDefinition(
 
   const altIds = hydrateStringList(entry.altIds);
   const skillTypes = hydrateStringList(entry.stypes);
+  const minionSkillTypes = hydrateStringList(entry.mstypes);
   const requireSkillTypes = hydrateStringList(entry.reqTypes);
   const addSkillTypes = hydrateStringList(entry.addTypes);
   const excludeSkillTypes = hydrateStringList(entry.excTypes);
   const compiledMods = hydrateCompiledMods(entry.cmods);
+  const qualityCompiledMods = hydrateCompiledMods(entry.qmods);
   const skillData = hydrateSkillData(entry.sdata);
   const minionBase = hydrateMinionBase(entry.mb);
   const qualityStats = hydrateQualityStats(entry.qs);
@@ -489,10 +495,12 @@ function synthesizeGemDefinition(
   const structuredFields = {
     ...(altIds ? { altIds } : {}),
     ...(skillTypes ? { skillTypes } : {}),
+    ...(minionSkillTypes ? { minionSkillTypes } : {}),
     ...(requireSkillTypes ? { requireSkillTypes } : {}),
     ...(addSkillTypes ? { addSkillTypes } : {}),
     ...(excludeSkillTypes ? { excludeSkillTypes } : {}),
     ...(compiledMods ? { compiledMods } : {}),
+    ...(qualityCompiledMods ? { qualityCompiledMods } : {}),
     ...(skillData ? { skillData } : {}),
     ...(minionBase ? { minionBase } : {}),
   };
@@ -545,6 +553,7 @@ function synthesizeGemDefinition(
     ...structuredFields,
     ...(entry.cd && entry.cd > 0 ? { cooldown: entry.cd } : {}),
     ...(entry.dm && entry.dm > 1 ? { dpsMultiplier: entry.dm } : {}),
+    ...(!isAura && entry.sr !== undefined ? { spiritReservation: entry.sr } : {}),
     ...(qualityStats ? { qualityStats } : {}),
     ...(levelScaling ? { levelScaling } : {}),
     ...(isAura
@@ -558,8 +567,10 @@ function synthesizeGemDefinition(
         }
       : isAttack
         ? {
-            attackDamageMultiplierPct: entry.am ?? 145,
-            damageEffectivenessPct: entry.de ?? entry.am ?? 145,
+            ...(entry.bd ? { baseDamage: entry.bd } : {}),
+            ...(entry.cc !== undefined ? { baseCritChance: entry.cc } : {}),
+            attackDamageMultiplierPct: entry.am ?? (entry.bd ? 100 : 145),
+            damageEffectivenessPct: entry.de ?? entry.am ?? (entry.bd ? 100 : 145),
             attackSpeedMultiplier: entry.asm ?? 1.0,
             manaCost: entry.mc ?? 12,
             stats: officialStats,
@@ -598,28 +609,27 @@ export function registerGemsData(game: GameId, payload: CompactGemsPayload): Gem
       official.id !== g.id ? official.id : undefined,
     );
     const skillTypes = hydrateStringList(official.stypes);
+    const minionSkillTypes = hydrateStringList(official.mstypes);
     const requireSkillTypes = hydrateStringList(official.reqTypes);
     const addSkillTypes = hydrateStringList(official.addTypes);
     const excludeSkillTypes = hydrateStringList(official.excTypes);
     const compiledMods = hydrateCompiledMods(official.cmods);
+    const qualityCompiledMods = hydrateCompiledMods(official.qmods);
     const skillData = hydrateSkillData(official.sdata);
     const hydratedMinionBase = hydrateMinionBase(official.mb);
-    const mergedMinionBase = hydratedMinionBase
-      ? g.minionBase
-        ? { ...g.minionBase, ...hydratedMinionBase }
-        : hydratedMinionBase
-      : undefined;
     const ls = hydrateLevelScaling(official.ls);
     return {
       ...g,
       ...(altIds ? { altIds } : {}),
       ...(skillTypes && !g.skillTypes ? { skillTypes } : {}),
+      ...(minionSkillTypes && !g.minionSkillTypes ? { minionSkillTypes } : {}),
       ...(requireSkillTypes && !g.requireSkillTypes ? { requireSkillTypes } : {}),
       ...(addSkillTypes && !g.addSkillTypes ? { addSkillTypes } : {}),
       ...(excludeSkillTypes && !g.excludeSkillTypes ? { excludeSkillTypes } : {}),
       ...(compiledMods && !g.compiledMods ? { compiledMods } : {}),
+      ...(qualityCompiledMods && !g.qualityCompiledMods ? { qualityCompiledMods } : {}),
       ...(skillData && !g.skillData ? { skillData } : {}),
-      ...(mergedMinionBase ? { minionBase: mergedMinionBase } : {}),
+      ...(hydratedMinionBase ? { minionBase: hydratedMinionBase } : {}),
       ...(ls && !g.levelScaling ? { levelScaling: ls } : {}),
     };
   });

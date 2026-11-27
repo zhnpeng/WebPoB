@@ -35,6 +35,31 @@ export function createEmptyEvalContext(): ModEvalContext {
  *   and accumulates optional additive `base`.
  * - `PerStat`: scales by `Math.floor(statVal / div + 0.0001)`, clamped by optional `limit`.
  */
+function evalSingleConditionVar(varExpr: string, ctx?: ModEvalContext): boolean {
+  if (!ctx) return false;
+  if (ctx.conditions[varExpr]) return true;
+  if (varExpr.startsWith('MultiplierThreshold:')) {
+    const parts = varExpr.split(':');
+    const name = parts[1] ?? '';
+    const thresh = Number(parts[2] ?? 0);
+    return (ctx.multipliers[name] ?? 0) >= thresh;
+  }
+  if (varExpr.startsWith('StatThreshold:')) {
+    const parts = varExpr.split(':');
+    const name = parts[1] ?? '';
+    const thresh = Number(parts[2] ?? 0);
+    return (ctx.stats[name] ?? 0) >= thresh;
+  }
+  return false;
+}
+
+function evalConditionVar(varExpr: string, ctx?: ModEvalContext): boolean {
+  if (varExpr.includes('|')) {
+    return varExpr.split('|').some((part) => evalSingleConditionVar(part.trim(), ctx));
+  }
+  return evalSingleConditionVar(varExpr, ctx);
+}
+
 export function evaluateModTags(mod: Mod, ctx?: ModEvalContext): ModTagEvalResult {
   const tags = mod.tags;
   if (!tags || tags.length === 0) {
@@ -47,7 +72,7 @@ export function evaluateModTags(mod: Mod, ctx?: ModEvalContext): ModTagEvalResul
   for (const tag of tags) {
     switch (tag.type) {
       case 'Condition': {
-        let match = Boolean(ctx?.conditions[tag.var]);
+        let match = evalConditionVar(tag.var, ctx);
         if (tag.neg) match = !match;
         if (!match) {
           return { active: false, scale: 0 };
@@ -55,7 +80,10 @@ export function evaluateModTags(mod: Mod, ctx?: ModEvalContext): ModTagEvalResul
         break;
       }
       case 'SkillType': {
-        let match = Boolean(ctx?.skillTypes?.[tag.skillType]);
+        const norm = tag.skillType.trim().toLowerCase().replace(/[\s_-]+/g, '');
+        let match = Boolean(
+          ctx?.skillTypes?.[tag.skillType] || (norm ? ctx?.skillTypes?.[norm] : false),
+        );
         if (tag.neg) match = !match;
         if (!match) {
           return { active: false, scale: 0 };

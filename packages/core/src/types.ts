@@ -221,6 +221,8 @@ export interface GemDefinition {
   tags: string[];
   /** Official PoB `SkillType` list granted by this skill. */
   skillTypes?: string[];
+  /** Official PoB `minionSkillTypes` list for minion-summoning skills. */
+  minionSkillTypes?: string[];
   /** Official PoB `requireSkillTypes` RPN expression tokens (including `'AND' | 'OR' | 'NOT'`). */
   requireSkillTypes?: string[];
   /** Official PoB `addSkillTypes` granted to supported skills. */
@@ -258,6 +260,8 @@ export interface GemDefinition {
   statsZhTw?: string[];
   /** Pre-compiled structured `SkillStatMap` modifiers emitted by the PoB data pipeline. */
   compiledMods?: CompiledGemMod[];
+  /** Pre-compiled per-1%-quality `SkillStatMap` modifiers emitted by the PoB data pipeline. */
+  qualityCompiledMods?: CompiledGemMod[];
   /** Structured numeric skill constants (e.g., `castTime`, `repeatCount`, `activeSkillLimit`). */
   skillData?: Record<string, number>;
   /** Official per-quality stat lines (substituted with Math.trunc(quality * perQuality)). */

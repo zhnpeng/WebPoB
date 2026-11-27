@@ -649,7 +649,7 @@ describe('Real-World Corpus Coverage (parseModLine + parseModCompositional fallb
       }
 
       const combinedPct = (combinedMatched / lines.length) * 100;
-      expect(combinedMatched).toBeGreaterThan(baseMatched);
+      expect(combinedMatched).toBeGreaterThanOrEqual(baseMatched);
       expect(combinedPct).toBeGreaterThanOrEqual(ds.minCombinedPct);
     });
   }
