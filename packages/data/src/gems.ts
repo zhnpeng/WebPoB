@@ -745,16 +745,231 @@ export const POE2_GEMS: GemDefinition[] = [
   },
 ];
 
+interface GemLookupIndex {
+  byId: Map<string, GemDefinition>;
+  byIdLower: Map<string, GemDefinition>;
+  byAltIdLower: Map<string, GemDefinition>;
+  byStrippedIdLower: Map<string, GemDefinition>;
+  byExactNameLower: Map<string, GemDefinition>;
+  byBaseNameLower: Map<string, GemDefinition>;
+}
+
+const GEM_PREFIX_RE = /^poe[12]_/i;
+const SUPPORT_SUFFIX_RE = /\s+support$/i;
+
+function normalizeGemBaseName(name: string): string {
+  return name.toLowerCase().trim().replace(SUPPORT_SUFFIX_RE, '');
+}
+
+function buildGemLookupIndex(gems: GemDefinition[]): GemLookupIndex {
+  const byId = new Map<string, GemDefinition>();
+  const byIdLower = new Map<string, GemDefinition>();
+  const byAltIdLower = new Map<string, GemDefinition>();
+  const byStrippedIdLower = new Map<string, GemDefinition>();
+  const byExactNameLower = new Map<string, GemDefinition>();
+  const byBaseNameLower = new Map<string, GemDefinition>();
+
+  for (const gem of gems) {
+    if (!byId.has(gem.id)) byId.set(gem.id, gem);
+
+    const idLower = gem.id.toLowerCase().trim();
+    if (idLower && !byIdLower.has(idLower)) byIdLower.set(idLower, gem);
+
+    const strippedId = idLower.replace(GEM_PREFIX_RE, '');
+    if (strippedId && strippedId !== idLower && !byStrippedIdLower.has(strippedId)) {
+      byStrippedIdLower.set(strippedId, gem);
+    }
+
+    if (gem.altIds) {
+      for (const alt of gem.altIds) {
+        const altLower = alt.toLowerCase().trim();
+        if (!altLower) continue;
+        if (!byAltIdLower.has(altLower)) byAltIdLower.set(altLower, gem);
+        const strippedAlt = altLower.replace(GEM_PREFIX_RE, '');
+        if (strippedAlt && strippedAlt !== altLower && !byStrippedIdLower.has(strippedAlt)) {
+          byStrippedIdLower.set(strippedAlt, gem);
+        }
+      }
+    }
+
+    const enLower = gem.name.en.toLowerCase().trim();
+    if (enLower && !byExactNameLower.has(enLower)) byExactNameLower.set(enLower, gem);
+
+    const baseEn = enLower.replace(SUPPORT_SUFFIX_RE, '');
+    if (baseEn && !byBaseNameLower.has(baseEn)) byBaseNameLower.set(baseEn, gem);
+
+    const zhLower = gem.name.zh.toLowerCase().trim();
+    if (zhLower && !byExactNameLower.has(zhLower)) byExactNameLower.set(zhLower, gem);
+
+    const zhTwLower = gem.name.zhTw?.toLowerCase().trim();
+    if (zhTwLower && !byExactNameLower.has(zhTwLower)) byExactNameLower.set(zhTwLower, gem);
+  }
+
+  return {
+    byId,
+    byIdLower,
+    byAltIdLower,
+    byStrippedIdLower,
+    byExactNameLower,
+    byBaseNameLower,
+  };
+}
+
 const registeredOfficialGems: Partial<Record<GameId, GemDefinition[]>> = {};
+const gemIndexCache: Partial<Record<GameId, { source: GemDefinition[]; index: GemLookupIndex }>> = {};
+
+function getGemLookupIndex(game: GameId): GemLookupIndex {
+  const gems = getGemsForGame(game);
+  const cached = gemIndexCache[game];
+  if (cached && cached.source === gems) return cached.index;
+  const index = buildGemLookupIndex(gems);
+  gemIndexCache[game] = { source: gems, index };
+  return index;
+}
 
 export function setRegisteredGems(game: GameId, gems: GemDefinition[]): void {
   registeredOfficialGems[game] = gems;
+  gemIndexCache[game] = { source: gems, index: buildGemLookupIndex(gems) };
 }
 
 export function getGemsForGame(game: GameId): GemDefinition[] {
   return registeredOfficialGems[game] ?? (game === 'poe2' ? POE2_GEMS : POE1_GEMS);
 }
 
+/**
+ * Looks up a gem by canonical WebPoB `id` or any lowercased `altIds` alias
+ * (such as PoB `grantedEffect.id`, `variantId`, or `gemData.id`).
+ */
 export function getGemById(game: GameId, gemId: string): GemDefinition | undefined {
-  return getGemsForGame(game).find((g) => g.id === gemId);
+  if (!gemId) return undefined;
+  const index = getGemLookupIndex(game);
+  const exact = index.byId.get(gemId);
+  if (exact) return exact;
+
+  const lower = gemId.toLowerCase().trim();
+  if (!lower) return undefined;
+  return (
+    index.byIdLower.get(lower) ??
+    index.byAltIdLower.get(lower) ??
+    index.byStrippedIdLower.get(lower)
+  );
+}
+
+/**
+ * Looks up a gem by exact normalized English or Chinese display name, falling back
+ * to matching with or without a trailing `" Support"` suffix.
+ */
+export function findGemByName(game: GameId, name: string): GemDefinition | undefined {
+  const lower = name.toLowerCase().trim();
+  if (!lower) return undefined;
+  const index = getGemLookupIndex(game);
+
+  const exact = index.byExactNameLower.get(lower);
+  if (exact) return exact;
+
+  const withSupport = index.byExactNameLower.get(`${lower} support`);
+  if (withSupport) return withSupport;
+
+  const stripped = lower.replace(SUPPORT_SUFFIX_RE, '');
+  if (stripped !== lower) {
+    const exactStripped = index.byExactNameLower.get(stripped);
+    if (exactStripped) return exactStripped;
+  }
+
+  const byBase = index.byBaseNameLower.get(stripped);
+  if (byBase) return byBase;
+
+  // Fallback for zh-TW locale overlays applied after registration.
+  return getGemsForGame(game).find((g) => g.name.zhTw?.toLowerCase().trim() === lower);
+}
+
+export interface PobGemRef {
+  gemId?: string;
+  nameSpec?: string;
+  skillId?: string;
+  variantId?: string;
+}
+
+/**
+ * Resolves a PoB XML `<Gem>` reference (`skillId`, `variantId`, `nameSpec`, `gemId`) to a
+ * registered `GemDefinition`. Prioritizes `skillId` / `variantId` and exact `nameSpec` over
+ * `gemId`, because PoB Transfigured Gems carry the base gem's `Metadata/Items/Gems/...` path
+ * in `gemId` while identifying the transfigured variant via `skillId`, `variantId`, and `nameSpec`.
+ */
+export function resolveGemFromPobRef(game: GameId, ref: PobGemRef): GemDefinition | undefined {
+  const { gemId: rawGemId, nameSpec: rawNameSpec, skillId: rawSkillId, variantId: rawVariantId } = ref;
+  const index = getGemLookupIndex(game);
+
+  // 1. Prioritize explicit skillId / variantId (exact ID / altIds lookup).
+  if (rawSkillId) {
+    const bySkill = getGemById(game, rawSkillId);
+    if (bySkill) return bySkill;
+  }
+  if (rawVariantId) {
+    const byVariant = getGemById(game, rawVariantId);
+    if (byVariant) return byVariant;
+  }
+
+  // 2. Preserve WebPoB canonical gem.id round-trips when skillId/variantId are absent
+  //    (buildToPobXml strips " Support" from nameSpec, e.g. Barrage Support -> "Barrage").
+  //    If nameSpec names a different, more specific gem (e.g. "Heavy Strike of Trarthus"),
+  //    let step 3 resolve nameSpec instead of returning a base gem.
+  if (!rawSkillId && !rawVariantId && rawGemId) {
+    const exactCanonical = index.byId.get(rawGemId);
+    if (exactCanonical) {
+      if (
+        !rawNameSpec ||
+        normalizeGemBaseName(exactCanonical.name.en) === normalizeGemBaseName(rawNameSpec) ||
+        exactCanonical.name.zh.toLowerCase().trim() === rawNameSpec.toLowerCase().trim()
+      ) {
+        return exactCanonical;
+      }
+    }
+  }
+
+  // 3. Exact normalized English / Chinese nameSpec lookup (with " Support" suffix fallback).
+  if (rawNameSpec) {
+    const byName = findGemByName(game, rawNameSpec);
+    if (byName) return byName;
+  }
+
+  // 4. Check skillId / variantId against name index if they did not match as IDs.
+  if (rawSkillId) {
+    const bySkillName = findGemByName(game, rawSkillId);
+    if (bySkillName) return bySkillName;
+  }
+  if (rawVariantId) {
+    const byVariantName = findGemByName(game, rawVariantId);
+    if (byVariantName) return byVariantName;
+  }
+
+  // 5. Fallback to gemId only if skillId / variantId / nameSpec did not match a more specific gem.
+  if (rawGemId) {
+    const byGem = getGemById(game, rawGemId) ?? findGemByName(game, rawGemId);
+    if (byGem) return byGem;
+  }
+
+  // 6. Last-resort fuzzy fallback (preferring the longest matching English gem name).
+  const gems = getGemsForGame(game);
+  const candidates = [rawNameSpec, rawSkillId, rawVariantId, rawGemId]
+    .filter((s): s is string => Boolean(s))
+    .map((s) => s.toLowerCase().trim())
+    .filter(Boolean);
+
+  for (const needle of candidates) {
+    let bestMatch: GemDefinition | undefined;
+    let bestLen = -1;
+    for (const g of gems) {
+      const enLower = g.name.en.toLowerCase();
+      if (!enLower) continue;
+      if (needle.includes(enLower) || enLower.replace(SUPPORT_SUFFIX_RE, '') === needle) {
+        if (enLower.length > bestLen) {
+          bestLen = enLower.length;
+          bestMatch = g;
+        }
+      }
+    }
+    if (bestMatch) return bestMatch;
+  }
+  return undefined;
 }

@@ -2,9 +2,13 @@ import {
   KeywordFlag,
   ModFlag,
   type CharacterClassDef,
+  type CompiledGemMod,
+  type DamageType,
   type GameId,
   type GemDefinition,
   type Locale,
+  type ModTag,
+  type ModType,
   type PassiveNode,
   type PassiveTreeData,
 } from '@webpob/core';
@@ -45,12 +49,36 @@ export interface CompactTreePayload {
   nodes: CompactTreeNode[];
 }
 
+export interface CompactCompiledMod {
+  n: string;
+  t: ModType;
+  v: number | boolean | string;
+  f?: number;
+  k?: number;
+  tg?: 'skill' | 'player' | 'enemy' | 'minion';
+  tags?: ModTag[];
+}
+
+export interface CompactMinionBase {
+  pMin: number;
+  pMax: number;
+  aps: number;
+  cc: number;
+  cm: number;
+  moreAps?: number;
+  ele?: Partial<Record<DamageType, [number, number]>>;
+  limitStat?: string;
+  baseLimit?: number;
+}
+
 export interface CompactGemLevelEntry {
-  bd?: Partial<Record<'Physical' | 'Fire' | 'Cold' | 'Lightning' | 'Chaos', [number, number]>>;
+  bd?: Partial<Record<DamageType, [number, number]>>;
   am?: number;
   de?: number;
   mc?: number;
   st?: string[];
+  cmods?: CompactCompiledMod[];
+  sdata?: Record<string, number>;
 }
 
 export interface CompactGemsPayload {
@@ -58,11 +86,16 @@ export interface CompactGemsPayload {
   count: number;
   gems: Array<{
     id: string;
+    altIds?: string[];
     en: string;
     zh?: string;
     cat: 'active' | 'support';
     color: 'red' | 'green' | 'blue' | 'white';
     tags: string[];
+    stypes?: string[];
+    reqTypes?: string[];
+    addTypes?: string[];
+    excTypes?: string[];
     ct?: number;
     cd?: number;
     dm?: number;
@@ -71,11 +104,14 @@ export interface CompactGemsPayload {
     mrp?: number;
     mrf?: number;
     sr?: number;
-    bd?: Partial<Record<'Physical' | 'Fire' | 'Cold' | 'Lightning' | 'Chaos', [number, number]>>;
+    bd?: Partial<Record<DamageType, [number, number]>>;
     am?: number;
     de?: number;
     mc?: number;
     st?: string[];
+    cmods?: CompactCompiledMod[];
+    sdata?: Record<string, number>;
+    mb?: CompactMinionBase;
     qs?: Array<{ t: string; q: number }> | Record<string, never>;
     ls?: Record<string, CompactGemLevelEntry>;
   }>;
@@ -312,6 +348,66 @@ export async function loadOfficialClasses(
   }
 }
 
+function hydrateStringList(list?: string[]): string[] | undefined {
+  if (!Array.isArray(list) || list.length === 0) return undefined;
+  return list;
+}
+
+function hydrateCompiledMods(cmods?: CompactCompiledMod[]): CompiledGemMod[] | undefined {
+  if (!Array.isArray(cmods) || cmods.length === 0) return undefined;
+  return cmods.map((m) => ({
+    name: m.n,
+    type: m.t,
+    value: m.v,
+    flags: m.f ?? 0,
+    keywordFlags: m.k ?? 0,
+    ...(m.tg !== undefined ? { target: m.tg } : {}),
+    ...(Array.isArray(m.tags) && m.tags.length > 0 ? { tags: m.tags } : {}),
+  }));
+}
+
+function hydrateSkillData(sdata?: Record<string, number>): Record<string, number> | undefined {
+  if (!sdata || typeof sdata !== 'object' || Array.isArray(sdata)) return undefined;
+  if (Object.keys(sdata).length === 0) return undefined;
+  return { ...sdata };
+}
+
+function hydrateMinionBase(mb?: CompactMinionBase): GemDefinition['minionBase'] | undefined {
+  if (!mb || typeof mb !== 'object') return undefined;
+  return {
+    physicalMin: mb.pMin,
+    physicalMax: mb.pMax,
+    attacksPerSecond: mb.aps,
+    critChance: mb.cc,
+    critMultiplier: mb.cm,
+    ...(mb.moreAps !== undefined ? { moreAttackSpeedPct: mb.moreAps } : {}),
+    ...(mb.ele && Object.keys(mb.ele).length > 0 ? { elementalDamage: mb.ele } : {}),
+    ...(mb.limitStat !== undefined ? { limitStat: mb.limitStat } : {}),
+    ...(mb.baseLimit !== undefined ? { baseLimit: mb.baseLimit } : {}),
+  };
+}
+
+function mergeAltIds(
+  existing?: string[],
+  officialAltIds?: string[],
+  officialId?: string,
+): string[] | undefined {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (val?: string) => {
+    const trimmed = val?.trim();
+    if (!trimmed) return;
+    const lower = trimmed.toLowerCase();
+    if (seen.has(lower)) return;
+    seen.add(lower);
+    out.push(trimmed);
+  };
+  if (Array.isArray(existing)) for (const id of existing) push(id);
+  if (Array.isArray(officialAltIds)) for (const id of officialAltIds) push(id);
+  push(officialId);
+  return out.length > 0 ? out : undefined;
+}
+
 function hydrateLevelScaling(
   ls?: Record<string, CompactGemLevelEntry>,
 ): GemDefinition['levelScaling'] | undefined {
@@ -321,12 +417,16 @@ function hydrateLevelScaling(
   for (const [lvStr, snap] of Object.entries(ls)) {
     const lv = Number(lvStr);
     if (!Number.isFinite(lv)) continue;
+    const compiledMods = hydrateCompiledMods(snap.cmods);
+    const skillData = hydrateSkillData(snap.sdata);
     out[lv] = {
       ...(snap.bd ? { baseDamage: snap.bd } : {}),
       ...(snap.am !== undefined ? { attackDamageMultiplierPct: snap.am } : {}),
       ...(snap.de !== undefined ? { damageEffectivenessPct: snap.de } : {}),
       ...(snap.mc !== undefined ? { manaCost: snap.mc } : {}),
       ...(snap.st && snap.st.length > 0 ? { stats: snap.st } : {}),
+      ...(compiledMods ? { compiledMods } : {}),
+      ...(skillData ? { skillData } : {}),
     };
     count++;
   }
@@ -375,8 +475,27 @@ function synthesizeGemDefinition(
   if (tagSet.has('chaos')) kwFlags |= KeywordFlag.Chaos;
   if (tagSet.has('physical')) kwFlags |= KeywordFlag.Physical;
 
+  const altIds = hydrateStringList(entry.altIds);
+  const skillTypes = hydrateStringList(entry.stypes);
+  const requireSkillTypes = hydrateStringList(entry.reqTypes);
+  const addSkillTypes = hydrateStringList(entry.addTypes);
+  const excludeSkillTypes = hydrateStringList(entry.excTypes);
+  const compiledMods = hydrateCompiledMods(entry.cmods);
+  const skillData = hydrateSkillData(entry.sdata);
+  const minionBase = hydrateMinionBase(entry.mb);
   const qualityStats = hydrateQualityStats(entry.qs);
   const levelScaling = hydrateLevelScaling(entry.ls);
+
+  const structuredFields = {
+    ...(altIds ? { altIds } : {}),
+    ...(skillTypes ? { skillTypes } : {}),
+    ...(requireSkillTypes ? { requireSkillTypes } : {}),
+    ...(addSkillTypes ? { addSkillTypes } : {}),
+    ...(excludeSkillTypes ? { excludeSkillTypes } : {}),
+    ...(compiledMods ? { compiledMods } : {}),
+    ...(skillData ? { skillData } : {}),
+    ...(minionBase ? { minionBase } : {}),
+  };
 
   if (entry.cat === 'support') {
     const officialStats = Array.isArray(entry.st) ? entry.st : [];
@@ -390,6 +509,7 @@ function synthesizeGemDefinition(
       modFlags,
       keywordFlags: kwFlags,
       stats: officialStats,
+      ...structuredFields,
       ...(qualityStats ? { qualityStats } : {}),
       ...(levelScaling ? { levelScaling } : {}),
     };
@@ -422,6 +542,7 @@ function synthesizeGemDefinition(
     modFlags,
     keywordFlags: kwFlags,
     isAuraOrBuff: isAura,
+    ...structuredFields,
     ...(entry.cd && entry.cd > 0 ? { cooldown: entry.cd } : {}),
     ...(entry.dm && entry.dm > 1 ? { dpsMultiplier: entry.dm } : {}),
     ...(qualityStats ? { qualityStats } : {}),
@@ -458,26 +579,55 @@ function normalizeGemNameKey(name: string): string {
   return name.toLowerCase().trim().replace(/\s+support$/i, '');
 }
 
+function gemCategoryKey(category: 'active' | 'support', name: string): string {
+  return `${category}:${normalizeGemNameKey(name)}`;
+}
+
 export function registerGemsData(game: GameId, payload: CompactGemsPayload): GemDefinition[] {
   const curated = game === 'poe2' ? POE2_GEMS : POE1_GEMS;
-  const payloadByKey = new Map(payload.gems.map((e) => [normalizeGemNameKey(e.en), e]));
-  const seenEn = new Set<string>();
+  const payloadByKey = new Map(payload.gems.map((e) => [gemCategoryKey(e.cat, e.en), e]));
+  const seenKeys = new Set<string>();
   const merged: GemDefinition[] = curated.map((g) => {
-    const key = normalizeGemNameKey(g.name.en);
-    seenEn.add(key);
+    const key = gemCategoryKey(g.category, g.name.en);
+    seenKeys.add(key);
     const official = payloadByKey.get(key);
     if (!official) return g;
+    const altIds = mergeAltIds(
+      g.altIds,
+      official.altIds,
+      official.id !== g.id ? official.id : undefined,
+    );
+    const skillTypes = hydrateStringList(official.stypes);
+    const requireSkillTypes = hydrateStringList(official.reqTypes);
+    const addSkillTypes = hydrateStringList(official.addTypes);
+    const excludeSkillTypes = hydrateStringList(official.excTypes);
+    const compiledMods = hydrateCompiledMods(official.cmods);
+    const skillData = hydrateSkillData(official.sdata);
+    const hydratedMinionBase = hydrateMinionBase(official.mb);
+    const mergedMinionBase = hydratedMinionBase
+      ? g.minionBase
+        ? { ...g.minionBase, ...hydratedMinionBase }
+        : hydratedMinionBase
+      : undefined;
     const ls = hydrateLevelScaling(official.ls);
     return {
       ...g,
+      ...(altIds ? { altIds } : {}),
+      ...(skillTypes && !g.skillTypes ? { skillTypes } : {}),
+      ...(requireSkillTypes && !g.requireSkillTypes ? { requireSkillTypes } : {}),
+      ...(addSkillTypes && !g.addSkillTypes ? { addSkillTypes } : {}),
+      ...(excludeSkillTypes && !g.excludeSkillTypes ? { excludeSkillTypes } : {}),
+      ...(compiledMods && !g.compiledMods ? { compiledMods } : {}),
+      ...(skillData && !g.skillData ? { skillData } : {}),
+      ...(mergedMinionBase ? { minionBase: mergedMinionBase } : {}),
       ...(ls && !g.levelScaling ? { levelScaling: ls } : {}),
     };
   });
 
   for (const entry of payload.gems) {
-    const key = normalizeGemNameKey(entry.en);
-    if (seenEn.has(key)) continue;
-    seenEn.add(key);
+    const key = gemCategoryKey(entry.cat, entry.en);
+    if (seenKeys.has(key)) continue;
+    seenKeys.add(key);
     merged.push(synthesizeGemDefinition(game, entry));
   }
   applyLocaleOverlayToGems(game, merged);

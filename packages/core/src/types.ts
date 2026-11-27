@@ -132,6 +132,7 @@ export interface Mod {
   flags: number;
   keywordFlags: number;
   source: string;
+  target?: 'skill' | 'player' | 'enemy' | 'minion';
   condition?: ModCondition;
   tags?: ModTag[];
 }
@@ -199,13 +200,33 @@ export interface CharacterClassDef {
 
 export type SkillCategory = 'active' | 'support';
 
+export interface CompiledGemMod {
+  name: string;
+  type: ModType;
+  value: number | boolean | string;
+  flags: number;
+  keywordFlags: number;
+  target?: 'skill' | 'player' | 'enemy' | 'minion';
+  tags?: ModTag[];
+}
+
 export interface GemDefinition {
   id: string;
+  /** Alternative PoB identifiers (`grantedEffect.id` / `gemData.id` / `variantId`, e.g., `HeavyStrikeTrarthus`, `BlightAltY`). */
+  altIds?: string[];
   name: LocalizedText;
   category: SkillCategory;
   game: GameId;
   color: 'red' | 'green' | 'blue' | 'white';
   tags: string[];
+  /** Official PoB `SkillType` list granted by this skill. */
+  skillTypes?: string[];
+  /** Official PoB `requireSkillTypes` RPN expression tokens (including `'AND' | 'OR' | 'NOT'`). */
+  requireSkillTypes?: string[];
+  /** Official PoB `addSkillTypes` granted to supported skills. */
+  addSkillTypes?: string[];
+  /** Official PoB `excludeSkillTypes` RPN expression tokens. */
+  excludeSkillTypes?: string[];
   modFlags: number;
   keywordFlags: number;
   /** For active skills: base damage by type at level 20 (scales with gem level). */
@@ -235,6 +256,10 @@ export interface GemDefinition {
   stats: string[];
   statsZh?: string[];
   statsZhTw?: string[];
+  /** Pre-compiled structured `SkillStatMap` modifiers emitted by the PoB data pipeline. */
+  compiledMods?: CompiledGemMod[];
+  /** Structured numeric skill constants (e.g., `castTime`, `repeatCount`, `activeSkillLimit`). */
+  skillData?: Record<string, number>;
   /** Official per-quality stat lines (substituted with Math.trunc(quality * perQuality)). */
   qualityStats?: Array<{ template: string; perQuality: number }>;
   /** Exact per-level scaling table (1..30) synced from official PoB Lua data when available. */
@@ -246,6 +271,8 @@ export interface GemDefinition {
       damageEffectivenessPct?: number;
       manaCost?: number;
       stats?: string[];
+      compiledMods?: CompiledGemMod[];
+      skillData?: Record<string, number>;
     }
   >;
   /** Whether stats apply globally (auras/buffs) vs only to the skill group. */
@@ -258,6 +285,9 @@ export interface GemDefinition {
     critChance: number;
     critMultiplier: number;
     moreAttackSpeedPct?: number;
+    elementalDamage?: Partial<Record<DamageType, [number, number]>>;
+    limitStat?: string;
+    baseLimit?: number;
   };
 }
 

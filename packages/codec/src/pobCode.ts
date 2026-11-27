@@ -11,7 +11,14 @@ import type {
   TreeSpec,
   WeaponSetId,
 } from '@webpob/core';
-import { createDefaultConfig, getClassesForGame, getGemsForGame, getRuleset, getTreeForGame } from '@webpob/data';
+import {
+  createDefaultConfig,
+  getClassesForGame,
+  getGemsForGame,
+  getRuleset,
+  getTreeForGame,
+  resolveGemFromPobRef,
+} from '@webpob/data';
 import { formatItemToPobText, parseItemText, type ParseItemOptions } from './itemParser.js';
 import {
   escapeXml,
@@ -366,34 +373,21 @@ function parseNodeList(raw: string | undefined): number[] {
     .filter((n) => Number.isFinite(n) && n > 0);
 }
 
-function matchGemId(game: GameId, rawGemId?: string, rawNameSpec?: string, rawSkillId?: string): string | null {
-  const gems = getGemsForGame(game);
-  if (rawGemId) {
-    const exact = gems.find((g) => g.id === rawGemId);
-    if (exact) return exact.id;
-  }
-  const candidates = [rawNameSpec, rawSkillId, rawGemId]
-    .filter((s): s is string => Boolean(s))
-    .map((s) => s.toLowerCase().trim());
-
-  for (const needle of candidates) {
-    const exactName = gems.find(
-      (g) =>
-        g.name.en.toLowerCase() === needle ||
-        g.name.en.toLowerCase() === `${needle} support` ||
-        g.name.zh.toLowerCase() === needle,
-    );
-    if (exactName) return exactName.id;
-  }
-  for (const needle of candidates) {
-    const fuzzy = gems.find(
-      (g) =>
-        needle.includes(g.name.en.toLowerCase()) ||
-        g.name.en.toLowerCase().replace(/\s+support$/i, '') === needle,
-    );
-    if (fuzzy) return fuzzy.id;
-  }
-  return null;
+function matchGemId(
+  game: GameId,
+  rawGemId?: string,
+  rawNameSpec?: string,
+  rawSkillId?: string,
+  rawVariantId?: string,
+): string | null {
+  return (
+    resolveGemFromPobRef(game, {
+      gemId: rawGemId,
+      nameSpec: rawNameSpec,
+      skillId: rawSkillId,
+      variantId: rawVariantId,
+    })?.id ?? null
+  );
 }
 
 /**
@@ -608,7 +602,13 @@ export function xmlToBuild(xml: string): Build {
       let gemCounter = 1;
       while ((gemMatch = gemRegex.exec(inner)) !== null) {
         const gAttrs = parseAttributes(gemMatch[1]!);
-        const matchedId = matchGemId(game, gAttrs.gemId, gAttrs.nameSpec, gAttrs.skillId);
+        const matchedId = matchGemId(
+          game,
+          gAttrs.gemId,
+          gAttrs.nameSpec,
+          gAttrs.skillId,
+          gAttrs.variantId,
+        );
         if (matchedId) {
           const parsedCount = Number(gAttrs.count ?? 1);
           gems.push({
