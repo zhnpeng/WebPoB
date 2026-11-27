@@ -379,32 +379,7 @@ function synthesizeGemDefinition(
   const levelScaling = hydrateLevelScaling(entry.ls);
 
   if (entry.cat === 'support') {
-    const hasOfficialStats = Array.isArray(entry.st) && entry.st.length > 0;
-    const lowerEn = entry.en.toLowerCase();
-    const isSpecialLevelSupport =
-      lowerEn === 'empower' ||
-      lowerEn === 'awakened empower' ||
-      lowerEn === 'enhance' ||
-      lowerEn === 'awakened enhance' ||
-      lowerEn === 'enlighten' ||
-      lowerEn === 'awakened enlighten' ||
-      lowerEn === 'rage' ||
-      lowerEn === 'rage i' ||
-      lowerEn === 'rage ii' ||
-      lowerEn === 'rage iii';
-    const defaultStat = tagSet.has('fire')
-      ? '25% more Fire Damage'
-      : tagSet.has('cold')
-        ? '25% more Cold Damage'
-        : tagSet.has('lightning')
-          ? '25% more Lightning Damage'
-          : tagSet.has('physical')
-            ? '25% more Physical Damage'
-            : tagSet.has('attack')
-              ? '20% more Attack Damage'
-              : tagSet.has('spell')
-                ? '20% more Spell Damage'
-                : '18% more Damage';
+    const officialStats = Array.isArray(entry.st) ? entry.st : [];
     return {
       id: entry.id,
       name: { en: entry.en, zh: entry.zh ?? entry.en },
@@ -414,7 +389,7 @@ function synthesizeGemDefinition(
       tags: entry.tags,
       modFlags,
       keywordFlags: kwFlags,
-      stats: hasOfficialStats ? entry.st! : isSpecialLevelSupport ? [] : [defaultStat],
+      stats: officialStats,
       ...(qualityStats ? { qualityStats } : {}),
       ...(levelScaling ? { levelScaling } : {}),
     };
