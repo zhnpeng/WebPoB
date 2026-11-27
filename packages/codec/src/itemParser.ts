@@ -1,6 +1,21 @@
 import type { ArmourBaseStats, EquipmentSlotId, GameId, Item, ItemRarity, WeaponBaseStats } from '@webpob/core';
 import { getBaseItemStats } from '@webpob/data';
 import { normalizeStatLineToEn, toSimplifiedZh } from '@webpob/i18n';
+import {
+  extractModRanges,
+  interpolateModRanges,
+  parseModLineRangeTag,
+  resolveMagicUtilityFlaskBase,
+  shouldIncludeVariantLine,
+  type ItemVariantSelection,
+} from './pobXmlHelpers.js';
+
+export interface ParseItemOptions {
+  /** Selected primary unique variant index from `<Item variant="N">`. */
+  variant?: number;
+  /** Additional selected alt variant indices from `<Item variantAlt="N" ...>`. */
+  variantAlts?: number[];
+}
 
 const RARITY_MAP: Record<string, ItemRarity> = {
   normal: 'NORMAL',
@@ -87,10 +102,16 @@ function parseAllDamageRanges(val: string): Array<[number, number]> {
  * Parses both English and Chinese Path of Exile 1/2 in-game `Ctrl+C` item text
  * as well as Path of Building XML `<Item>` text blocks into a normalized `Item`.
  */
-export function parseItemText(rawText: string, idOverride?: string, game: GameId = 'poe1'): Item | null {
+export function parseItemText(
+  rawText: string,
+  idOverride?: string,
+  game: GameId = 'poe1',
+  options?: ParseItemOptions,
+): Item | null {
   const trimmed = rawText.trim();
   if (!trimmed) return null;
 
+  const modRanges = extractModRanges(trimmed);
   const lines = trimmed
     .replace(/\r\n/g, '\n')
     .split('\n')
@@ -105,6 +126,12 @@ export function parseItemText(rawText: string, idOverride?: string, game: GameId
   let sockets: string | undefined;
   let levelReq: number | undefined;
   let implicitCountHint: number | null = null;
+  let variantListCount = 0;
+  let usesVariantGroups = false;
+  let selectedVersion: number | undefined;
+  let selectedVariantFromText: number | undefined;
+  const selectedAltVariantsFromText: number[] = [];
+  const variantGroupSelections = new Map<number, number>();
 
   const armourStats: ArmourBaseStats = {};
   let hasArmourStats = false;
@@ -190,9 +217,16 @@ export function parseItemText(rawText: string, idOverride?: string, game: GameId
   let baseName = nameCandidates.length >= 2 ? nameCandidates[1]! : name;
   if (rarity === 'NORMAL' || rarity === 'MAGIC') {
     baseName = name;
+    if (rarity === 'MAGIC') {
+      const canonicalFlaskBase = resolveMagicUtilityFlaskBase(name);
+      if (canonicalFlaskBase) {
+        baseName = canonicalFlaskBase;
+      }
+    }
   }
 
-  const statCandidates: string[] = [];
+  const rawStatCandidates: string[] = [];
+  const rawTaggedImplicits: string[] = [];
   const implicits: string[] = [];
   const explicits: string[] = [];
 
@@ -203,12 +237,12 @@ export function parseItemText(rawText: string, idOverride?: string, game: GameId
 
   let afterImplicitsMarker = false;
   let corrupted = false;
-  const collectedSections: string[][] = [[]];
+  const rawCollectedSections: string[][] = [[]];
 
   for (const rawLine of bodyLines) {
     if (rawLine === '__SEC__') {
-      if (collectedSections[collectedSections.length - 1]!.length > 0) {
-        collectedSections.push([]);
+      if (rawCollectedSections[rawCollectedSections.length - 1]!.length > 0) {
+        rawCollectedSections.push([]);
       }
       continue;
     }
@@ -241,6 +275,40 @@ export function parseItemText(rawText: string, idOverride?: string, game: GameId
       continue;
     }
 
+    // PoB Variant / Version header lines
+    if (/^Variant\s*[:：]\s*/i.test(line)) {
+      variantListCount++;
+      continue;
+    }
+    if (/^Version\s*[:：]\s*/i.test(line)) {
+      usesVariantGroups = true;
+      continue;
+    }
+    const selVariantMatch = line.match(/^Selected Variant\s*[:：]\s*(\d+)$/i);
+    if (selVariantMatch) {
+      selectedVariantFromText = Number(selVariantMatch[1]);
+      continue;
+    }
+    const selAltVariantMatch = line.match(
+      /^Selected Alt Variant(?:\s+(?:Two|Three|Four|Five))?\s*[:：]\s*(\d+)$/i,
+    );
+    if (selAltVariantMatch) {
+      selectedAltVariantsFromText.push(Number(selAltVariantMatch[1]));
+      continue;
+    }
+    const selVersionMatch = line.match(/^Selected Version\s*[:：]\s*(\d+)$/i);
+    if (selVersionMatch) {
+      selectedVersion = Number(selVersionMatch[1]);
+      usesVariantGroups = true;
+      continue;
+    }
+    const selVariantGroupMatch = line.match(/^Selected Variant Group\s*[:：]\s*(\d+)\s*=\s*(\d+)$/i);
+    if (selVariantGroupMatch) {
+      variantGroupSelections.set(Number(selVariantGroupMatch[1]), Number(selVariantGroupMatch[2]));
+      usesVariantGroups = true;
+      continue;
+    }
+
     if (/^(?:Corrupted|Twice Corrupted|已腐化|双重腐化)$/i.test(line)) {
       corrupted = true;
       continue;
@@ -248,9 +316,10 @@ export function parseItemText(rawText: string, idOverride?: string, game: GameId
 
     if (
       /^(?:Unique ID|Requirements|需求|Item Level|物品等级|Requires|需求等级|Note|备注|Weapon Range|攻击范围|Limited to|仅限|Radius|影响范围|ArmourBasePercentile|EvasionBasePercentile|EnergyShieldBasePercentile|WardBasePercentile|<ModRange\b)/i.test(line) ||
-      /^(?:Rune|符文)\s*[:：]/i.test(line) ||
+      /^(?:Rune|符文|Crafted|Prefix|Suffix|League|Source|Upgrade|Unreleased|Catalyst|CatalystQuality|Cluster Jewel Skill|Cluster Jewel Node Count|Talisman Tier|Memory Strands|Has Alt Variant(?:\s+(?:Two|Three|Four|Five))?|Allow Duplicate Variants|Has Variants|Selected Variants)\s*[:：]/i.test(line) ||
+      /^Quality\s*\([^)]*Modifiers\)\s*[:：]/i.test(line) ||
       /^(?:Str|Dex|Int|Strength|Dexterity|Intelligence|力量|敏捷|智慧|Class|职业)\s*[:：]\s*\d+/i.test(line) ||
-      /^(?:Unidentified|未鉴定|Mirrored|已复制|Split|已分裂|Synthesised Item|追忆物品|Fractured Item|分裂物品|Searing Exarch Item|Eater of Worlds Item|Shaper Item|Elder Item|Crusader Item|Hunter Item|Redeemer Item|Warlord Item)$/i.test(line)
+      /^(?:Unidentified|未鉴定|Mirrored|已复制|Split|已分裂|Historic|Foulborn Unique|Foil Unique|Synthesised Item|追忆物品|Fractured Item|分裂物品|Searing Exarch Item|Eater of Worlds Item|Shaper Item|Elder Item|Crusader Item|Hunter Item|Redeemer Item|Warlord Item)$/i.test(line)
     ) {
       continue;
     }
@@ -352,28 +421,73 @@ export function parseItemText(rawText: string, idOverride?: string, game: GameId
 
     // Ignore flavour text (lines without digits and without known flag keywords)
     const isImplicitTag = /\((?:implicit|enchant|rune)\)|（(?:基底|固有|附魔|符文)）/i.test(line);
-    const normalized = normalizeStatLineToEn(line);
-    if (!normalized) continue;
 
     if (afterImplicitsMarker && implicitCountHint !== null) {
-      statCandidates.push(normalized);
+      rawStatCandidates.push(line);
     } else if (isImplicitTag) {
-      implicits.push(normalized);
+      rawTaggedImplicits.push(line);
     } else {
-      collectedSections[collectedSections.length - 1]!.push(normalized);
+      rawCollectedSections[rawCollectedSections.length - 1]!.push(line);
     }
   }
 
+  // Resolve active unique variants (PoB `<Item variant="...">` / `Selected Variant: N` / `Variant:` list)
+  const resolvedPrimaryVariant =
+    selectedVariantFromText ??
+    options?.variant ??
+    (variantListCount > 0 ? variantListCount : undefined);
+  const activeVariants = new Set<number>();
+  if (resolvedPrimaryVariant !== undefined && Number.isFinite(resolvedPrimaryVariant)) {
+    activeVariants.add(resolvedPrimaryVariant);
+  }
+  for (const alt of [...(options?.variantAlts ?? []), ...selectedAltVariantsFromText]) {
+    if (Number.isFinite(alt) && alt > 0) {
+      activeVariants.add(alt);
+    }
+  }
+  const variantSelection: ItemVariantSelection = {
+    activeVariants,
+    usesVariantGroups,
+    selectedVersion,
+    variantGroupSelections,
+  };
+
+  const resolveAndNormalizeModLine = (rawLine: string, rawModIndex?: number): string | null => {
+    if (!shouldIncludeVariantLine(rawLine, variantSelection)) {
+      return null;
+    }
+    const inlineRanges = parseModLineRangeTag(rawLine);
+    const modRangeOverride =
+      inlineRanges ?? (rawModIndex !== undefined ? modRanges.get(rawModIndex) : undefined);
+    const interpolated = interpolateModRanges(rawLine, modRangeOverride);
+    const normalized = normalizeStatLineToEn(interpolated);
+    return normalized || null;
+  };
+
+  for (const rawImp of rawTaggedImplicits) {
+    const normalized = resolveAndNormalizeModLine(rawImp);
+    if (normalized) implicits.push(normalized);
+  }
+
   if (implicitCountHint !== null) {
-    for (let i = 0; i < statCandidates.length; i++) {
+    for (let i = 0; i < rawStatCandidates.length; i++) {
+      const normalized = resolveAndNormalizeModLine(rawStatCandidates[i]!, i + 1);
+      if (!normalized) continue;
       if (i < implicitCountHint) {
-        implicits.push(statCandidates[i]!);
+        implicits.push(normalized);
       } else {
-        explicits.push(statCandidates[i]!);
+        explicits.push(normalized);
       }
     }
   } else {
-    const nonEmptySections = collectedSections.filter((s) => s.length > 0);
+    let modIdx = 1;
+    const nonEmptySections = rawCollectedSections
+      .map((sec) =>
+        sec
+          .map((rawLine) => resolveAndNormalizeModLine(rawLine, modIdx++))
+          .filter((l): l is string => Boolean(l)),
+      )
+      .filter((s) => s.length > 0);
     if (nonEmptySections.length >= 2 && implicits.length === 0) {
       // Heuristic: if first mod section has <= 2 lines, treat as implicits and last as explicits
       if (nonEmptySections[0]!.length <= 2) {
@@ -416,10 +530,17 @@ export function parseItemText(rawText: string, idOverride?: string, game: GameId
     weaponStats = { ...officialBase.weapon };
   }
 
-  // Merge official base armour/evasion/ES stats if item text omitted explicit defense lines
+  // Merge official base armour/evasion/ES stats if item text omitted explicit defense lines.
+  // Also preserve shield base `blockChance` when XML provides Armour/Evasion/ES without `Chance to Block:`.
   if (!hasArmourStats && officialBase?.armour) {
     Object.assign(armourStats, officialBase.armour);
     hasArmourStats = true;
+  } else if (
+    hasArmourStats &&
+    armourStats.blockChance === undefined &&
+    officialBase?.armour?.blockChance !== undefined
+  ) {
+    armourStats.blockChance = officialBase.armour.blockChance;
   }
 
   const isChineseName = /[\u4e00-\u9fff]/.test(name);
@@ -441,6 +562,8 @@ export function parseItemText(rawText: string, idOverride?: string, game: GameId
     explicits,
     rawText: trimmed,
     ...(corrupted ? { corrupted: true } : {}),
+    ...(resolvedPrimaryVariant !== undefined ? { variant: resolvedPrimaryVariant } : {}),
+    ...(selectedVariantFromText !== undefined ? { selectedVariant: selectedVariantFromText } : {}),
     localStatsPrecomputed,
   };
 }
@@ -452,7 +575,12 @@ export function formatItemToPobText(item: Item): string {
   const lines: string[] = [];
   lines.push(`Rarity: ${item.rarity}`);
   lines.push(item.name);
-  if (item.baseName && item.baseName !== item.name) {
+  if (
+    item.rarity !== 'NORMAL' &&
+    item.rarity !== 'MAGIC' &&
+    item.baseName &&
+    item.baseName !== item.name
+  ) {
     lines.push(item.baseName);
   }
   if (item.quality > 0) {

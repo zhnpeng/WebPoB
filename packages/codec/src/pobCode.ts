@@ -12,7 +12,19 @@ import type {
   WeaponSetId,
 } from '@webpob/core';
 import { createDefaultConfig, getClassesForGame, getGemsForGame, getRuleset, getTreeForGame } from '@webpob/data';
-import { formatItemToPobText, parseItemText } from './itemParser.js';
+import { formatItemToPobText, parseItemText, type ParseItemOptions } from './itemParser.js';
+import {
+  escapeXml,
+  extractActiveConfigSetXml,
+  extractCustomModifierBlocks,
+  parseAttributes,
+  parseMasteryEffectsAttr,
+  parseNodeOverrides,
+  parseSkillWeaponSets,
+  serializeMasteryEffectsAttr,
+  serializeNodeOverrides,
+  unescapeXml,
+} from './pobXmlHelpers.js';
 
 function bytesToBase64Url(bytes: Uint8Array): string {
   let binary = '';
@@ -46,34 +58,6 @@ function base64UrlToBytes(input: string): Uint8Array {
     return bytes;
   }
   return new Uint8Array(Buffer.from(padded, 'base64'));
-}
-
-function escapeXml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
-
-function unescapeXml(str: string): string {
-  return str
-    .replace(/&apos;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&gt;/g, '>')
-    .replace(/&lt;/g, '<')
-    .replace(/&amp;/g, '&');
-}
-
-function parseAttributes(tagHeader: string): Record<string, string> {
-  const attrs: Record<string, string> = {};
-  const attrRegex = /([a-zA-Z0-9_:-]+)\s*=\s*"([^"]*)"/g;
-  let match: RegExpExecArray | null;
-  while ((match = attrRegex.exec(tagHeader)) !== null) {
-    attrs[match[1]!] = unescapeXml(match[2]!);
-  }
-  return attrs;
 }
 
 const POE1_CLASS_TO_NUM: Record<string, number> = {
@@ -112,6 +96,8 @@ export function buildToPobXml(build: Build): string {
       ? (POE2_CLASS_TO_NUM[build.classId] ?? 6)
       : (POE1_CLASS_TO_NUM[build.classId] ?? 3);
   const gemsCatalog = getGemsForGame(build.game);
+  const tree = getTreeForGame(build.game);
+  const targetVersion = build.game === 'poe2' ? '0_1' : '3_0';
 
   const lines: string[] = [];
   lines.push(`<?xml version="1.0" encoding="UTF-8"?>`);
@@ -119,7 +105,7 @@ export function buildToPobXml(build: Build): string {
 
   // <Build>
   lines.push(
-    `  <Build level="${build.level}" targetVersion="3_0" className="${escapeXml(build.classId)}" ascendClassName="${escapeXml(build.ascendancyId)}" ascendancyName="${escapeXml(build.ascendancyId)}" mainSocketGroup="${mainIdx}" activeWeaponSet="${build.activeWeaponSet}" bandit="${escapeXml(build.bandit ?? 'None')}" buildName="${escapeXml(build.name)}" />`,
+    `  <Build level="${build.level}" targetVersion="${targetVersion}" className="${escapeXml(build.classId)}" ascendClassName="${escapeXml(build.ascendancyId)}" ascendancyName="${escapeXml(build.ascendancyId)}" mainSocketGroup="${mainIdx}" activeWeaponSet="${build.activeWeaponSet}" bandit="${escapeXml(build.bandit ?? 'None')}" buildName="${escapeXml(build.name)}" />`,
   );
 
   // Pre-assign numeric item IDs so both <Tree><Spec><Sockets> and <Items> share exact IDs
@@ -148,6 +134,8 @@ export function buildToPobXml(build: Build): string {
     const ws2Str = spec.weaponSet2NodeIds.join(',');
     const wsAttrs =
       build.game === 'poe2' ? ` weaponSet1Nodes="${ws1Str}" weaponSet2Nodes="${ws2Str}"` : '';
+    const masteryAttrStr = serializeMasteryEffectsAttr(spec.masteryEffects, tree);
+    const masteryAttr = masteryAttrStr ? ` masteryEffects="${escapeXml(masteryAttrStr)}"` : '';
     const jewelSockets = Object.entries(spec.socketedJewels ?? {})
       .map(([nodeId, itemId]) => ({ nodeId, numId: idToNum.get(itemId) }))
       .filter((s): s is { nodeId: string; numId: number } => Boolean(s.numId));
@@ -159,10 +147,13 @@ export function buildToPobXml(build: Build): string {
     const intOverrides = attrOverrideEntries.filter(([, v]) => v === 'int').map(([k]) => k);
     const hasAttrOverrides =
       strOverrides.length > 0 || dexOverrides.length > 0 || intOverrides.length > 0;
+    const nodeOverrideLines = serializeNodeOverrides(spec.nodeOverrides);
+    const hasNodeOverrides = nodeOverrideLines.length > 0;
+    const hasOverrides = hasAttrOverrides || hasNodeOverrides;
 
-    if (jewelSockets.length > 0 || hasWsChildren || hasAttrOverrides) {
+    if (jewelSockets.length > 0 || hasWsChildren || hasOverrides) {
       lines.push(
-        `    <Spec title="${escapeXml(spec.title)}" treeVersion="${escapeXml(spec.treeVersion)}" classId="${classNum}" ascendClassId="0" nodes="${nodesStr}"${wsAttrs}>`,
+        `    <Spec title="${escapeXml(spec.title)}" treeVersion="${escapeXml(spec.treeVersion)}" classId="${classNum}" ascendClassId="0" nodes="${nodesStr}"${wsAttrs}${masteryAttr}>`,
       );
       if (build.game === 'poe2' && spec.weaponSet1NodeIds.length > 0) {
         lines.push(`      <WeaponSet1 nodes="${ws1Str}" />`);
@@ -177,17 +168,22 @@ export function buildToPobXml(build: Build): string {
         }
         lines.push(`      </Sockets>`);
       }
-      if (hasAttrOverrides) {
+      if (hasOverrides) {
         lines.push(`      <Overrides>`);
-        lines.push(
-          `        <AttributeOverride strNodes="${strOverrides.join(',')}" dexNodes="${dexOverrides.join(',')}" intNodes="${intOverrides.join(',')}" />`,
-        );
+        if (hasAttrOverrides) {
+          lines.push(
+            `        <AttributeOverride strNodes="${strOverrides.join(',')}" dexNodes="${dexOverrides.join(',')}" intNodes="${intOverrides.join(',')}" />`,
+          );
+        }
+        for (const overrideLine of nodeOverrideLines) {
+          lines.push(overrideLine);
+        }
         lines.push(`      </Overrides>`);
       }
       lines.push(`    </Spec>`);
     } else {
       lines.push(
-        `    <Spec title="${escapeXml(spec.title)}" treeVersion="${escapeXml(spec.treeVersion)}" classId="${classNum}" ascendClassId="0" nodes="${nodesStr}"${wsAttrs} />`,
+        `    <Spec title="${escapeXml(spec.title)}" treeVersion="${escapeXml(spec.treeVersion)}" classId="${classNum}" ascendClassId="0" nodes="${nodesStr}"${wsAttrs}${masteryAttr} />`,
       );
     }
   }
@@ -219,10 +215,14 @@ export function buildToPobXml(build: Build): string {
         group.weaponSets && group.weaponSets.length > 0
           ? ` weaponSets="${group.weaponSets.join(',')}"`
           : '';
+      const poe2SetAttrs =
+        build.game === 'poe2' && group.weaponSets !== undefined
+          ? ` set1="${group.weaponSets.includes(1)}" set2="${group.weaponSets.includes(2)}"`
+          : '';
       const mainActive = group.mainActiveSkillIndex ?? 1;
       const fullDpsAttr = group.includeInFullDps ? ' includeInFullDPS="true"' : '';
       lines.push(
-        `      <Skill enabled="${group.enabled}" mainActiveSkill="${mainActive}" mainActiveSkillCalcs="${mainActive}"${fullDpsAttr} label="${escapeXml(group.label)}"${slotAttr}${wsAttr}>`,
+        `      <Skill enabled="${group.enabled}" mainActiveSkill="${mainActive}" mainActiveSkillCalcs="${mainActive}"${fullDpsAttr} label="${escapeXml(group.label)}"${slotAttr}${wsAttr}${poe2SetAttrs}>`,
       );
       for (const gem of group.gems) {
         const def = gemsCatalog.find((g) => g.id === gem.gemId);
@@ -256,8 +256,10 @@ export function buildToPobXml(build: Build): string {
   lines.push(`  <Items activeItemSet="${escapeXml(activeItemSetId)}">`);
   itemEntries.forEach((item, index) => {
     const numId = index + 1;
+    const itemVariant = item.variant ?? item.selectedVariant;
+    const variantAttr = itemVariant !== undefined ? ` variant="${itemVariant}"` : '';
     const body = escapeXml(formatItemToPobText(item));
-    lines.push(`    <Item id="${numId}">\n${body}\n    </Item>`);
+    lines.push(`    <Item id="${numId}"${variantAttr}>\n${body}\n    </Item>`);
   });
   itemSetsToWrite.forEach((setSpec, idx) => {
     const setId = setSpec.id || String(idx + 1);
@@ -297,7 +299,9 @@ export function buildToPobXml(build: Build): string {
   lines.push(`      <Input name="buffOnslaught" boolean="${cfg.onslaught}" />`);
   lines.push(`      <Input name="enemyShocked" boolean="${cfg.enemyShocked}" />`);
   lines.push(`      <Input name="shockValue" number="${cfg.shockValue}" />`);
+  if (cfg.enemyChilled) lines.push(`      <Input name="conditionEnemyChilled" boolean="true" />`);
   if (cfg.conditionLowLife) lines.push(`      <Input name="conditionLowLife" boolean="true" />`);
+  if (cfg.conditionFullLife) lines.push(`      <Input name="conditionFullLife" boolean="true" />`);
   if (cfg.buffArcaneSurge) lines.push(`      <Input name="buffArcaneSurge" boolean="true" />`);
   if (cfg.buffTailwind) lines.push(`      <Input name="buffTailwind" boolean="true" />`);
   if (cfg.enemyIntimidated) lines.push(`      <Input name="conditionEnemyIntimidated" boolean="true" />`);
@@ -437,7 +441,24 @@ export function xmlToBuild(xml: string): Build {
     const numId = attrs.id ?? String(numIdToItemId.size + 1);
     const body = unescapeXml(itemMatch[2] ?? '').trim();
     const itemId = `imp_item_${numId}`;
-    const parsed = parseItemText(body, itemId, game);
+    const variantNum = attrs.variant !== undefined ? Number(attrs.variant) : undefined;
+    const variantAlts = [
+      attrs.variantAlt,
+      attrs.variantAlt2,
+      attrs.variantAlt3,
+      attrs.variantAlt4,
+      attrs.variantAlt5,
+    ]
+      .map((v) => (v !== undefined ? Number(v) : NaN))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    const itemOptions: ParseItemOptions | undefined =
+      (variantNum !== undefined && Number.isFinite(variantNum)) || variantAlts.length > 0
+        ? {
+            ...(variantNum !== undefined && Number.isFinite(variantNum) ? { variant: variantNum } : {}),
+            ...(variantAlts.length > 0 ? { variantAlts } : {}),
+          }
+        : undefined;
+    const parsed = parseItemText(body, itemId, game, itemOptions);
     if (parsed) {
       items[itemId] = parsed;
       numIdToItemId.set(numId, itemId);
@@ -520,6 +541,7 @@ export function xmlToBuild(xml: string): Build {
     if (startNodeId && !allocatedNodeIds.includes(startNodeId)) {
       allocatedNodeIds = [startNodeId, ...allocatedNodeIds];
     }
+    // Preserve ALL <Spec><Sockets> jewel nodeIds (including Voices / cluster jewel / legacy socket IDs absent from tree.nodes)
     const specJewels: Record<number, string> = {};
     const jewelSocketRegex = /<Socket\b([^>]*)\/?>/gi;
     let jsMatch: RegExpExecArray | null;
@@ -540,16 +562,21 @@ export function xmlToBuild(xml: string): Build {
       for (const id of parseNodeList(attrs.dexNodes)) specAttributeOverrides[id] = 'dex';
       for (const id of parseNodeList(attrs.intNodes)) specAttributeOverrides[id] = 'int';
     }
+    const masteryEffects = parseMasteryEffectsAttr(specAttrs.masteryEffects, tree);
+    const specNodeOverrides = parseNodeOverrides(specInner);
     treeSpecs.push({
       title: specAttrs.title || (treeSpecs.length === 0 ? 'Default' : `Spec ${treeSpecs.length + 1}`),
       treeVersion: specAttrs.treeVersion || tree.version,
       allocatedNodeIds,
       weaponSet1NodeIds,
       weaponSet2NodeIds,
-      masteryEffects: {},
+      masteryEffects,
       ...(Object.keys(specJewels).length > 0 ? { socketedJewels: specJewels } : {}),
       ...(Object.keys(specAttributeOverrides).length > 0
         ? { attributeOverrides: specAttributeOverrides }
+        : {}),
+      ...(Object.keys(specNodeOverrides).length > 0
+        ? { nodeOverrides: specNodeOverrides }
         : {}),
     });
   }
@@ -595,20 +622,17 @@ export function xmlToBuild(xml: string): Build {
         }
       }
       if (gems.length > 0) {
-        const weaponSets = attrs.weaponSets
-          ? (attrs.weaponSets
-              .split(',')
-              .map((v) => Number(v.trim()))
-              .filter((v): v is WeaponSetId => v === 1 || v === 2))
-          : undefined;
+        const weaponSets = parseSkillWeaponSets(attrs, game);
         const mainActiveRaw = Number(attrs.mainActiveSkill ?? attrs.mainActiveSkillCalcs ?? 1);
+        const groupEnabled =
+          attrs.enabled !== undefined ? attrs.enabled !== 'false' : attrs.active !== 'false';
         parsed.push({
           id: `${prefix}_sg_${groupCounter}`,
           label: attrs.label || `Skill Group ${groupCounter}`,
-          enabled: attrs.enabled !== 'false',
+          enabled: groupEnabled,
           ...(attrs.includeInFullDPS === 'true' ? { includeInFullDps: true } : {}),
           slot: attrs.slot as EquipmentSlotId | undefined,
-          weaponSets: weaponSets && weaponSets.length > 0 ? weaponSets : game === 'poe2' ? [1, 2] : undefined,
+          weaponSets,
           ...(Number.isFinite(mainActiveRaw) && mainActiveRaw > 1 ? { mainActiveSkillIndex: mainActiveRaw } : {}),
           gems,
         });
@@ -691,9 +715,10 @@ export function xmlToBuild(xml: string): Build {
   };
   let banditFromConfig: Build['bandit'] | undefined;
   const questCustomModLines: string[] = [];
+  const activeConfigXml = extractActiveConfigSetXml(xml);
   const inputRegex = /<(?:Input|Placeholder)\b([^>]*)\/?>/gi;
   let inputMatch: RegExpExecArray | null;
-  while ((inputMatch = inputRegex.exec(xml)) !== null) {
+  while ((inputMatch = inputRegex.exec(activeConfigXml)) !== null) {
     const attrs = parseAttributes(inputMatch[1]!);
     const key = attrs.name;
     // PoE 2 optional campaign quest rewards stored as <Input name="quest..." string="..."/>
@@ -721,8 +746,17 @@ export function xmlToBuild(xml: string): Build {
     }
     if (key === 'enemyLevel' && attrs.number) config.enemyLevel = Number(attrs.number);
     if (key === 'enemyIsBoss' && attrs.string) {
-      if (attrs.string === 'None' || attrs.string === 'Guardian' || attrs.string === 'Pinnacle') {
-        config.enemyIsBoss = attrs.string;
+      const normalizedBoss = attrs.string.trim().toLowerCase();
+      if (normalizedBoss === 'none') {
+        config.enemyIsBoss = 'None';
+      } else if (normalizedBoss === 'guardian' || normalizedBoss === 'boss') {
+        config.enemyIsBoss = 'Guardian';
+      } else if (
+        normalizedBoss === 'pinnacle' ||
+        normalizedBoss === 'shaper' ||
+        normalizedBoss === 'sirus'
+      ) {
+        config.enemyIsBoss = 'Pinnacle';
       }
     }
     if (key === 'usePowerCharges' && attrs.boolean) config.usePowerCharges = attrs.boolean === 'true';
@@ -732,9 +766,17 @@ export function xmlToBuild(xml: string): Build {
     if (key === 'useEnduranceCharges' && attrs.boolean) config.useEnduranceCharges = attrs.boolean === 'true';
     if (key === 'enduranceCharges' && attrs.number) config.enduranceCharges = Number(attrs.number);
     if ((key === 'onslaught' || key === 'buffOnslaught') && attrs.boolean) config.onslaught = attrs.boolean === 'true';
-    if (key === 'enemyShocked' && attrs.boolean) config.enemyShocked = attrs.boolean === 'true';
-    if (key === 'shockValue' && attrs.number) config.shockValue = Number(attrs.number);
+    if ((key === 'enemyShocked' || key === 'conditionEnemyShocked') && attrs.boolean) {
+      config.enemyShocked = attrs.boolean === 'true';
+    }
+    if ((key === 'shockValue' || key === 'conditionShockEffect') && attrs.number) {
+      config.shockValue = Number(attrs.number);
+    }
+    if ((key === 'enemyChilled' || key === 'conditionEnemyChilled') && attrs.boolean) {
+      config.enemyChilled = attrs.boolean === 'true';
+    }
     if (key === 'conditionLowLife' && attrs.boolean) config.conditionLowLife = attrs.boolean === 'true';
+    if (key === 'conditionFullLife' && attrs.boolean) config.conditionFullLife = attrs.boolean === 'true';
     if (key === 'buffArcaneSurge' && attrs.boolean) config.buffArcaneSurge = attrs.boolean === 'true';
     if (key === 'buffTailwind' && attrs.boolean) config.buffTailwind = attrs.boolean === 'true';
     if (key === 'conditionEnemyIntimidated' && attrs.boolean) config.enemyIntimidated = attrs.boolean === 'true';
@@ -785,10 +827,21 @@ export function xmlToBuild(xml: string): Build {
     }
     if (key === 'customMods' && attrs.string) config.customMods = attrs.string;
   }
-  if (questCustomModLines.length > 0) {
-    config.customMods = [config.customMods.trim(), ...questCustomModLines]
-      .filter(Boolean)
-      .join('\n');
+  const customModifierBlocks = extractCustomModifierBlocks(activeConfigXml);
+  const customModParts: string[] = [];
+  if (config.customMods.trim()) {
+    customModParts.push(config.customMods.trim());
+  }
+  for (const block of customModifierBlocks) {
+    if (!customModParts.includes(block)) {
+      customModParts.push(block);
+    }
+  }
+  for (const qLine of questCustomModLines) {
+    customModParts.push(qLine);
+  }
+  if (customModParts.length > 0) {
+    config.customMods = customModParts.join('\n');
   }
 
   // Parse <Notes>

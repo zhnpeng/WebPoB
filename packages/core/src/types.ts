@@ -317,6 +317,10 @@ export interface Item {
   rawText?: string;
   /** Whether the item is Corrupted (or Twice Corrupted in PoE 2). */
   corrupted?: boolean;
+  /** Selected unique variant index (PoB `<Item variant="N">` / `Selected Variant: N`). */
+  variant?: number;
+  /** Selected unique variant index when specified in PoB item text (`Selected Variant: N`). */
+  selectedVariant?: number;
   /**
    * Whether `armourStats` / `weaponStats` already include local modifiers & quality
    * (true for in-game Ctrl+C clipboard text; false for PoB XML `<Item>` & Unique catalog).
@@ -345,6 +349,7 @@ export interface BuildConfig {
   enemyChilled: boolean;
   /** Endgame combat conditions (matching official PoB ConfigOptions). */
   conditionLowLife?: boolean;
+  conditionFullLife?: boolean;
   buffArcaneSurge?: boolean;
   buffTailwind?: boolean;
   enemyIntimidated?: boolean;
@@ -387,6 +392,8 @@ export interface TreeSpec {
   socketedJewels?: Record<number, string>;
   /** PoE 2: Chosen attribute overrides on "+5 to any Attribute" travel nodes. */
   attributeOverrides?: Record<number, 'str' | 'dex' | 'int'>;
+  /** PoE 1: Tattoo / Runegraft passive node overrides (`<Overrides><Override nodeId="..." dn="...">`). */
+  nodeOverrides?: Record<number, { name?: string; stats: string[] }>;
 }
 
 export interface ItemSetSpec {
