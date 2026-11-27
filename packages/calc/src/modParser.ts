@@ -1,6 +1,7 @@
 import { KeywordFlag, ModFlag, type Mod, type ModType } from '@webpob/core';
 import { normalizeStatLineToEn } from '@webpob/i18n';
 import { normalizeGemFilterTokens } from './gemBonus.js';
+import { POE1_EXTRA_MOD_RULES } from './modParserPoe1.js';
 
 function mkMod(
   name: string,
@@ -973,8 +974,9 @@ const PARSER_RULES: ParserRule[] = [
   },
   {
     pattern: /^\+(\d+) to Maximum (Power|Frenzy|Endurance) Charges?$/i,
-    build: (m, src) => [mkMod(`${m[2]}ChargesMax`, 'BASE', Number(m[1]), src)],
+    build: (m, src) => [mkMod(`Max${m[2]}Charges`, 'BASE', Number(m[1]), src)],
   },
+  ...POE1_EXTRA_MOD_RULES,
 ];
 
 export interface ParseModOptions {

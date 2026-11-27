@@ -377,7 +377,7 @@ describe('@webpob/calc', () => {
     }
     const maxCharges = parseModLine('最大暴击球数量 +1', 'Test');
     expect(maxCharges).toEqual([
-      expect.objectContaining({ name: 'PowerChargesMax', type: 'BASE', value: 1 }),
+      expect.objectContaining({ name: 'MaxPowerCharges', type: 'BASE', value: 1 }),
     ]);
   });
 
