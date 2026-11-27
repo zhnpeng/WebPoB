@@ -1,4 +1,10 @@
 import type { Mod, ModType } from '@webpob/core';
+import {
+  applyModTagEval,
+  createEmptyEvalContext,
+  evaluateModTags,
+  type ModEvalContext,
+} from './modTagEval.js';
 
 export interface EvaluatedStat {
   base: number;
@@ -11,10 +17,37 @@ export interface EvaluatedStat {
 /**
  * Pure-TypeScript port of Path of Building's `ModDB`.
  * Stores modifiers keyed by canonical stat name and evaluates them against
- * bitmask `ModFlag` & `KeywordFlag` contexts.
+ * bitmask `ModFlag`, `KeywordFlag`, and `ModTag` contexts.
  */
 export class ModDB {
   private readonly store = new Map<string, Mod[]>();
+  private evalContext: ModEvalContext = createEmptyEvalContext();
+
+  setCondition(name: string, value: boolean): void {
+    this.evalContext.conditions[name] = value;
+  }
+
+  setMultiplier(name: string, value: number): void {
+    this.evalContext.multipliers[name] = value;
+  }
+
+  setStat(name: string, value: number): void {
+    this.evalContext.stats[name] = value;
+  }
+
+  setEvalContext(ctx: ModEvalContext): void {
+    this.evalContext = {
+      conditions: { ...ctx.conditions },
+      multipliers: { ...ctx.multipliers },
+      stats: { ...ctx.stats },
+      ...(ctx.skillTypes ? { skillTypes: { ...ctx.skillTypes } } : {}),
+      ...(ctx.socketedIn !== undefined ? { socketedIn: ctx.socketedIn } : {}),
+    };
+  }
+
+  getEvalContext(): ModEvalContext {
+    return this.evalContext;
+  }
 
   addMod(mod: Mod): void {
     let bucket = this.store.get(mod.name);
@@ -36,6 +69,7 @@ export class ModDB {
     for (const [key, list] of this.store.entries()) {
       copy.store.set(key, [...list]);
     }
+    copy.setEvalContext(this.evalContext);
     return copy;
   }
 
@@ -87,7 +121,9 @@ export class ModDB {
     let total = 0;
     for (const mod of this.collect(names, flags, keywordFlags)) {
       if (mod.type === modType && typeof mod.value === 'number') {
-        total += mod.value;
+        const evalRes = evaluateModTags(mod, this.evalContext);
+        if (!evalRes.active) continue;
+        total += applyModTagEval(mod.value, evalRes);
       }
     }
     return total;
@@ -111,7 +147,10 @@ export class ModDB {
           typeof mod.value === 'number' &&
           this.matches(mod, flags, keywordFlags)
         ) {
-          modResult *= 1 + mod.value / 100;
+          const evalRes = evaluateModTags(mod, this.evalContext);
+          if (!evalRes.active) continue;
+          const effectiveVal = applyModTagEval(mod.value, evalRes);
+          modResult *= 1 + effectiveVal / 100;
         }
       }
       result *= Math.floor(modResult * 100 + 0.5) / 100;
@@ -122,7 +161,10 @@ export class ModDB {
   flag(name: string, flags = 0, keywordFlags = 0): boolean {
     for (const mod of this.collect(name, flags, keywordFlags)) {
       if (mod.type === 'FLAG' && mod.value === true) {
-        return true;
+        const evalRes = evaluateModTags(mod, this.evalContext);
+        if (evalRes.active) {
+          return true;
+        }
       }
     }
     return false;
@@ -132,7 +174,9 @@ export class ModDB {
     let value: number | null = null;
     for (const mod of this.collect(name, flags, keywordFlags)) {
       if (mod.type === 'OVERRIDE' && typeof mod.value === 'number') {
-        value = mod.value;
+        const evalRes = evaluateModTags(mod, this.evalContext);
+        if (!evalRes.active) continue;
+        value = applyModTagEval(mod.value, evalRes);
       }
     }
     return value;
@@ -155,18 +199,26 @@ export class ModDB {
     const sources: EvaluatedStat['sources'] = [];
 
     for (const mod of matched) {
-      if (mod.type === 'BASE' && typeof mod.value === 'number') {
-        base += mod.value;
-        sources.push({ source: mod.source, type: 'BASE', value: mod.value });
-      } else if (mod.type === 'INC' && typeof mod.value === 'number') {
-        incPct += mod.value;
-        sources.push({ source: mod.source, type: 'INC', value: mod.value });
-      } else if (mod.type === 'MORE' && typeof mod.value === 'number') {
-        moreMultiplier *= 1 + mod.value / 100;
-        sources.push({ source: mod.source, type: 'MORE', value: mod.value });
-      } else if (mod.type === 'OVERRIDE' && typeof mod.value === 'number') {
-        overrideVal = mod.value;
-        sources.push({ source: mod.source, type: 'OVERRIDE', value: mod.value });
+      if (typeof mod.value !== 'number') continue;
+      const evalRes = evaluateModTags(mod, this.evalContext);
+      if (!evalRes.active) continue;
+      const effectiveVal = applyModTagEval(mod.value, evalRes);
+      if (mod.tags && mod.tags.length > 0 && effectiveVal === 0 && mod.type !== 'OVERRIDE') {
+        continue;
+      }
+
+      if (mod.type === 'BASE') {
+        base += effectiveVal;
+        sources.push({ source: mod.source, type: 'BASE', value: effectiveVal });
+      } else if (mod.type === 'INC') {
+        incPct += effectiveVal;
+        sources.push({ source: mod.source, type: 'INC', value: effectiveVal });
+      } else if (mod.type === 'MORE') {
+        moreMultiplier *= 1 + effectiveVal / 100;
+        sources.push({ source: mod.source, type: 'MORE', value: effectiveVal });
+      } else if (mod.type === 'OVERRIDE') {
+        overrideVal = effectiveVal;
+        sources.push({ source: mod.source, type: 'OVERRIDE', value: effectiveVal });
       }
     }
 
