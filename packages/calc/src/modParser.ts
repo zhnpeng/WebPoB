@@ -2,6 +2,7 @@ import { KeywordFlag, ModFlag, type Mod, type ModType } from '@webpob/core';
 import { normalizeStatLineToEn } from '@webpob/i18n';
 import { normalizeGemFilterTokens } from './gemBonus.js';
 import { POE1_EXTRA_MOD_RULES } from './modParserPoe1.js';
+import { POE2_EXTRA_MOD_RULES } from './modParserPoe2.js';
 
 function mkMod(
   name: string,
@@ -977,6 +978,7 @@ const PARSER_RULES: ParserRule[] = [
     build: (m, src) => [mkMod(`Max${m[2]}Charges`, 'BASE', Number(m[1]), src)],
   },
   ...POE1_EXTRA_MOD_RULES,
+  ...POE2_EXTRA_MOD_RULES,
 ];
 
 export interface ParseModOptions {
@@ -1001,7 +1003,8 @@ export function parseModLine(rawLine: string, source: string, opts?: ParseModOpt
   for (const rule of PARSER_RULES) {
     const match = canonical.match(rule.pattern);
     if (match) {
-      return rule.build(match, source);
+      const built = rule.build(match, source);
+      if (built.length > 0) return built;
     }
   }
   return [];
