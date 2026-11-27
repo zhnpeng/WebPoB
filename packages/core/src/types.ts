@@ -114,6 +114,17 @@ export interface ModCondition {
   threshold?: number;
 }
 
+/**
+ * Discriminated union matching Path of Building's `ModTag` evaluation model.
+ * Enables conditional, multiplier-scaled, per-stat, skill-type, and socket-scoped modifiers.
+ */
+export type ModTag =
+  | { type: 'Condition'; var: string; neg?: boolean }
+  | { type: 'Multiplier'; var: string; limit?: number; base?: number }
+  | { type: 'PerStat'; stat: string; div: number; limit?: number }
+  | { type: 'SkillType'; skillType: string; neg?: boolean }
+  | { type: 'SocketedIn'; slotName?: string; neg?: boolean };
+
 export interface Mod {
   name: string;
   type: ModType;
@@ -122,6 +133,7 @@ export interface Mod {
   keywordFlags: number;
   source: string;
   condition?: ModCondition;
+  tags?: ModTag[];
 }
 
 export type PassiveNodeKind = 'start' | 'small' | 'notable' | 'keystone' | 'mastery' | 'jewel';
