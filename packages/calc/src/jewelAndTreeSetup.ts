@@ -830,6 +830,9 @@ export function evaluateRadiusAndDistanceJewels(
     let smallEffectPct = 0;
     let nonKeystoneEffectPct = 0;
     let disablesNotables = false;
+    let disablesAllocatedSmalls = false;
+    let grantsUnallocatedSmalls = false;
+    let eternalHubrisConquered = false;
     const attrConversions: Array<{ from: 'Str' | 'Dex' | 'Int'; to: 'Str' | 'Dex' | 'Int' }> = [];
 
     for (const line of allLines) {
@@ -873,6 +876,18 @@ export function evaluateRadiusAndDistanceJewels(
         disablesNotables = true;
         continue;
       }
+      if (/^Allocated Small Passive Skills in Radius grant nothing$/i.test(line)) {
+        disablesAllocatedSmalls = true;
+        continue;
+      }
+      if (/^Grants all bonuses of Unallocated Small Passive Skills in Radius$/i.test(line)) {
+        grantsUnallocatedSmalls = true;
+        continue;
+      }
+      if (/^Passives in radius are Conquered by the Eternal Empire$/i.test(line)) {
+        eternalHubrisConquered = true;
+        continue;
+      }
       m = line.match(
         /^(Strength|Dexterity|Intelligence) from Passives in Radius is Transformed to (Strength|Dexterity|Intelligence)$/i,
       );
@@ -894,6 +909,9 @@ export function evaluateRadiusAndDistanceJewels(
       smallEffectPct > 0 ||
       nonKeystoneEffectPct > 0 ||
       disablesNotables ||
+      disablesAllocatedSmalls ||
+      grantsUnallocatedSmalls ||
+      eternalHubrisConquered ||
       attrConversions.length > 0;
 
     if (!hasRadiusEffect) continue;
@@ -1031,6 +1049,37 @@ export function evaluateRadiusAndDistanceJewels(
         notablesInRadius: notables.length,
         smallsInRadius: smalls.length,
       });
+    }
+
+    // --- D2. PoE 1 Unnatural Instinct & Elegant Hubris (Small passive suppression / unallocated grants) ---
+    if (disablesAllocatedSmalls || eternalHubrisConquered) {
+      const effRadius: JewelRadiusLabel = eternalHubrisConquered ? 'Large' : radiusLabel;
+      const effPx = getJewelRadiusPx(effRadius, tree.game, tree.version);
+      const effAllocated = getAllocatedNodesInRadius(socketNode, tree, activeTreeNodes, effPx);
+      for (const n of effAllocated) {
+        if (n.kind === 'small' && !n.ascendancyId) {
+          suppressedNodeIds.add(n.id);
+        }
+      }
+    }
+    if (grantsUnallocatedSmalls) {
+      const rSq = radiusPx * radiusPx;
+      const unallocLines: string[] = [];
+      for (const n of Object.values(tree.nodes)) {
+        if (n.id === socketNode.id || activeTreeNodes.has(n.id)) continue;
+        if (n.kind !== 'small' || n.ascendancyId) continue;
+        const dx = n.x - socketNode.x;
+        const dy = n.y - socketNode.y;
+        if (dx * dx + dy * dy <= rSq) {
+          unallocLines.push(...n.stats);
+        }
+      }
+      if (unallocLines.length > 0) {
+        addedStatLines.push({
+          source: `Unnatural Instinct (${nodeId}): ${jewel.name}`,
+          lines: unallocLines,
+        });
+      }
     }
 
     // --- E. PoE 1 Attribute Conversion Jewels (Fluid Motion, Brute Force Solution, etc.) ---

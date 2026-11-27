@@ -771,6 +771,8 @@ export interface SpecialUniqueGearOptions {
   reservedLife?: number;
   /** Optional socketed passive tree jewels (so `Melding of the Flesh` & `Prism of Belief` can also be passed here). */
   socketedJewels?: readonly Item[];
+  /** Skip re-scaling Heist ring/amulet Suffix/Prefix/Defence magnitudes when explicits are already pre-baked (PoB XML / Ctrl+C). */
+  skipHeistBaseMagnitudes?: boolean;
 }
 
 export interface SpecialUniqueGearResult {
@@ -1035,7 +1037,7 @@ export function evaluateSpecialUniqueGearMechanics(
     }
 
     // Apply Suffix / Prefix / Explicit Defence magnitude deltas on this item's explicit lines
-    if (suffixMagPct > 0 || prefixMagPct > 0 || defenceMagPct > 0) {
+    if (!opts?.skipHeistBaseMagnitudes && (suffixMagPct > 0 || prefixMagPct > 0 || defenceMagPct > 0)) {
       for (const rawExplicit of item.explicits) {
         const cleanExp = cleanModLine(rawExplicit);
         if (!cleanExp) continue;

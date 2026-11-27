@@ -636,6 +636,18 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
     },
   },
   {
+    pattern: /^(\d+)% (increased|reduced) Defences$/i,
+    build: (m, src) => {
+      const v = m[2]!.toLowerCase() === 'reduced' ? -Number(m[1]) : Number(m[1]);
+      return [
+        mkMod('Armour', 'INC', v, src),
+        mkMod('Evasion', 'INC', v, src),
+        mkMod('EnergyShield', 'INC', v, src),
+        mkMod('Ward', 'INC', v, src),
+      ];
+    },
+  },
+  {
     pattern: /^(\d+)% increased (Energy Shield|Armour|Evasion(?: Rating)?|Defences|Armour and Evasion|Armour and Energy Shield|Evasion and Energy Shield) from Equipped (Shield|Body Armour|Helmet|Boots|Gloves)$/i,
     build: (m, src) => {
       const slot = m[3]!.replace(/\s+/g, '');
@@ -1028,7 +1040,10 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
   },
   {
     pattern: /^You can apply an additional Curse$/i,
-    build: (_, src) => [mkMod('EnemyCurseLimit', 'BASE', 1, src)],
+    build: (_, src) => [
+      mkMod('EnemyCurseLimit', 'BASE', 1, src),
+      mkMod('WhispersOfDoom', 'FLAG', true, src),
+    ],
   },
   {
     pattern: /^\+(\d+) to maximum (Fortification|Valour)$/i,

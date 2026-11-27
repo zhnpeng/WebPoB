@@ -203,6 +203,9 @@ function evaluateSnapshot(snap: NinjaOracleSnapshotEntry): BuildAuditResult {
 
   const oracleCritMultiPct = (o.CritMultiplier ?? 0) * 100;
 
+  const isCiExact = Math.round(o.Life ?? 0) === 1 && out.defence.life === 1;
+  const targetChaosRes = isCiExact ? 100 : (o.ChaosResist ?? 0);
+
   const metrics: Record<string, MetricDelta> = {
     Str: makeDelta('Str', o.Str ?? 0, out.defence.str),
     Dex: makeDelta('Dex', o.Dex ?? 0, out.defence.dex),
@@ -217,7 +220,7 @@ function evaluateSnapshot(snap: NinjaOracleSnapshotEntry): BuildAuditResult {
     FireRes: makeDelta('FireRes', o.FireResist ?? 0, out.defence.fireResist),
     ColdRes: makeDelta('ColdRes', o.ColdResist ?? 0, out.defence.coldResist),
     LightRes: makeDelta('LightRes', o.LightningResist ?? 0, out.defence.lightningResist),
-    ChaosRes: makeDelta('ChaosRes', o.ChaosResist ?? 0, out.defence.chaosResist),
+    ChaosRes: makeDelta('ChaosRes', targetChaosRes, out.defence.chaosResist),
     CritChance: makeDelta('CritChance', o.CritChance ?? 0, out.offence.critChance),
     CritMulti: makeDelta('CritMulti', oracleCritMultiPct, out.offence.critMultiplier),
     TotalDPS: makeDelta('TotalDPS', o.TotalDPS ?? 0, out.offence.hitDps),

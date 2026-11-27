@@ -1,6 +1,7 @@
 import type { ArmourBaseStats, GameId, Item, WeaponBaseStats } from '@webpob/core';
 import { getBaseItemStats } from '@webpob/data';
 import { normalizeStatLineToEn } from '@webpob/i18n';
+import { normalizeWeaponType } from './offenceUpgrade.js';
 
 export interface ResolvedItemStats {
   armourStats?: ArmourBaseStats;
@@ -172,6 +173,14 @@ export function resolveItemEffectiveStats(item: Item, game: GameId): ResolvedIte
     };
   }
 
+  const hasPrecomputedSpiritHeader = Boolean(
+    item.rawText && /^(?:Spirit|精魂)\s*[:：]\s*\+?\d+/im.test(item.rawText),
+  );
+  const stripLocalSpirit = (lines: readonly string[]): string[] =>
+    hasPrecomputedSpiritHeader
+      ? lines.filter((l) => !/^\d+%\s+increased\s+Spirit$/i.test(normalizeStatLineToEn(l)))
+      : [...lines];
+
   const isWeapon = Boolean(item.weaponStats);
   const isArmour = !isWeapon && Boolean(item.armourStats);
 
@@ -179,8 +188,8 @@ export function resolveItemEffectiveStats(item: Item, game: GameId): ResolvedIte
     return {
       armourStats: item.armourStats,
       weaponStats: item.weaponStats,
-      globalImplicits: item.implicits,
-      globalExplicits: item.explicits,
+      globalImplicits: stripLocalSpirit(item.implicits),
+      globalExplicits: stripLocalSpirit(item.explicits),
     };
   }
 
@@ -207,11 +216,21 @@ export function resolveItemEffectiveStats(item: Item, game: GameId): ResolvedIte
     }
 
     if (item.localStatsPrecomputed) {
+      let preArmour = item.armourStats;
+      if (preArmour && preArmour.blockChance === undefined) {
+        const baseBlock = getBaseItemStats(item.baseName, 0, game)?.armour?.blockChance;
+        if (baseBlock || acc.flatBlock) {
+          preArmour = {
+            ...preArmour,
+            blockChance: Math.min(100, (baseBlock ?? 0) + acc.flatBlock),
+          };
+        }
+      }
       return {
-        armourStats: item.armourStats,
+        armourStats: preArmour,
         weaponStats: undefined,
-        globalImplicits,
-        globalExplicits,
+        globalImplicits: stripLocalSpirit(globalImplicits),
+        globalExplicits: stripLocalSpirit(globalExplicits),
       };
     }
 
@@ -245,8 +264,8 @@ export function resolveItemEffectiveStats(item: Item, game: GameId): ResolvedIte
     return {
       armourStats: computedArmour,
       weaponStats: undefined,
-      globalImplicits,
-      globalExplicits,
+      globalImplicits: stripLocalSpirit(globalImplicits),
+      globalExplicits: stripLocalSpirit(globalExplicits),
     };
   }
 
@@ -268,11 +287,20 @@ export function resolveItemEffectiveStats(item: Item, game: GameId): ResolvedIte
   }
 
   if (item.localStatsPrecomputed) {
+    const preWeapon = item.weaponStats
+      ? {
+          ...item.weaponStats,
+          weaponType: normalizeWeaponType(
+            item.baseName,
+            item.weaponStats.weaponType,
+          ) as WeaponBaseStats['weaponType'],
+        }
+      : undefined;
     return {
       armourStats: undefined,
-      weaponStats: item.weaponStats,
-      globalImplicits,
-      globalExplicits,
+      weaponStats: preWeapon,
+      globalImplicits: stripLocalSpirit(globalImplicits),
+      globalExplicits: stripLocalSpirit(globalExplicits),
     };
   }
 
@@ -294,6 +322,7 @@ export function resolveItemEffectiveStats(item: Item, game: GameId): ResolvedIte
 
   const computedWeapon: WeaponBaseStats = {
     ...rawBase,
+    weaponType: normalizeWeaponType(item.baseName, rawBase.weaponType) as WeaponBaseStats['weaponType'],
     physicalMin: physMin,
     physicalMax: physMax,
     elementalDamage: Object.keys(mergedEle).length > 0 ? mergedEle : undefined,
@@ -304,7 +333,7 @@ export function resolveItemEffectiveStats(item: Item, game: GameId): ResolvedIte
   return {
     armourStats: undefined,
     weaponStats: computedWeapon,
-    globalImplicits,
-    globalExplicits,
+    globalImplicits: stripLocalSpirit(globalImplicits),
+    globalExplicits: stripLocalSpirit(globalExplicits),
   };
 }

@@ -135,7 +135,6 @@ const PARSER_RULES: ParserRule[] = [
       mkMod('Armour', 'INC', Number(m[1]), src),
       mkMod('Evasion', 'INC', Number(m[1]), src),
       mkMod('EnergyShield', 'INC', Number(m[1]), src),
-      mkMod('Ward', 'INC', Number(m[1]), src),
     ],
   },
   {
@@ -538,16 +537,32 @@ const PARSER_RULES: ParserRule[] = [
     build: (m, src) => [mkMod('CritChance', 'INC', Number(m[1]), src)],
   },
   {
-    pattern: /^\+(\d+)% to (?:Global )?(?:Critical Strike Multiplier|Critical Damage Bonus)$/i,
+    pattern: /^\+(\d+)% to (?:Global )?Critical Strike Multiplier$/i,
     build: (m, src) => [mkMod('CritMultiplier', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^\+(\d+)% to (?:Global )?Critical Damage Bonus$/i,
+    build: (m, src) => [mkMod('CritDamageBonusFlat', 'BASE', Number(m[1]), src)],
   },
   {
     pattern: /^(?:Hits have )?\+(\d+(?:\.\d+)?)% to Critical Strike Chance$/i,
     build: (m, src) => [mkMod('BaseCritChance', 'BASE', Number(m[1]), src)],
   },
   {
-    pattern: /^(\d+)% increased (?:Critical Damage Bonus|Critical Strike Multiplier)(?: for Spells)?$/i,
-    build: (m, src) => [mkMod('CritMultiplier', 'BASE', Number(m[1]), src)],
+    pattern: /^(\d+)% increased Critical Strike Multiplier( for Spells)?$/i,
+    build: (m, src) => [mkMod('CritMultiplier', 'BASE', Number(m[1]), src, m[2] ? ModFlag.Spell : 0)],
+  },
+  {
+    pattern: /^(\d+)% (increased|reduced) Critical Damage Bonus( for Spells)?$/i,
+    build: (m, src) => [
+      mkMod(
+        'CritDamageBonusInc',
+        'INC',
+        m[2]!.toLowerCase() === 'reduced' ? -Number(m[1]) : Number(m[1]),
+        src,
+        m[3] ? ModFlag.Spell : 0,
+      ),
+    ],
   },
   {
     pattern: /^Deal no Elemental Damage$/i,

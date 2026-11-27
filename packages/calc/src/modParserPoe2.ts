@@ -205,6 +205,21 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     build: (_, src) => [mkMod('EternalYouth', 'FLAG', true, src)],
   },
 
+  // Kaom's Heart (PoE 2): You have no Spirit
+  {
+    pattern: /^You have no Spirit$/i,
+    build: (_, src) => [mkMod('ZeroSpirit', 'FLAG', true, src)],
+  },
+
+  // Witchhunter Obsessive Rituals: 50% less Armour and Evasion Rating
+  {
+    pattern: /^(\d+)% (less|more) Armour and Evasion(?: Rating)?$/i,
+    build: (m, src) => {
+      const val = m[2]!.toLowerCase() === 'less' ? -Number(m[1]) : Number(m[1]);
+      return [mkMod('Armour', 'MORE', val, src), mkMod('Evasion', 'MORE', val, src)];
+    },
+  },
+
   // Whispers of Doom
   {
     pattern: /^You can apply an additional Curse$/i,

@@ -971,7 +971,7 @@ describe('@webpob/calc', () => {
       equipped: { ...base.equipped, 'Body Armour': chest.id, Helmet: helm.id },
       config: {
         ...base.config,
-        customMods: '30% increased Global Armour, Evasion and Energy Shield',
+        customMods: '30% increased Global Defences',
       },
     });
     const withCrimson = calculateBuild({
@@ -981,11 +981,11 @@ describe('@webpob/calc', () => {
       config: {
         ...base.config,
         customMods:
-          '30% increased Global Armour, Evasion and Energy Shield\nGain additional maximum Life equal to 100% of the Item Energy Shield on Equipped Body Armour',
+          '30% increased Global Defences\nGain additional maximum Life equal to 100% of the Item Energy Shield on Equipped Body Armour',
       },
     });
 
-    // Global Armour/Evasion/ES scales Ward: (200 + 100) * 1.3 = 390
+    // Global Defences scales Ward: (200 + 100) * 1.3 = 390
     expect(withoutCrimson.defence.ward).toBe(390);
     // Crimson Power adds 300 base Life scaled by 2% increased Life (2 corrupted items equipped) -> +306 Life
     expect(withCrimson.defence.life - withoutCrimson.defence.life).toBeGreaterThanOrEqual(300);

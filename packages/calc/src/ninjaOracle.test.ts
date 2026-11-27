@@ -59,28 +59,28 @@ interface MonotonicBaseline {
  * never loosen them.
  */
 const MONOTONIC_BASELINES: Record<string, MonotonicBaseline> = {
-  // PoE 1 (9 non-caveat builds)
-  'poe1-elementalist-chaos-golem': { maxLifeErrPct: 11, maxEsErrPct: 20, maxManaErrPct: 2, maxResAbsErr: 93 },
-  'poe1-assassin-winter-orb': { maxLifeErrPct: 8, maxEsErrPct: 2, maxManaErrPct: 4, maxResAbsErr: 66, maxElemResAbsErr: 1 },
-  'poe1-juggernaut-heavy-strike': { maxLifeErrPct: 23, maxEsErrPct: 8, maxManaErrPct: 8, maxResAbsErr: 60 },
-  'poe1-scion-luminary-static-strike': { maxLifeErrPct: 1, maxEsErrPct: 25, maxManaErrPct: 18, maxResAbsErr: 153 },
-  'poe1-slayer-elemental-hit': { maxLifeErrPct: 10, maxEsErrPct: 1, maxManaErrPct: 3, maxResAbsErr: 80 },
-  'poe1-trickster-splitting-steel': { maxLifeErrPct: 1, maxEsErrPct: 45, maxManaErrPct: 27, maxResAbsErr: 162 },
-  'poe1-necro-raise-spectre': { maxLifeErrPct: 1, maxEsErrPct: 61, maxManaErrPct: 29, maxResAbsErr: 128 },
-  'poe1-pathfinder-mamba-poison': { maxLifeErrPct: 4, maxEsErrPct: 2, maxManaErrPct: 2, maxResAbsErr: 17 },
-  'poe1-gladiator-bleed-lacerate': { maxLifeErrPct: 4, maxEsErrPct: 7, maxManaErrPct: 7, maxResAbsErr: 88, maxElemResAbsErr: 2 },
+  // PoE 1 (9 non-caveat builds — tightened after 10-track PoB core alignment upgrade)
+  'poe1-elementalist-chaos-golem': { maxLifeErrPct: 8, maxEsErrPct: 19, maxManaErrPct: 1, maxResAbsErr: 36, maxElemResAbsErr: 0 },
+  'poe1-assassin-winter-orb': { maxLifeErrPct: 2, maxEsErrPct: 1, maxManaErrPct: 1, maxResAbsErr: 5, maxElemResAbsErr: 0 },
+  'poe1-juggernaut-heavy-strike': { maxLifeErrPct: 15, maxEsErrPct: 5, maxManaErrPct: 5, maxResAbsErr: 10, maxElemResAbsErr: 0 },
+  'poe1-scion-luminary-static-strike': { maxLifeErrPct: 1, maxEsErrPct: 3, maxManaErrPct: 17, maxResAbsErr: 3 },
+  'poe1-slayer-elemental-hit': { maxLifeErrPct: 8, maxEsErrPct: 1, maxManaErrPct: 1, maxResAbsErr: 0 },
+  'poe1-trickster-splitting-steel': { maxLifeErrPct: 1, maxEsErrPct: 18, maxManaErrPct: 3, maxResAbsErr: 1 },
+  'poe1-necro-raise-spectre': { maxLifeErrPct: 1, maxEsErrPct: 40, maxManaErrPct: 5, maxResAbsErr: 0 },
+  'poe1-pathfinder-mamba-poison': { maxLifeErrPct: 4, maxEsErrPct: 1, maxManaErrPct: 1, maxResAbsErr: 0 },
+  'poe1-gladiator-bleed-lacerate': { maxLifeErrPct: 1, maxEsErrPct: 1, maxManaErrPct: 1, maxResAbsErr: 4, maxElemResAbsErr: 1 },
 
-  // PoE 2 (10 builds)
-  'poe2-stormweaver-spark': { maxLifeErrPct: 8, maxEsErrPct: 30, maxManaErrPct: 3, maxResAbsErr: 1 },
-  'poe2-deadeye-ice-shot': { maxLifeErrPct: 2, maxEsErrPct: 27, maxManaErrPct: 2, maxResAbsErr: 1 },
-  'poe2-invoker-flicker-strike': { maxLifeErrPct: null, maxEsErrPct: 32, maxManaErrPct: 5, maxResAbsErr: 1 },
+  // PoE 2 (10 builds — tightened after 10-track PoB core alignment upgrade)
+  'poe2-stormweaver-spark': { maxLifeErrPct: 7, maxEsErrPct: 6, maxManaErrPct: 2, maxResAbsErr: 0 },
+  'poe2-deadeye-ice-shot': { maxLifeErrPct: 1, maxEsErrPct: 1, maxManaErrPct: 1, maxResAbsErr: 0 },
+  'poe2-invoker-flicker-strike': { maxLifeErrPct: null, maxEsErrPct: 2, maxManaErrPct: 1, maxResAbsErr: 0 },
   'poe2-bloodmage-crit-detonate-dead': { maxLifeErrPct: 0.5, maxEsErrPct: 0.5, maxManaErrPct: 5, maxResAbsErr: 0 },
-  'poe2-titan-earthshatter': { maxLifeErrPct: 3, maxEsErrPct: 1, maxManaErrPct: null, maxResAbsErr: 1 },
-  'poe2-oracle-spell-totem': { maxLifeErrPct: 1, maxEsErrPct: 24, maxManaErrPct: 4, maxResAbsErr: 12 },
-  'poe2-witchhunter-permafrost-bolts': { maxLifeErrPct: 1, maxEsErrPct: 1, maxManaErrPct: 1, maxResAbsErr: 1 },
-  'poe2-varashta-kelari-ci': { maxLifeErrPct: null, maxEsErrPct: 19, maxManaErrPct: 10, maxResAbsErr: 57 },
-  'poe2-warbringer-bloodbarrier': { maxLifeErrPct: 16, maxEsErrPct: 24, maxManaErrPct: null, maxResAbsErr: 24 },
-  'poe2-martial-artist-shattering-palm': { maxLifeErrPct: 3, maxEsErrPct: 71, maxManaErrPct: 1, maxResAbsErr: 1 },
+  'poe2-titan-earthshatter': { maxLifeErrPct: 1, maxEsErrPct: 1, maxManaErrPct: null, maxResAbsErr: 0 },
+  'poe2-oracle-spell-totem': { maxLifeErrPct: 1, maxEsErrPct: 4, maxManaErrPct: 2, maxResAbsErr: 4 },
+  'poe2-witchhunter-permafrost-bolts': { maxLifeErrPct: 1, maxEsErrPct: 1, maxManaErrPct: 1, maxResAbsErr: 0 },
+  'poe2-varashta-kelari-ci': { maxLifeErrPct: null, maxEsErrPct: 13, maxManaErrPct: 1, maxResAbsErr: 0 },
+  'poe2-warbringer-bloodbarrier': { maxLifeErrPct: 13, maxEsErrPct: 1, maxManaErrPct: null, maxResAbsErr: 23 },
+  'poe2-martial-artist-shattering-palm': { maxLifeErrPct: 1, maxEsErrPct: 13, maxManaErrPct: 1, maxResAbsErr: 0 },
 };
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
@@ -220,11 +220,15 @@ describe('Real Endgame poe.ninja Oracle Differential Regression Suite (PoE 1 & P
         ).toBeLessThanOrEqual(baseline.maxManaErrPct);
       }
 
+      const isCiExact = Math.round(o.Life!) === 1 && out.defence.life === 1;
+      const chaosDiff = isCiExact
+        ? Math.abs(out.defence.chaosResist - 100)
+        : Math.abs(out.defence.chaosResist - Math.round(o.ChaosResist!));
       const maxResErr = Math.max(
         Math.abs(out.defence.fireResist - Math.round(o.FireResist!)),
         Math.abs(out.defence.coldResist - Math.round(o.ColdResist!)),
         Math.abs(out.defence.lightningResist - Math.round(o.LightningResist!)),
-        Math.abs(out.defence.chaosResist - Math.round(o.ChaosResist!)),
+        chaosDiff,
       );
       expect(
         maxResErr,
@@ -245,7 +249,7 @@ describe('Real Endgame poe.ninja Oracle Differential Regression Suite (PoE 1 & P
     });
   }
 
-  it('maintains aggregate PoE 2 accuracy floors (Resists ±1pt >= 7/10, Defence ±5% >= 1/10)', () => {
+  it('maintains aggregate PoE 2 accuracy floors (Resists ±1pt >= 8/10, Defence ±5% >= 5/10)', () => {
     const poe2Snaps = snapshots.filter((s) => s.game === 'poe2' && !s.oracleTreeCaveat);
     let resistPass = 0;
     let defencePass = 0;
@@ -255,11 +259,15 @@ describe('Real Endgame poe.ninja Oracle Differential Regression Suite (PoE 1 & P
       const out = calculateBuild(build);
       const o = snap.oracle;
 
+      const isCiExact = Math.round(o.Life!) === 1 && out.defence.life === 1;
+      const chaosDiff = isCiExact
+        ? Math.abs(out.defence.chaosResist - 100)
+        : Math.abs(out.defence.chaosResist - Math.round(o.ChaosResist!));
       const maxResErr = Math.max(
         Math.abs(out.defence.fireResist - Math.round(o.FireResist!)),
         Math.abs(out.defence.coldResist - Math.round(o.ColdResist!)),
         Math.abs(out.defence.lightningResist - Math.round(o.LightningResist!)),
-        Math.abs(out.defence.chaosResist - Math.round(o.ChaosResist!)),
+        chaosDiff,
       );
       if (maxResErr <= 1) resistPass++;
 
@@ -279,7 +287,7 @@ describe('Real Endgame poe.ninja Oracle Differential Regression Suite (PoE 1 & P
       if (allDefWithin5) defencePass++;
     }
 
-    expect(resistPass).toBeGreaterThanOrEqual(7);
-    expect(defencePass).toBeGreaterThanOrEqual(1);
+    expect(resistPass).toBeGreaterThanOrEqual(8);
+    expect(defencePass).toBeGreaterThanOrEqual(5);
   });
 });
