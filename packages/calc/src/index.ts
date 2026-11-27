@@ -9,3 +9,4 @@ export * from './supportOptimizer.js';
 export * from './itemOptimizer.js';
 export * from './diagnostics.js';
 export * from './ascendancyMods.js';
+export * from './jewelAndTreeSetup.js';
