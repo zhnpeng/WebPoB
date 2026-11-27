@@ -1,0 +1,183 @@
+import { describe, expect, it } from 'vitest';
+import { buildToPobXml, xmlToBuild } from './pobCode.js';
+import { formatItemToPobText, parseItemText } from './itemParser.js';
+
+describe('Round 2 Codec Extensions: multi-part skills, Vaal globals, PoE 2 statSet & runes', () => {
+  it('parses skillPartCalcs / skillPart, enableGlobal1 / enableGlobal2, and source on PoE 1 skills and round-trips losslessly', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding>
+  <Build level="95" targetVersion="3_0" className="Marauder" ascendClassName="Juggernaut" mainSocketGroup="1" />
+  <Tree activeSpec="1"><Spec title="Default" treeVersion="3_30" nodes="" /></Tree>
+  <Skills activeSkillSet="1">
+    <SkillSet id="1">
+      <Skill enabled="true" slot="Body Armour" label="Main Skill" skillPart="1" skillPartCalcs="2" source="Item:1:Body Armour">
+        <Gem nameSpec="Ice Nova of Frostbolts" level="21" quality="20" enabled="true" skillPart="1" skillPartCalcs="2" enableGlobal1="true" enableGlobal2="false" />
+        <Gem nameSpec="Cyclone" level="20" quality="0" enabled="true" skillPart="3" enableGlobal1="false" enableGlobal2="true" />
+      </Skill>
+    </SkillSet>
+  </Skills>
+  <Items activeItemSet="1"><ItemSet id="1" /></Items>
+  <Config activeConfigSet="1"><ConfigSet id="1" /></Config>
+  <Notes></Notes>
+</PathOfBuilding>`;
+
+    const build = xmlToBuild(xml);
+    expect(build.skills).toHaveLength(1);
+    const group = build.skills[0]!;
+    expect(group.skillPart).toBe(2);
+    expect(group.source).toBe('Item:1:Body Armour');
+    expect(group.gems).toHaveLength(2);
+
+    const gem0 = group.gems[0]!;
+    expect(gem0.skillPart).toBe(2);
+    expect(gem0.enableGlobal1).toBe(true);
+    expect(gem0.enableGlobal2).toBe(false);
+
+    const gem1 = group.gems[1]!;
+    expect(gem1.skillPart).toBe(3);
+    expect(gem1.enableGlobal1).toBe(false);
+    expect(gem1.enableGlobal2).toBe(true);
+
+    // Round-trip through buildToPobXml -> xmlToBuild
+    const exportedXml = buildToPobXml(build);
+    expect(exportedXml).toContain('skillPart="2"');
+    expect(exportedXml).toContain('enableGlobal1="true"');
+    expect(exportedXml).toContain('enableGlobal2="false"');
+    expect(exportedXml).toContain('enableGlobal1="false"');
+    expect(exportedXml).toContain('enableGlobal2="true"');
+    expect(exportedXml).toContain('source="Item:1:Body Armour"');
+
+    const reimported = xmlToBuild(exportedXml);
+    expect(reimported.skills[0]!.skillPart).toBe(2);
+    expect(reimported.skills[0]!.source).toBe('Item:1:Body Armour');
+    expect(reimported.skills[0]!.gems[0]!.skillPart).toBe(2);
+    expect(reimported.skills[0]!.gems[0]!.enableGlobal1).toBe(true);
+    expect(reimported.skills[0]!.gems[0]!.enableGlobal2).toBe(false);
+    expect(reimported.skills[0]!.gems[1]!.skillPart).toBe(3);
+    expect(reimported.skills[0]!.gems[1]!.enableGlobal1).toBe(false);
+    expect(reimported.skills[0]!.gems[1]!.enableGlobal2).toBe(true);
+  });
+
+  it('parses PoE 2 statSetIndexCalcs / statSetIndex on both <Skill> and <Gem> and preserves them on round-trip', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding2>
+  <Build level="92" targetVersion="0_1" className="Huntress" ascendClassName="Amazon" mainSocketGroup="1" />
+  <Tree activeSpec="1"><Spec title="Default" treeVersion="0_5" nodes="" /></Tree>
+  <Skills activeSkillSet="1">
+    <SkillSet id="1">
+      <Skill enabled="true" label="Twister Setup" statSetIndex="1" statSetIndexCalcs="2" set1="true" set2="false">
+        <Gem nameSpec="Spark" level="20" quality="20" enabled="true" statSetIndex="1" statSetIndexCalcs="2" count="3" />
+      </Skill>
+    </SkillSet>
+  </Skills>
+  <Items activeItemSet="1"><ItemSet id="1" /></Items>
+  <Config activeConfigSet="1"><ConfigSet id="1" /></Config>
+  <Notes></Notes>
+</PathOfBuilding2>`;
+
+    const build = xmlToBuild(xml);
+    expect(build.game).toBe('poe2');
+    const group = build.skills[0]!;
+    expect(group.statSetIndex).toBe(2);
+    expect(group.weaponSets).toEqual([1]);
+    expect(group.gems[0]!.statSetIndex).toBe(2);
+    expect(group.gems[0]!.count).toBe(3);
+
+    const exportedXml = buildToPobXml(build);
+    expect(exportedXml).toContain('statSetIndex="2"');
+    const reimported = xmlToBuild(exportedXml);
+    expect(reimported.skills[0]!.statSetIndex).toBe(2);
+    expect(reimported.skills[0]!.gems[0]!.statSetIndex).toBe(2);
+    expect(reimported.skills[0]!.gems[0]!.count).toBe(3);
+  });
+
+  it('parses Morior Invictus PoE 2 Sockets: S S S S S + 5 Rune lines preserving duplicates and clamping filledSocketCount', () => {
+    const moriorText = `Rarity: UNIQUE
+Morior Invictus
+Grand Regalia
+Quality: 20
+Sockets: S S S S S
+Rune: Perfect Mind Rune
+Rune: Perfect Mind Rune
+Rune: Perfect Mind Rune
+Rune: Perfect Mind Rune
+Rune: Greater Iron Rune
+Implicits: 5
+{rune}+35 to maximum Mana
+{rune}+35 to maximum Mana
+{rune}+35 to maximum Mana
+{rune}+35 to maximum Mana
+{rune}20% increased Armour, Evasion and Energy Shield
++10% to all Elemental Resistances per Socketed Soul Core or Rune
+5% increased Attributes per Socketed Soul Core or Rune`;
+
+    const item = parseItemText(moriorText, 'morior_1', 'poe2');
+    expect(item).not.toBeNull();
+    expect(item!.socketCount).toBe(5);
+    expect(item!.runes).toEqual([
+      'Perfect Mind Rune',
+      'Perfect Mind Rune',
+      'Perfect Mind Rune',
+      'Perfect Mind Rune',
+      'Greater Iron Rune',
+    ]);
+    expect(item!.runes).toHaveLength(5);
+    expect(item!.filledSocketCount).toBe(5);
+
+    // Round-trip formatting preserves Sockets & all 5 Rune lines
+    const formatted = formatItemToPobText(item!);
+    expect(formatted).toContain('Sockets: S S S S S');
+    expect((formatted.match(/^Rune: Perfect Mind Rune$/gm) ?? []).length).toBe(4);
+    expect(formatted).toContain('Rune: Greater Iron Rune');
+
+    const reparsed = parseItemText(formatted, 'morior_2', 'poe2');
+    expect(reparsed!.socketCount).toBe(5);
+    expect(reparsed!.runes).toHaveLength(5);
+    expect(reparsed!.filledSocketCount).toBe(5);
+  });
+
+  it('clamps filledSocketCount to socketCount when multi-line rune implicits exceed socket count', () => {
+    const itemText = `Rarity: RARE
+Test Regalia
+Grand Regalia
+Sockets: S S
+Implicits: 4
+{rune}+25 to maximum Mana
+{rune}+10 to Intelligence
+{rune}+25 to maximum Mana
+{rune}+10 to Intelligence
++80 to maximum Life`;
+
+    const item = parseItemText(itemText, 'clamped_1', 'poe2');
+    expect(item).not.toBeNull();
+    expect(item!.socketCount).toBe(2);
+    expect(item!.filledSocketCount).toBe(2);
+  });
+
+  it('parses PoE 1 linked Sockets: R-G-B-W and jewellery Catalyst / CatalystQuality headers', () => {
+    const ringText = `Rarity: RARE
+Tempest Loop
+Amethyst Ring
+Catalyst: Fertile
+CatalystQuality: 20
+Sockets: R-G-B-W
+Implicits: 1
++23% to Chaos Resistance
++75 to maximum Life`;
+
+    const item = parseItemText(ringText, 'ring_1', 'poe1');
+    expect(item).not.toBeNull();
+    expect(item!.socketCount).toBe(4);
+    expect(item!.filledSocketCount).toBe(0);
+    expect(item!.catalyst).toBe('Fertile');
+    expect(item!.catalystQuality).toBe(20);
+
+    const formatted = formatItemToPobText(item!);
+    expect(formatted).toContain('Catalyst: Fertile');
+    expect(formatted).toContain('CatalystQuality: 20');
+    const reparsed = parseItemText(formatted, 'ring_2', 'poe1');
+    expect(reparsed!.catalyst).toBe('Fertile');
+    expect(reparsed!.catalystQuality).toBe(20);
+    expect(reparsed!.socketCount).toBe(4);
+  });
+});

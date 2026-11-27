@@ -124,6 +124,10 @@ export function parseItemText(
   let itemClassHint = '';
   let quality = 0;
   let sockets: string | undefined;
+  let socketCount: number | undefined;
+  const runes: string[] = [];
+  let catalyst: string | undefined;
+  let catalystQuality: number | undefined;
   let levelReq: number | undefined;
   let implicitCountHint: number | null = null;
   let variantListCount = 0;
@@ -259,6 +263,33 @@ export function parseItemText(
     const sockMatch = line.match(/^(?:Sockets|插槽)\s*[:：]\s*(.+)$/i);
     if (sockMatch) {
       sockets = sockMatch[1]!.trim();
+      const tokens = sockets
+        .split(/[\s-]+/)
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0);
+      if (tokens.length > 0) {
+        socketCount = tokens.length;
+      }
+      continue;
+    }
+
+    const runeMatch = line.match(/^(?:Rune|符文)\s*[:：]\s*(.+)$/i);
+    if (runeMatch) {
+      const runeName = runeMatch[1]!.trim();
+      if (runeName) runes.push(runeName);
+      continue;
+    }
+
+    const catalystMatch = line.match(/^Catalyst\s*[:：]\s*(.+)$/i);
+    if (catalystMatch) {
+      const catName = catalystMatch[1]!.trim();
+      if (catName) catalyst = catName;
+      continue;
+    }
+
+    const catalystQualMatch = line.match(/^CatalystQuality\s*[:：]\s*\+?(\d+)%?$/i);
+    if (catalystQualMatch) {
+      catalystQuality = Number(catalystQualMatch[1]);
       continue;
     }
 
@@ -452,9 +483,15 @@ export function parseItemText(
     variantGroupSelections,
   };
 
+  let runeImplicitsCount = 0;
+  const isRuneLine = (rawLine: string): boolean => /\{rune\}|\(rune\)|（符文）/i.test(rawLine);
+
   const resolveAndNormalizeModLine = (rawLine: string, rawModIndex?: number): string | null => {
     if (!shouldIncludeVariantLine(rawLine, variantSelection)) {
       return null;
+    }
+    if (isRuneLine(rawLine)) {
+      runeImplicitsCount++;
     }
     const inlineRanges = parseModLineRangeTag(rawLine);
     const modRangeOverride =
@@ -544,6 +581,13 @@ export function parseItemText(
   }
 
   const isChineseName = /[\u4e00-\u9fff]/.test(name);
+  const rawFilledSockets = Math.max(runes.length, runeImplicitsCount);
+  const filledSocketCount =
+    socketCount !== undefined
+      ? Math.min(rawFilledSockets, socketCount)
+      : rawFilledSockets > 0
+        ? rawFilledSockets
+        : undefined;
 
   return {
     id: idOverride ?? `item_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -555,6 +599,11 @@ export function parseItemText(
     slotType: inferred.slotType,
     quality,
     sockets,
+    ...(socketCount !== undefined ? { socketCount } : {}),
+    ...(filledSocketCount !== undefined ? { filledSocketCount } : {}),
+    ...(runes.length > 0 ? { runes } : {}),
+    ...(catalyst ? { catalyst } : {}),
+    ...(catalystQuality !== undefined ? { catalystQuality } : {}),
     levelReq,
     weaponStats,
     armourStats: hasArmourStats ? armourStats : undefined,
@@ -586,8 +635,19 @@ export function formatItemToPobText(item: Item): string {
   if (item.quality > 0) {
     lines.push(`Quality: ${item.quality}`);
   }
+  if (item.catalyst) {
+    lines.push(`Catalyst: ${item.catalyst}`);
+  }
+  if (item.catalystQuality !== undefined && item.catalystQuality > 0) {
+    lines.push(`CatalystQuality: ${item.catalystQuality}`);
+  }
   if (item.sockets) {
     lines.push(`Sockets: ${item.sockets}`);
+  }
+  if (item.runes && item.runes.length > 0) {
+    for (const rune of item.runes) {
+      lines.push(`Rune: ${rune}`);
+    }
   }
   if (item.levelReq) {
     lines.push(`LevelReq: ${item.levelReq}`);

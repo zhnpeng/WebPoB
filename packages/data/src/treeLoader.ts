@@ -6,11 +6,15 @@ import {
   type DamageType,
   type GameId,
   type GemDefinition,
+  type GemLevelStats,
   type Locale,
   type ModTag,
   type ModType,
   type PassiveNode,
   type PassiveTreeData,
+  type Poe2RunesDataset,
+  type SkillPartDefinition,
+  type TimelessJewelDataset,
 } from '@webpob/core';
 import { getGemsForGame, POE1_GEMS, POE2_GEMS, setRegisteredGems } from './gems.js';
 import { getClassesForGame, registerClassesData } from './classes.js';
@@ -75,48 +79,70 @@ export interface CompactGemLevelEntry {
   bd?: Partial<Record<DamageType, [number, number]>>;
   am?: number;
   de?: number;
+  asm?: number;
+  cc?: number;
   mc?: number;
   st?: string[];
   cmods?: CompactCompiledMod[];
   sdata?: Record<string, number>;
 }
 
+export interface CompactSkillPartEntry {
+  idx: number;
+  name: string;
+  spell?: boolean;
+  attack?: boolean;
+  melee?: boolean;
+  projectile?: boolean;
+  area?: boolean;
+  cc?: number;
+  de?: number;
+  am?: number;
+  bd?: Partial<Record<DamageType, [number, number]>>;
+  cmods?: CompactCompiledMod[];
+  sdata?: Record<string, number | boolean | string>;
+  ls?: Record<string, CompactGemLevelEntry>;
+}
+
+export interface CompactGemEntry {
+  id: string;
+  altIds?: string[];
+  en: string;
+  zh?: string;
+  cat: 'active' | 'support';
+  color: 'red' | 'green' | 'blue' | 'white';
+  tags: string[];
+  stypes?: string[];
+  mstypes?: string[];
+  reqTypes?: string[];
+  addTypes?: string[];
+  excTypes?: string[];
+  ct?: number;
+  cd?: number;
+  dm?: number;
+  cc?: number;
+  asm?: number;
+  mrp?: number;
+  mrf?: number;
+  sr?: number;
+  bd?: Partial<Record<DamageType, [number, number]>>;
+  am?: number;
+  de?: number;
+  mc?: number;
+  st?: string[];
+  cmods?: CompactCompiledMod[];
+  qmods?: CompactCompiledMod[];
+  sdata?: Record<string, number>;
+  mb?: CompactMinionBase;
+  qs?: Array<{ t: string; q: number }> | Record<string, never>;
+  ls?: Record<string, CompactGemLevelEntry>;
+  parts?: CompactSkillPartEntry[];
+}
+
 export interface CompactGemsPayload {
   game: GameId;
   count: number;
-  gems: Array<{
-    id: string;
-    altIds?: string[];
-    en: string;
-    zh?: string;
-    cat: 'active' | 'support';
-    color: 'red' | 'green' | 'blue' | 'white';
-    tags: string[];
-    stypes?: string[];
-    mstypes?: string[];
-    reqTypes?: string[];
-    addTypes?: string[];
-    excTypes?: string[];
-    ct?: number;
-    cd?: number;
-    dm?: number;
-    cc?: number;
-    asm?: number;
-    mrp?: number;
-    mrf?: number;
-    sr?: number;
-    bd?: Partial<Record<DamageType, [number, number]>>;
-    am?: number;
-    de?: number;
-    mc?: number;
-    st?: string[];
-    cmods?: CompactCompiledMod[];
-    qmods?: CompactCompiledMod[];
-    sdata?: Record<string, number>;
-    mb?: CompactMinionBase;
-    qs?: Array<{ t: string; q: number }> | Record<string, never>;
-    ls?: Record<string, CompactGemLevelEntry>;
-  }>;
+  gems: CompactGemEntry[];
 }
 
 const KIND_MAP: Record<CompactTreeNode['k'], PassiveNode['kind']> = {
@@ -156,6 +182,8 @@ export interface DataManifestGame {
   uniques: string;
   clusters?: string;
   ascendancyArt?: string;
+  timelessJewels?: string;
+  runes?: string;
   /** Optional on-demand locale overlay files (e.g. `{ "zh-TW": "poe1-i18n-zh-TW.json" }`). */
   i18n?: Partial<Record<Locale, string>>;
 }
@@ -435,6 +463,68 @@ function hydrateLevelScaling(
   return count > 0 ? out : undefined;
 }
 
+function hydratePartSkillData(
+  sdata?: Record<string, number | boolean | string>,
+): Record<string, number | boolean | string> | undefined {
+  if (!sdata || typeof sdata !== 'object' || Array.isArray(sdata)) return undefined;
+  if (Object.keys(sdata).length === 0) return undefined;
+  return { ...sdata };
+}
+
+function hydratePartLevels(
+  ls?: Record<string, CompactGemLevelEntry>,
+): Record<number, GemLevelStats> | undefined {
+  if (!ls) return undefined;
+  const out: Record<number, GemLevelStats> = {};
+  let count = 0;
+  for (const [lvStr, snap] of Object.entries(ls)) {
+    const lv = Number(lvStr);
+    if (!Number.isFinite(lv)) continue;
+    const compiledMods = hydrateCompiledMods(snap.cmods);
+    const skillData = hydratePartSkillData(snap.sdata);
+    out[lv] = {
+      ...(snap.bd ? { baseDamage: snap.bd } : {}),
+      ...(snap.am !== undefined ? { attackDamageMultiplierPct: snap.am } : {}),
+      ...(snap.de !== undefined ? { damageEffectivenessPct: snap.de } : {}),
+      ...(snap.asm !== undefined ? { attackSpeedMultiplier: snap.asm } : {}),
+      ...(snap.cc !== undefined ? { critChance: snap.cc } : {}),
+      ...(snap.mc !== undefined ? { manaCost: snap.mc } : {}),
+      ...(snap.st && snap.st.length > 0 ? { stats: snap.st } : {}),
+      ...(compiledMods ? { compiledMods } : {}),
+      ...(skillData ? { skillData } : {}),
+    };
+    count++;
+  }
+  return count > 0 ? out : undefined;
+}
+
+function hydrateSkillParts(
+  parts?: CompactSkillPartEntry[],
+): SkillPartDefinition[] | undefined {
+  if (!Array.isArray(parts) || parts.length === 0) return undefined;
+  return parts.map((p) => {
+    const compiledMods = hydrateCompiledMods(p.cmods);
+    const skillData = hydratePartSkillData(p.sdata);
+    const levels = hydratePartLevels(p.ls);
+    return {
+      index: p.idx,
+      name: p.name,
+      ...(p.spell !== undefined ? { spell: p.spell } : {}),
+      ...(p.attack !== undefined ? { attack: p.attack } : {}),
+      ...(p.melee !== undefined ? { melee: p.melee } : {}),
+      ...(p.projectile !== undefined ? { projectile: p.projectile } : {}),
+      ...(p.area !== undefined ? { area: p.area } : {}),
+      ...(p.cc !== undefined ? { critChance: p.cc } : {}),
+      ...(p.de !== undefined ? { damageEffectiveness: p.de } : {}),
+      ...(p.am !== undefined ? { attackSpeedMultiplier: p.am } : {}),
+      ...(p.bd ? { baseDamage: p.bd } : {}),
+      ...(compiledMods ? { compiledMods } : {}),
+      ...(skillData ? { skillData } : {}),
+      ...(levels ? { levels } : {}),
+    };
+  });
+}
+
 function hydrateQualityStats(
   qs?: Array<{ t: string; q: number }> | Record<string, never>,
 ): GemDefinition['qualityStats'] | undefined {
@@ -491,6 +581,7 @@ function synthesizeGemDefinition(
   const minionBase = hydrateMinionBase(entry.mb);
   const qualityStats = hydrateQualityStats(entry.qs);
   const levelScaling = hydrateLevelScaling(entry.ls);
+  const parts = hydrateSkillParts(entry.parts);
 
   const structuredFields = {
     ...(altIds ? { altIds } : {}),
@@ -503,6 +594,7 @@ function synthesizeGemDefinition(
     ...(qualityCompiledMods ? { qualityCompiledMods } : {}),
     ...(skillData ? { skillData } : {}),
     ...(minionBase ? { minionBase } : {}),
+    ...(parts ? { parts } : {}),
   };
 
   if (entry.cat === 'support') {
@@ -618,6 +710,7 @@ export function registerGemsData(game: GameId, payload: CompactGemsPayload): Gem
     const skillData = hydrateSkillData(official.sdata);
     const hydratedMinionBase = hydrateMinionBase(official.mb);
     const ls = hydrateLevelScaling(official.ls);
+    const hydratedParts = hydrateSkillParts(official.parts);
     return {
       ...g,
       ...(altIds ? { altIds } : {}),
@@ -631,6 +724,7 @@ export function registerGemsData(game: GameId, payload: CompactGemsPayload): Gem
       ...(skillData && !g.skillData ? { skillData } : {}),
       ...(hydratedMinionBase ? { minionBase: hydratedMinionBase } : {}),
       ...(ls && !g.levelScaling ? { levelScaling: ls } : {}),
+      ...(hydratedParts && !g.parts ? { parts: hydratedParts } : {}),
     };
   });
 
@@ -657,4 +751,82 @@ export async function loadOfficialGems(game: GameId, basePath = '/data'): Promis
   }
   const payload = (await res.json()) as CompactGemsPayload;
   return registerGemsData(game, payload);
+}
+
+export const OFFICIAL_TIMELESS_JEWELS_FILES: Record<GameId, string> = {
+  poe1: 'poe1-timeless-jewels.json',
+  poe2: 'poe2-timeless-jewels.json',
+};
+
+export const OFFICIAL_POE2_RUNES_FILE = 'poe2-runes.json';
+
+const timelessJewelStore: Partial<Record<GameId, TimelessJewelDataset | null>> = {};
+let poe2RunesStore: Poe2RunesDataset | null = null;
+
+/** Registers optional Timeless Jewel dataset in memory for a game. */
+export function registerTimelessJewelData(game: GameId, data: unknown): void {
+  timelessJewelStore[game] =
+    data && typeof data === 'object' ? (data as TimelessJewelDataset) : null;
+}
+
+/** Returns the currently registered Timeless Jewel dataset for `game`, or `null`. */
+export function getTimelessJewelData(game: GameId): TimelessJewelDataset | null {
+  return timelessJewelStore[game] ?? null;
+}
+
+/** Registers optional PoE 2 Runes / Soul Cores dataset in memory. */
+export function registerPoe2RunesData(data: unknown): void {
+  poe2RunesStore = data && typeof data === 'object' ? (data as Poe2RunesDataset) : null;
+}
+
+/** Returns the currently registered PoE 2 Runes dataset, or `null`. */
+export function getPoe2RunesData(): Poe2RunesDataset | null {
+  return poe2RunesStore;
+}
+
+/**
+ * Optionally fetches and registers the Timeless Jewel dataset from `/data`.
+ * Gracefully no-ops and returns `null` on 404 or offline environments.
+ */
+export async function loadOfficialTimelessJewels(
+  game: GameId,
+  basePath = '/data',
+): Promise<TimelessJewelDataset | null> {
+  if (timelessJewelStore[game]) return timelessJewelStore[game] ?? null;
+  if (typeof fetch !== 'function') return null;
+  try {
+    const manifest = await loadDataManifest(basePath);
+    const file = manifest?.games?.[game]?.timelessJewels ?? OFFICIAL_TIMELESS_JEWELS_FILES[game];
+    const url = `${basePath.replace(/\/+$/, '')}/${file}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const payload = await res.json();
+    registerTimelessJewelData(game, payload);
+    return getTimelessJewelData(game);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Optionally fetches and registers the PoE 2 Runes / Soul Cores dataset from `/data`.
+ * Gracefully no-ops and returns `null` on 404 or offline environments.
+ */
+export async function loadOfficialPoe2Runes(
+  basePath = '/data',
+): Promise<Poe2RunesDataset | null> {
+  if (poe2RunesStore) return poe2RunesStore;
+  if (typeof fetch !== 'function') return null;
+  try {
+    const manifest = await loadDataManifest(basePath);
+    const file = manifest?.games?.poe2?.runes ?? OFFICIAL_POE2_RUNES_FILE;
+    const url = `${basePath.replace(/\/+$/, '')}/${file}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const payload = await res.json();
+    registerPoe2RunesData(payload);
+    return getPoe2RunesData();
+  } catch {
+    return null;
+  }
 }

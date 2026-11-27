@@ -210,6 +210,47 @@ export interface CompiledGemMod {
   tags?: ModTag[];
 }
 
+export interface GemLevelStats {
+  baseDamage?: Partial<Record<DamageType, [number, number]>>;
+  attackDamageMultiplierPct?: number;
+  damageEffectivenessPct?: number;
+  attackSpeedMultiplier?: number;
+  critChance?: number;
+  manaCost?: number;
+  stats?: string[];
+  compiledMods?: CompiledGemMod[];
+  skillData?: Record<string, number | boolean | string>;
+}
+
+export interface SkillPartDefinition {
+  index: number; // 1-based part or statSet index
+  name: string;
+  spell?: boolean;
+  attack?: boolean;
+  melee?: boolean;
+  projectile?: boolean;
+  area?: boolean;
+  critChance?: number;
+  damageEffectiveness?: number;
+  attackSpeedMultiplier?: number;
+  baseDamage?: Partial<Record<DamageType, [number, number]>>;
+  compiledMods?: CompiledGemMod[];
+  skillData?: Record<string, number | boolean | string>;
+  levels?: Record<number, GemLevelStats>;
+}
+
+export interface TimelessJewelDataset {
+  game?: GameId;
+  version?: string;
+  [key: string]: unknown;
+}
+
+export interface Poe2RunesDataset {
+  version?: string;
+  runes?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
 export interface GemDefinition {
   id: string;
   /** Alternative PoB identifiers (`grantedEffect.id` / `gemData.id` / `variantId`, e.g., `HeavyStrikeTrarthus`, `BlightAltY`). */
@@ -293,6 +334,8 @@ export interface GemDefinition {
     limitStat?: string;
     baseLimit?: number;
   };
+  /** Optional multi-part / PoE 2 multi-statSet definitions (1-based index). */
+  parts?: SkillPartDefinition[];
 }
 
 export interface GemInstance {
@@ -305,6 +348,14 @@ export interface GemInstance {
   count?: number;
   /** Optional explicit Spirit reservation override (e.g. 0 for Sceptre-granted PoE 2 auras). */
   spiritReservationOverride?: number;
+  /** Selected 1-based skill part index (PoB `skillPart` / `skillPartCalcs`). */
+  skillPart?: number;
+  /** Selected 1-based PoE 2 statSet index (PoB2 `statSetIndex` / `statSetIndexCalcs`). */
+  statSetIndex?: number;
+  /** PoB1 Vaal gem flag: whether the base skill / aura is enabled (`enableGlobal1`). */
+  enableGlobal1?: boolean;
+  /** PoB1 Vaal gem flag: whether the Vaal active skill is enabled (`enableGlobal2`). */
+  enableGlobal2?: boolean;
 }
 
 export interface SkillGroup {
@@ -319,6 +370,12 @@ export interface SkillGroup {
   weaponSets?: WeaponSetId[];
   /** 1-based index of the selected active gem within this group (PoB `mainActiveSkill`). */
   mainActiveSkillIndex?: number;
+  /** Selected 1-based skill part index on the skill group (PoB `skillPart` / `skillPartCalcs`). */
+  skillPart?: number;
+  /** Selected 1-based PoE 2 statSet index on the skill group (PoB2 `statSetIndex` / `statSetIndexCalcs`). */
+  statSetIndex?: number;
+  /** Optional PoB `<Skill source="...">` origin descriptor (e.g. `Item:1:...`). */
+  source?: string;
   gems: GemInstance[];
 }
 
@@ -352,6 +409,16 @@ export interface Item {
   slotType: EquipmentSlotId | 'Any';
   quality: number;
   sockets?: string;
+  /** Total socket count parsed from `Sockets:` header (e.g. `S S S S S` -> 5, `R-G-B-W` -> 4). */
+  socketCount?: number;
+  /** Number of filled sockets (PoE 2 Runes / Soul Cores / rune implicits, clamped to `socketCount`). */
+  filledSocketCount?: number;
+  /** Ordered list of socketed PoE 2 Runes / Soul Cores (`Rune:` lines, preserving duplicates). */
+  runes?: string[];
+  /** Jewellery Catalyst type (`Catalyst:` header, e.g. `Abrasive`, `Fertile`). */
+  catalyst?: string;
+  /** Jewellery Catalyst quality (`CatalystQuality:` header, e.g. `20`). */
+  catalystQuality?: number;
   levelReq?: number;
   weaponStats?: WeaponBaseStats;
   armourStats?: ArmourBaseStats;

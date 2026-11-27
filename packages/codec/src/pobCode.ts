@@ -228,15 +228,36 @@ export function buildToPobXml(build: Build): string {
           : '';
       const mainActive = group.mainActiveSkillIndex ?? 1;
       const fullDpsAttr = group.includeInFullDps ? ' includeInFullDPS="true"' : '';
+      const groupPartAttr =
+        group.skillPart !== undefined && group.skillPart >= 1
+          ? ` skillPart="${group.skillPart}" skillPartCalcs="${group.skillPart}"`
+          : '';
+      const groupStatSetAttr =
+        group.statSetIndex !== undefined && group.statSetIndex >= 1
+          ? ` statSetIndex="${group.statSetIndex}" statSetIndexCalcs="${group.statSetIndex}"`
+          : '';
+      const groupSourceAttr = group.source ? ` source="${escapeXml(group.source)}"` : '';
       lines.push(
-        `      <Skill enabled="${group.enabled}" mainActiveSkill="${mainActive}" mainActiveSkillCalcs="${mainActive}"${fullDpsAttr} label="${escapeXml(group.label)}"${slotAttr}${wsAttr}${poe2SetAttrs}>`,
+        `      <Skill enabled="${group.enabled}" mainActiveSkill="${mainActive}" mainActiveSkillCalcs="${mainActive}"${fullDpsAttr}${groupPartAttr}${groupStatSetAttr}${groupSourceAttr} label="${escapeXml(group.label)}"${slotAttr}${wsAttr}${poe2SetAttrs}>`,
       );
       for (const gem of group.gems) {
         const def = gemsCatalog.find((g) => g.id === gem.gemId);
         const nameSpec = def ? def.name.en.replace(/\s+Support$/i, '') : gem.gemId;
         const countAttr = gem.count && gem.count > 1 ? ` count="${gem.count}"` : '';
+        const gemPartAttr =
+          gem.skillPart !== undefined && gem.skillPart >= 1
+            ? ` skillPart="${gem.skillPart}" skillPartCalcs="${gem.skillPart}"`
+            : '';
+        const gemStatSetAttr =
+          gem.statSetIndex !== undefined && gem.statSetIndex >= 1
+            ? ` statSetIndex="${gem.statSetIndex}" statSetIndexCalcs="${gem.statSetIndex}"`
+            : '';
+        const global1Attr =
+          gem.enableGlobal1 !== undefined ? ` enableGlobal1="${gem.enableGlobal1}"` : '';
+        const global2Attr =
+          gem.enableGlobal2 !== undefined ? ` enableGlobal2="${gem.enableGlobal2}"` : '';
         lines.push(
-          `        <Gem gemId="${escapeXml(gem.gemId)}" nameSpec="${escapeXml(nameSpec)}" level="${gem.level}" quality="${gem.quality}" enabled="${gem.enabled}"${countAttr} />`,
+          `        <Gem gemId="${escapeXml(gem.gemId)}" nameSpec="${escapeXml(nameSpec)}" level="${gem.level}" quality="${gem.quality}" enabled="${gem.enabled}"${countAttr}${gemPartAttr}${gemStatSetAttr}${global1Attr}${global2Attr} />`,
         );
       }
       lines.push(`      </Skill>`);
@@ -371,6 +392,12 @@ function parseNodeList(raw: string | undefined): number[] {
     .split(',')
     .map((s) => Number(s.trim()))
     .filter((n) => Number.isFinite(n) && n > 0);
+}
+
+function parsePositiveIntAttr(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 ? Math.round(n) : undefined;
 }
 
 function matchGemId(
@@ -618,6 +645,15 @@ export function xmlToBuild(xml: string): Build {
         );
         if (matchedId) {
           const parsedCount = Number(gAttrs.count ?? 1);
+          const gemSkillPart =
+            parsePositiveIntAttr(gAttrs.skillPartCalcs) ?? parsePositiveIntAttr(gAttrs.skillPart);
+          const gemStatSetIndex =
+            parsePositiveIntAttr(gAttrs.statSetIndexCalcs) ??
+            parsePositiveIntAttr(gAttrs.statSetIndex);
+          const enableGlobal1 =
+            gAttrs.enableGlobal1 !== undefined ? gAttrs.enableGlobal1 !== 'false' : undefined;
+          const enableGlobal2 =
+            gAttrs.enableGlobal2 !== undefined ? gAttrs.enableGlobal2 === 'true' : undefined;
           gems.push({
             instanceId: `${prefix}_g_${groupCounter}_${gemCounter++}`,
             gemId: matchedId,
@@ -625,6 +661,10 @@ export function xmlToBuild(xml: string): Build {
             quality: Number(gAttrs.quality ?? 0) || 0,
             enabled: gAttrs.enabled !== 'false',
             ...(Number.isFinite(parsedCount) && parsedCount > 1 ? { count: Math.round(parsedCount) } : {}),
+            ...(gemSkillPart !== undefined ? { skillPart: gemSkillPart } : {}),
+            ...(gemStatSetIndex !== undefined ? { statSetIndex: gemStatSetIndex } : {}),
+            ...(enableGlobal1 !== undefined ? { enableGlobal1 } : {}),
+            ...(enableGlobal2 !== undefined ? { enableGlobal2 } : {}),
           });
         }
       }
@@ -645,6 +685,12 @@ export function xmlToBuild(xml: string): Build {
       if (gems.length > 0) {
         const weaponSets = parseSkillWeaponSets(attrs, game);
         const mainActiveRaw = Number(attrs.mainActiveSkill ?? attrs.mainActiveSkillCalcs ?? 1);
+        const groupSkillPart =
+          parsePositiveIntAttr(attrs.skillPartCalcs) ?? parsePositiveIntAttr(attrs.skillPart);
+        const groupStatSetIndex =
+          parsePositiveIntAttr(attrs.statSetIndexCalcs) ??
+          parsePositiveIntAttr(attrs.statSetIndex);
+        const groupSource = attrs.source?.trim() || undefined;
         const groupEnabled =
           attrs.enabled !== undefined ? attrs.enabled !== 'false' : attrs.active !== 'false';
         const groupId = `${prefix}_sg_${groupCounter}`;
@@ -656,6 +702,9 @@ export function xmlToBuild(xml: string): Build {
           slot: attrs.slot as EquipmentSlotId | undefined,
           weaponSets,
           ...(Number.isFinite(mainActiveRaw) && mainActiveRaw > 1 ? { mainActiveSkillIndex: mainActiveRaw } : {}),
+          ...(groupSkillPart !== undefined ? { skillPart: groupSkillPart } : {}),
+          ...(groupStatSetIndex !== undefined ? { statSetIndex: groupStatSetIndex } : {}),
+          ...(groupSource ? { source: groupSource } : {}),
           gems,
         });
         byXmlOrdinal.set(xmlOrdinal, groupId);
