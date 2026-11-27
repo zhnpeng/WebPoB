@@ -999,6 +999,10 @@ async function verifyFunctionalRegressions(port) {
         if (p.type === 'error') consoleErrors.push((p.args || []).map((a) => a.value ?? a.description).join(' '));
       });
 
+      await cdp.send('Storage.clearDataForOrigin', {
+        origin: BASE_URL,
+        storageTypes: 'local_storage',
+      });
       await cdp.send('Page.navigate', { url: `${BASE_URL}/?lang=zh-CN` });
       const deadline = Date.now() + 12_000;
       while (Date.now() < deadline) {
