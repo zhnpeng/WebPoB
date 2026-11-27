@@ -6,9 +6,12 @@ import { parseTranslationCsv } from './csvParser.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '../../..');
+const CACHE_DIR = process.env.WEBPOB_CACHE_DIR
+  ? path.resolve(process.env.WEBPOB_CACHE_DIR)
+  : path.join(ROOT_DIR, '.cache');
 const PUBLIC_DATA_DIR = path.join(ROOT_DIR, 'apps/web/public/data');
-const LUAJIT_BIN = path.join(ROOT_DIR, '.cache/luajit-src/src/luajit');
-const CLIBS_DIR = path.join(ROOT_DIR, '.cache/clibs');
+const LUAJIT_BIN = path.join(CACHE_DIR, 'luajit-src/src/luajit');
+const CLIBS_DIR = path.join(CACHE_DIR, 'clibs');
 const EXPORT_LUA = path.join(__dirname, '../lua/export_pob_data.lua');
 
 interface ExportedGemData {
@@ -118,13 +121,26 @@ async function fetchClusterZhDict(): Promise<{ dn: Map<string, string>; sd: Map<
 
 async function runGameExport(game: 'poe1' | 'poe2') {
   const upstreamSrc = path.join(
-    ROOT_DIR,
-    game === 'poe1' ? '.cache/upstream-pob/src' : '.cache/upstream-pob2/src',
+    CACHE_DIR,
+    game === 'poe1' ? 'upstream-pob/src' : 'upstream-pob2/src',
   );
   const outBases = path.join(PUBLIC_DATA_DIR, `${game}-bases.json`);
-  const tmpGems = path.join(ROOT_DIR, `.cache/${game}-gems-lua.json`);
+  const tmpGems = path.join(CACHE_DIR, `${game}-gems-lua.json`);
   const outUniques = path.join(PUBLIC_DATA_DIR, `${game}-uniques.json`);
   const outClusters = game === 'poe1' ? path.join(PUBLIC_DATA_DIR, 'poe1-clusters.json') : '';
+
+  // Snapshot existing unique ZH translations so offline runs never lose translations
+  const prevUniqueZh = new Map<string, { zh?: string; bz?: string }>();
+  try {
+    const prevUniques = JSON.parse(await fs.readFile(outUniques, 'utf-8')) as {
+      uniques?: Array<{ en?: string; zh?: string; bz?: string }>;
+    };
+    for (const u of prevUniques.uniques ?? []) {
+      if (u.en && (u.zh || u.bz)) prevUniqueZh.set(u.en, { zh: u.zh, bz: u.bz });
+    }
+  } catch {
+    // ignore if missing
+  }
 
   console.log(`\n=== Exporting ${game.toUpperCase()} Bases, Uniques, Clusters & Official Skill Tables via LuaJIT ===`);
   const [zhDict, clusterZh] = await Promise.all([
@@ -182,8 +198,9 @@ async function runGameExport(game: 'poe1' | 'poe2') {
   };
   let zhUniqueHits = 0;
   const enrichedUniques = rawUniques.uniques.map((u) => {
-    const zh = zhDict.get(u.en);
-    const bzh = zhDict.get(u.b);
+    const prev = prevUniqueZh.get(u.en);
+    const zh = zhDict.get(u.en) ?? prev?.zh;
+    const bzh = zhDict.get(u.b) ?? prev?.bz;
     if (zh) zhUniqueHits++;
     return {
       en: u.en,
@@ -254,7 +271,7 @@ async function runGameExport(game: 'poe1' | 'poe2') {
   const sizeKb = Math.round((Buffer.byteLength(JSON.stringify(outPayload)) / 1024) * 10) / 10;
   const baseSizeKb = Math.round(((await fs.stat(outBases)).size / 1024) * 10) / 10;
   console.log(
-    `  ✓ Enriched ${enrichedCount}/${mergedGems.length} ${game.toUpperCase()} gems with official Lv.1-30 stats (${sizeKb} KB); bases (${baseSizeKb} KB)`,
+    `  ✓ Enriched ${enrichedCount}/${mergedGems.length} ${game.toUpperCase()} gems with official Lv.1-40 stats (${sizeKb} KB); bases (${baseSizeKb} KB)`,
   );
 }
 
