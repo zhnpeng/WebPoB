@@ -4,6 +4,17 @@
   "prodUrl": "https://webpob.pages.dev",
   "releases": [
     {
+      "version": "0.3.0",
+      "tag": "v0.3.0",
+      "commit": "17ff0ed",
+      "deploymentId": "b7447204-7d34-4789-b102-59a603e516cf",
+      "previewUrl": "https://b7447204.webpob.pages.dev",
+      "branch": "main",
+      "notes": "深度对齐 PoB1/PoB2 计算引擎（SkillStatMap 编译宝石、组合式 ModParser、多 Actor/星团运行时）；新增国服 WeGame PoE 2 与 Maxroll 链接直导及国际服繁中（zh-TW）支持",
+      "status": "active",
+      "deployedAt": "2026-11-27T17:25:41.471Z"
+    },
+    {
       "version": "0.2.3",
       "tag": "v0.2.3",
       "commit": "f1029ad",
@@ -11,7 +22,7 @@
       "previewUrl": "https://5b0b74c2.webpob.pages.dev",
       "branch": "main",
       "notes": "技能页新增主动/辅助宝石中英文及标签实时搜索选择器，支持分类筛选与键盘快选",
-      "status": "active",
+      "status": "previous",
       "deployedAt": "2026-11-27T10:45:39.225Z"
     },
     {
@@ -69,5 +80,5 @@
     }
   ],
   "rollbacks": [],
-  "updatedAt": "2026-11-27T10:45:39.225Z"
+  "updatedAt": "2026-11-27T17:25:41.471Z"
 }

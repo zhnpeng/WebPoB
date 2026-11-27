@@ -4,6 +4,7 @@
 
 | 时间 (UTC) | 操作 | 环境 | 版本 | Commit | Deployment | 结果 | 独立记录 |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 2026-11-27T17:25:41.472Z | `PROD_DEPLOY` | Production | `v0.3.0` | `17ff0ed` | `b7447204` | Smoke 4/4 PASS | [2026-11-27-1725-prod-v0.3.0.md](./deploys/2026-11-27-1725-prod-v0.3.0.md) |
 | 2026-11-27T10:45:39.226Z | `PROD_DEPLOY` | Production | `v0.2.3` | `f1029ad` | `5b0b74c2` | Smoke 4/4 PASS | [2026-11-27-1045-prod-v0.2.3.md](./deploys/2026-11-27-1045-prod-v0.2.3.md) |
 | 2026-11-27T09:19:08.545Z | `PROD_DEPLOY` | Production | `v0.2.2` | `a04efa8` | `3c8d65b9` | Smoke 4/4 PASS | [2026-11-27-0919-prod-v0.2.2.md](./deploys/2026-11-27-0919-prod-v0.2.2.md) |
 | 2026-11-27T05:01:35Z | `PROD_DEPLOY` | Production | `v0.2.1` | `e486295` | `e9312d4a` | Smoke 4/4 PASS | [2026-11-27-0501-prod-v0.2.1.md](./deploys/2026-11-27-0501-prod-v0.2.1.md) |
