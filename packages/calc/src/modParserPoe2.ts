@@ -3235,6 +3235,50 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     pattern: /^Mana Recovery from Regeneration is also applied to Runic Ward$/i,
     build: (_, src) => [mkMod('ManaRegenAppliesToRunicWard', 'FLAG', true, src)],
   },
+  // Wave 6N: Watchtowers (Tree:5580), Molten Carapace (Tree:51868), Overheating Blow (Tree:42390)
+  {
+    pattern: /^Each Totem applies (\d+)% (increased|reduced) Damage taken to Enemies in their Presence$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      return [
+        {
+          ...mkMod('EnemyDamageTaken', type, value, src),
+          tags: [{ type: 'Multiplier', var: 'TotemsSummoned' }],
+        },
+      ];
+    },
+  },
+  {
+    pattern: /^(\d+)% (increased|reduced) (Armour|Evasion(?: Rating)?|Energy Shield) while Ignited$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      const stat =
+        m[3]!.toLowerCase().startsWith('armour')
+          ? 'Armour'
+          : m[3]!.toLowerCase().startsWith('evasion')
+            ? 'Evasion'
+            : 'EnergyShield';
+      return [
+        {
+          ...mkMod(stat, type, value, src),
+          tags: [{ type: 'Condition', var: 'Ignited' }],
+        },
+      ];
+    },
+  },
+  {
+    pattern: /^Gain (\d+)% of (Physical|Fire|Cold|Lightning|Elemental) Damage as Extra (Fire|Cold|Lightning|Chaos|Physical) Damage against Heavy Stunned Enemies$/i,
+    build: (m, src) => {
+      const from = m[2]!.charAt(0).toUpperCase() + m[2]!.slice(1).toLowerCase();
+      const to = m[3]!.charAt(0).toUpperCase() + m[3]!.slice(1).toLowerCase();
+      return [
+        {
+          ...mkMod(`${from}GainAs${to}`, 'BASE', Number(m[1]), src),
+          tags: [{ type: 'Condition', var: 'EnemyHeavyStunned' }],
+        },
+      ];
+    },
+  },
 
   // =========================================================================
   // 5. PoE 2 Skill-Specific & Tag Gem Level Scaling (+X to Level of all <SkillName|Nova|...> Skills)

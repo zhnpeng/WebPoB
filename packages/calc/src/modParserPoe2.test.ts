@@ -2210,6 +2210,38 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
       expect(
         parseModLine('Mana Recovery from Regeneration is also applied to Runic Ward', 'Item:Weapon 1'),
       ).toEqual([expect.objectContaining({ name: 'ManaRegenAppliesToRunicWard', type: 'FLAG', value: true })]);
+      // Wave 6N: Watchtowers, Molten Carapace, Overheating Blow
+      expect(
+        parseModLine('Each Totem applies 2% increased Damage taken to Enemies in their Presence', 'Tree:5580'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'EnemyDamageTaken',
+          type: 'INC',
+          value: 2,
+          tags: [{ type: 'Multiplier', var: 'TotemsSummoned' }],
+        }),
+      ]);
+      expect(parseModLine('50% increased Armour while Ignited', 'Tree:51868')).toEqual([
+        expect.objectContaining({
+          name: 'Armour',
+          type: 'INC',
+          value: 50,
+          tags: [{ type: 'Condition', var: 'Ignited' }],
+        }),
+      ]);
+      expect(
+        parseModLine(
+          'Gain 25% of Physical Damage as Extra Fire Damage against Heavy Stunned Enemies',
+          'Tree:42390',
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'PhysicalGainAsFire',
+          type: 'BASE',
+          value: 25,
+          tags: [{ type: 'Condition', var: 'EnemyHeavyStunned' }],
+        }),
+      ]);
     });
   });
 });
