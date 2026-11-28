@@ -1958,5 +1958,62 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
         { kind: 'quality', filterKey: 'support', activeOnly: false, supportOnly: true, value: 7 },
       ]);
     });
+
+    it('parses Wave 6C PoE 2 Archon Crit, Crossbow Ammo/Reload, and Culling Threshold rules', () => {
+      expect(
+        parseModLine('Archon Buffs also grant 50% increased Critical Damage Bonus', 'Tree:Exhaust All Power'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'CritMultiplier',
+          type: 'INC',
+          value: 50,
+          tags: [{ type: 'Condition', var: 'Archon' }],
+        }),
+      ]);
+      expect(
+        parseModLine('Archon Buffs also grant 30% increased Critical Hit Chance', 'Tree:Exhaust All Power'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'CritChance',
+          type: 'INC',
+          value: 30,
+          tags: [{ type: 'Condition', var: 'Archon' }],
+        }),
+      ]);
+      expect(parseModLine('Loads an additional bolt', 'Item:Weapon 1')).toEqual([
+        expect.objectContaining({ name: 'CrossbowBoltCount', type: 'BASE', value: 1 }),
+      ]);
+      expect(
+        parseModLine('30% chance when you Reload a Crossbow to be immediate', 'Tree:Efficient Loading'),
+      ).toEqual([
+        expect.objectContaining({ name: 'CrossbowInstantReloadChance', type: 'BASE', value: 30 }),
+      ]);
+      expect(
+        parseModLine(
+          "Bolts fired by Crossbow Attacks have 30% chance to not expend Ammunition if you've Reloaded Recently",
+          'Tree:Reusable Ammunition',
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'CrossbowNoConsumeAmmoChance',
+          type: 'BASE',
+          value: 30,
+          tags: [{ type: 'Condition', var: 'ReloadedRecently' }],
+        }),
+      ]);
+      expect(
+        parseModLine(
+          '40% increased Culling Strike Threshold against Rare or Unique Enemies',
+          'Tree:Cull the Hordes',
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'CullThreshold',
+          type: 'INC',
+          value: 40,
+          tags: [{ type: 'Condition', var: 'EnemyRareOrUnique' }],
+        }),
+      ]);
+    });
   });
 });

@@ -2874,6 +2874,51 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
       },
     ],
   },
+  // Wave 6C: Archon Crit (Exhaust All Power), Crossbow Ammo/Reload (Efficient Loading, Reusable Ammunition, Loads an additional bolt), Culling Threshold (Cull the Hordes)
+  {
+    pattern: /^Archon Buffs also grant (\d+)% increased Critical Damage Bonus$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritMultiplier', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: 'Archon' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Archon Buffs also grant (\d+)% increased Critical Hit Chance$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritChance', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: 'Archon' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Loads an additional bolt$/i,
+    build: (_, src) => [mkMod('CrossbowBoltCount', 'BASE', 1, src)],
+  },
+  {
+    pattern: /^(\d+)% chance when you Reload a Crossbow to be immediate$/i,
+    build: (m, src) => [mkMod('CrossbowInstantReloadChance', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Bolts fired by Crossbow Attacks have (\d+)% chance to not(?: expend Ammunition if you've Reloaded Recently)?$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CrossbowNoConsumeAmmoChance', 'BASE', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: 'ReloadedRecently' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased Culling Strike Threshold against Rare or Unique Enemies$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CullThreshold', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: 'EnemyRareOrUnique' }],
+      },
+    ],
+  },
 
   // =========================================================================
   // 5. PoE 2 Skill-Specific & Tag Gem Level Scaling (+X to Level of all <SkillName|Nova|...> Skills)
