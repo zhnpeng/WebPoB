@@ -84,7 +84,19 @@ function makeMod(
 ): Mod {
   const mod: Mod = { name, type, value, flags, keywordFlags, source };
   if (tags.length > 0) {
-    mod.tags = [...tags];
+    // Compositional suffix rules (", up to X%") express a total value cap (limitTotal),
+    // not a raw stack count (e.g. Arcane Capacitor: 10% per 200 Mana, up to 50% total; Indigon: 25% per 200 Mana, up to 2000% total).
+    mod.tags = tags.map((tag) => {
+      if (
+        (tag.type === 'PerStat' || tag.type === 'Multiplier') &&
+        tag.limit !== undefined &&
+        typeof value === 'number' &&
+        value > 0
+      ) {
+        return { ...tag, limitTotal: true } as unknown as ModTag;
+      }
+      return tag;
+    });
   }
   return mod;
 }

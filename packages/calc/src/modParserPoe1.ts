@@ -408,7 +408,15 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
   // 4. Weapon & Conditional Combat
   // =========================================================================
   {
-    pattern: /^(\d+)% increased (Physical |Elemental |Fire |Cold |Lightning |Chaos )?Damage with (Two Handed Melee Weapons|Two Handed Weapons|One Handed Melee Weapons|One Handed Weapons|Maces or Sceptres|Maces, Sceptres or Staves|Axes|Swords|Claws|Daggers|Bows|Wands|Staves|Melee Weapons|Weapons)$/i,
+    pattern: /^(\d+)% (increased|more|less) Attack Speed with (Two Handed Melee Weapons|Two Handed Weapons|One Handed Melee Weapons|One Handed Weapons|Maces or Sceptres|Maces, Sceptres or Staves|Axes?|Swords?|Claws?|Daggers?|Bows?|Wands?|Staves|Staff|Melee Weapons|Weapons)$/i,
+    build: (m, src) => {
+      const val = m[2]!.toLowerCase() === 'less' ? -Number(m[1]) : Number(m[1]);
+      const type: ModType = m[2]!.toLowerCase() === 'increased' ? 'INC' : 'MORE';
+      return [mkMod('Speed', type, val, src, weaponFlags(m[3]!))];
+    },
+  },
+  {
+    pattern: /^(\d+)% increased (Physical |Elemental |Fire |Cold |Lightning |Chaos )?Damage with (Two Handed Melee Weapons|Two Handed Weapons|One Handed Melee Weapons|One Handed Weapons|Maces or Sceptres|Maces, Sceptres or Staves|Axes?|Swords?|Claws?|Daggers?|Bows?|Wands?|Staves|Staff|Melee Weapons|Weapons)$/i,
     build: (m, src) => [mkMod(dmgModName(m[2]), 'INC', Number(m[1]), src, weaponFlags(m[3]!))],
   },
   {
@@ -1063,8 +1071,27 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
     build: (m, src) => [mkMod('Speed', 'INC', Number(m[1]), src, ModFlag.Spell, KeywordFlag.Totem)],
   },
   {
+    pattern: /^(\d+)% increased Trap and Mine Throwing Speed$/i,
+    build: (m, src) => [
+      mkMod('TrapThrowingSpeed', 'INC', Number(m[1]), src, 0, KeywordFlag.Trap),
+      mkMod('MineLayingSpeed', 'INC', Number(m[1]), src, 0, KeywordFlag.Mine),
+    ],
+  },
+  {
     pattern: /^(\d+)% increased (Trap|Mine) Throwing Speed$/i,
-    build: (m, src) => [mkMod(`${capFirst(m[2]!)}ThrowingSpeed`, 'INC', Number(m[1]), src)],
+    build: (m, src) => {
+      const isMine = m[2]!.toLowerCase() === 'mine';
+      return [
+        mkMod(
+          isMine ? 'MineLayingSpeed' : 'TrapThrowingSpeed',
+          'INC',
+          Number(m[1]),
+          src,
+          0,
+          isMine ? KeywordFlag.Mine : KeywordFlag.Trap,
+        ),
+      ];
+    },
   },
   {
     pattern: /^(\d+)% increased Trap Trigger Area of Effect$/i,
@@ -1190,7 +1217,13 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
   },
   {
     pattern: /^Enemies Hindered by you take (\d+)% increased Chaos Damage$/i,
-    build: (m, src) => [mkMod('EnemyChaosDamageTaken', 'INC', Number(m[1]), src)],
+    build: (m, src) => [
+      {
+        ...mkMod('ChaosDamageTaken', 'INC', Number(m[1]), src),
+        target: 'enemy' as const,
+        tags: [{ type: 'Condition' as const, var: 'EnemyHindered' }],
+      },
+    ],
   },
 ];
 

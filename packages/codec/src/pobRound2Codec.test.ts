@@ -288,4 +288,59 @@ Implicits: 1
     expect(build.config.customMods).toContain('25% increased Mana Regeneration Rate');
     expect(build.config.customMods).toContain('+5 to Strength');
   });
+
+  it('decodes PoE 1 skillMineCount, guards skillStageCountCalcs, and normalizes numeric Stationary/Channelling/Self-Curse/Brands/Impale/Adrenaline config inputs', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding>
+  <Build level="98" targetVersion="3_0" className="Shadow" ascendClassName="Trickster" mainSocketGroup="1" />
+  <Tree activeSpec="1"><Spec title="Default" treeVersion="3_30" nodes="" /></Tree>
+  <Skills activeSkillSet="1">
+    <SkillSet id="1">
+      <Skill enabled="true" slot="Body Armour" label="Main Mines">
+        <Gem nameSpec="Ice Nova of Frostbolts" level="21" quality="0" enabled="true" skillMineCount="10" skillStageCountCalcs="8" />
+        <Gem nameSpec="Cyclone" level="20" quality="20" enabled="true" />
+      </Skill>
+      <Skill enabled="true" slot="Helmet" label="Explicit Stage">
+        <Gem nameSpec="Cyclone" level="20" quality="20" enabled="true" skillStageCount="5" />
+      </Skill>
+    </SkillSet>
+  </Skills>
+  <Items activeItemSet="1"><ItemSet id="1" /></Items>
+  <Config activeConfigSet="1">
+    <ConfigSet id="1">
+      <Input name="conditionStationary" number="2" />
+      <Input name="multiplierChannelling" number="3" />
+      <Input name="ActiveBrands" number="5" />
+      <Input name="conditionImpaledRecently" boolean="true" />
+      <Input name="conditionAdrenaline" boolean="true" />
+      <Input name="playerCursedWithConductivity" number="1" />
+      <Input name="playerCursedWithDespair" number="1" />
+      <Input name="playerCursedWithEnfeeble" boolean="true" />
+    </ConfigSet>
+  </Config>
+  <Notes></Notes>
+</PathOfBuilding>`;
+
+    const build = xmlToBuild(xml);
+    // skillMineCount on main skill gem populates activeMineCount & multiplierActiveMines
+    expect(build.config.rawInputs?.activeMineCount).toBe(10);
+    expect(build.config.rawInputs?.multiplierActiveMines).toBe(10);
+    // PoE 1 MAIN mode ignores skillStageCountCalcs, but honors explicit skillStageCount
+    expect(build.skills[0]!.gems[0]!.stageCount).toBeUndefined();
+    expect(build.skills[1]!.gems[0]!.stageCount).toBe(5);
+    // Numeric conditionStationary sets both boolean conditionStationary & multiplierStationarySeconds
+    expect(build.config.rawInputs?.conditionStationary).toBe(true);
+    expect(build.config.rawInputs?.multiplierStationarySeconds).toBe(2);
+    // multiplierChannelling sets channellingTime & conditionChannelling
+    expect(build.config.rawInputs?.channellingTime).toBe(3);
+    expect(build.config.rawInputs?.conditionChannelling).toBe(true);
+    // ActiveBrands -> multiplierActiveBrand
+    expect(build.config.rawInputs?.multiplierActiveBrand).toBe(5);
+    // Self-curses count -> multiplierCurseOnSelf & conditionCursed
+    expect(build.config.rawInputs?.multiplierCurseOnSelf).toBe(3);
+    expect(build.config.rawInputs?.conditionCursed).toBe(true);
+    // ImpaledRecently & Adrenaline aliases
+    expect(build.config.rawInputs?.conditionImpaledEnemyRecently).toBe(true);
+    expect(build.config.rawInputs?.buffAdrenaline).toBe(true);
+  });
 });

@@ -636,9 +636,10 @@ export function xmlToBuild(xml: string): Build {
   const parseSkillGroupsFromBlock = (
     blockXml: string,
     prefix: string,
-  ): { groups: SkillGroup[]; byXmlOrdinal: Map<number, string> } => {
+  ): { groups: SkillGroup[]; byXmlOrdinal: Map<number, string>; groupMineCounts: Map<string, number> } => {
     const parsed: SkillGroup[] = [];
     const byXmlOrdinal = new Map<number, string>();
+    const groupMineCounts = new Map<string, number>();
     const skillRegex = /<Skill(?=\s|>|\/)([^>]*?)(?:\/>|>([\s\S]*?)<\/Skill>)/gi;
     let skillMatch: RegExpExecArray | null;
     let xmlOrdinal = 0;
@@ -648,6 +649,7 @@ export function xmlToBuild(xml: string): Build {
       const attrs = parseAttributes(skillMatch[1]!);
       const inner = skillMatch[2] ?? '';
       const gems: GemInstance[] = [];
+      let firstEnabledGemMineCount: number | undefined;
       const gemRegex = /<Gem(?=\s|>|\/)([^>]*?)(?:\/>|>([\s\S]*?)<\/Gem>)/gi;
       let gemMatch: RegExpExecArray | null;
       let gemCounter = 1;
@@ -665,9 +667,16 @@ export function xmlToBuild(xml: string): Build {
           const parsedCount = Number(gAttrs.count ?? 1);
           const gemSkillPart =
             parsePositiveIntAttr(gAttrs.skillPart) ?? parsePositiveIntAttr(gAttrs.skillPartCalcs);
+          // Official PoB 1 CalcActiveSkill.lua:686 only reads skillStageCount in MAIN mode (not skillStageCountCalcs).
           const gemStageCount =
             parsePositiveIntAttr(gAttrs.skillStageCount) ??
-            parsePositiveIntAttr(gAttrs.skillStageCountCalcs);
+            (game === 'poe2' ? parsePositiveIntAttr(gAttrs.skillStageCountCalcs) : undefined);
+          if (gAttrs.enabled !== 'false' && firstEnabledGemMineCount === undefined) {
+            const gemMineCount = parsePositiveIntAttr(gAttrs.skillMineCount);
+            if (gemMineCount !== undefined) {
+              firstEnabledGemMineCount = gemMineCount;
+            }
+          }
           let gemStatSetIndex =
             parsePositiveIntAttr(gAttrs.statSetIndex) ??
             parsePositiveIntAttr(gAttrs.statSetIndexCalcs);
@@ -817,11 +826,16 @@ export function xmlToBuild(xml: string): Build {
           parsePositiveIntAttr(attrs.statSetIndexCalcs);
         const groupStageCount =
           parsePositiveIntAttr(attrs.skillStageCount) ??
-          parsePositiveIntAttr(attrs.skillStageCountCalcs);
+          (game === 'poe2' ? parsePositiveIntAttr(attrs.skillStageCountCalcs) : undefined);
         const groupSource = attrs.source?.trim() || undefined;
         const groupEnabled =
           attrs.enabled !== undefined ? attrs.enabled !== 'false' : attrs.active !== 'false';
         const groupId = `${prefix}_sg_${groupCounter}`;
+        const resolvedMineCount =
+          parsePositiveIntAttr(attrs.skillMineCount) ?? firstEnabledGemMineCount;
+        if (resolvedMineCount !== undefined) {
+          groupMineCounts.set(groupId, resolvedMineCount);
+        }
         parsed.push({
           id: groupId,
           label: attrs.label || `Skill Group ${groupCounter}`,
@@ -840,7 +854,7 @@ export function xmlToBuild(xml: string): Build {
         groupCounter++;
       }
     }
-    return { groups: parsed, byXmlOrdinal };
+    return { groups: parsed, byXmlOrdinal, groupMineCounts };
   };
 
   const makeFallbackSkillGroup = (prefix: string): SkillGroup => {
@@ -859,13 +873,18 @@ export function xmlToBuild(xml: string): Build {
   const skillsHeaderAttrs = skillsHeaderMatch ? parseAttributes(skillsHeaderMatch[1]!) : {};
   const requestedSkillSetId = skillsHeaderAttrs.activeSkillSet || '1';
   const skillSets: SkillSetSpec[] = [];
+  const skillSetMineCounts: Map<string, number>[] = [];
   const skillSetBlockRegex = /<SkillSet\b([^>]*?)(?:\/>|>([\s\S]*?)<\/SkillSet>)/gi;
   let ssMatch: RegExpExecArray | null;
   while ((ssMatch = skillSetBlockRegex.exec(xml)) !== null) {
     const ssAttrs = parseAttributes(ssMatch[1]!);
     const ssInner = ssMatch[2] ?? '';
     const setId = ssAttrs.id || String(skillSets.length + 1);
-    const { groups: parsedGroups, byXmlOrdinal } = parseSkillGroupsFromBlock(ssInner, `imp_ss${setId}`);
+    const {
+      groups: parsedGroups,
+      byXmlOrdinal,
+      groupMineCounts,
+    } = parseSkillGroupsFromBlock(ssInner, `imp_ss${setId}`);
     const setSkills = parsedGroups.length > 0 ? parsedGroups : [makeFallbackSkillGroup(`imp_ss${setId}`)];
     const resolvedMainId =
       byXmlOrdinal.get(mainSocketGroupIdx) ??
@@ -877,11 +896,13 @@ export function xmlToBuild(xml: string): Build {
       skills: setSkills,
       mainSkillGroupId: resolvedMainId,
     });
+    skillSetMineCounts.push(groupMineCounts);
   }
 
   let activeSkillSetIndex = 0;
   let skills: SkillGroup[];
   let mainSkillGroupId: string;
+  let activeGroupMineCounts = new Map<string, number>();
   if (skillSets.length > 0) {
     activeSkillSetIndex = skillSets.findIndex((s) => s.id === requestedSkillSetId);
     if (activeSkillSetIndex < 0) {
@@ -892,13 +913,19 @@ export function xmlToBuild(xml: string): Build {
     const activeSkillSet = skillSets[activeSkillSetIndex]!;
     skills = activeSkillSet.skills;
     mainSkillGroupId = activeSkillSet.mainSkillGroupId ?? activeSkillSet.skills[0]!.id;
+    activeGroupMineCounts = skillSetMineCounts[activeSkillSetIndex] ?? new Map<string, number>();
   } else {
-    const { groups: parsedGroups, byXmlOrdinal } = parseSkillGroupsFromBlock(xml, 'imp');
+    const {
+      groups: parsedGroups,
+      byXmlOrdinal,
+      groupMineCounts,
+    } = parseSkillGroupsFromBlock(xml, 'imp');
     skills = parsedGroups.length > 0 ? parsedGroups : [makeFallbackSkillGroup('imp')];
     mainSkillGroupId =
       byXmlOrdinal.get(mainSocketGroupIdx) ??
       skills[mainSocketGroupIdx - 1]?.id ??
       skills[0]!.id;
+    activeGroupMineCounts = groupMineCounts;
   }
 
   // Parse <Config> inputs using clean official PoB defaults (`enemyIsBoss` defaults to Pinnacle in both PoB1 & PoB2!)
@@ -929,6 +956,7 @@ export function xmlToBuild(xml: string): Build {
   let explicitEnemyEvasion = false;
   const questCustomModLines: string[] = [];
   const rawInputs: Record<string, boolean | number | string> = {};
+  let selfCurseCount = 0;
   const activeConfigXml = extractActiveConfigSetXml(xml);
   const inputRegex = /<(Input|Placeholder)\b([^>]*)\/?>/gi;
   let inputMatch: RegExpExecArray | null;
@@ -945,11 +973,35 @@ export function xmlToBuild(xml: string): Build {
     }
     if (key && !/^quest/i.test(key) && key !== 'customMods') {
       if (attrs.boolean !== undefined) {
-        rawInputs[key] = attrs.boolean === 'true';
+        const boolVal = attrs.boolean === 'true';
+        rawInputs[key] = boolVal;
+        if (/^playerCursedWith/i.test(key) && boolVal) {
+          selfCurseCount += 1;
+        }
+        if (key === 'conditionImpaledRecently' && boolVal && rawInputs.conditionImpaledEnemyRecently === undefined) {
+          rawInputs.conditionImpaledEnemyRecently = true;
+        }
+        if (key === 'conditionAdrenaline' && boolVal && rawInputs.buffAdrenaline === undefined) {
+          rawInputs.buffAdrenaline = true;
+        }
       } else if (attrs.number !== undefined) {
         const parsedNum = Number(attrs.number);
         if (Number.isFinite(parsedNum)) {
-          rawInputs[key] = parsedNum;
+          if (key === 'conditionStationary') {
+            // PoB 1 ConfigOptions.lua:158-170: numeric conditionStationary sets both StationarySeconds & Condition:Stationary
+            rawInputs.multiplierStationarySeconds = parsedNum;
+            rawInputs.conditionStationary = parsedNum > 0;
+          } else {
+            rawInputs[key] = parsedNum;
+            if (key === 'multiplierChannelling' && parsedNum > 0) {
+              if (rawInputs.channellingTime === undefined) rawInputs.channellingTime = parsedNum;
+              if (rawInputs.conditionChannelling === undefined) rawInputs.conditionChannelling = true;
+            } else if (key === 'ActiveBrands' && parsedNum > 0) {
+              if (rawInputs.multiplierActiveBrand === undefined) rawInputs.multiplierActiveBrand = parsedNum;
+            } else if (/^playerCursedWith/i.test(key) && parsedNum > 0) {
+              selfCurseCount += 1;
+            }
+          }
         }
       } else if (attrs.string !== undefined) {
         rawInputs[key] = attrs.string;
@@ -1427,6 +1479,24 @@ export function xmlToBuild(xml: string): Build {
         config.importedPartyMods = importedMods;
       }
     }
+  }
+
+  if (selfCurseCount > 0) {
+    if (rawInputs.multiplierCurseOnSelf === undefined) {
+      rawInputs.multiplierCurseOnSelf = selfCurseCount;
+    }
+    if (rawInputs.conditionCursed === undefined) {
+      rawInputs.conditionCursed = true;
+    }
+  }
+  const mainMineCount = activeGroupMineCounts.get(mainSkillGroupId);
+  if (
+    mainMineCount !== undefined &&
+    rawInputs.activeMineCount === undefined &&
+    rawInputs.multiplierActiveMines === undefined
+  ) {
+    rawInputs.activeMineCount = mainMineCount;
+    rawInputs.multiplierActiveMines = mainMineCount;
   }
 
   if (Object.keys(rawInputs).length > 0) {

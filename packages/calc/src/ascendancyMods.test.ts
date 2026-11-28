@@ -539,8 +539,8 @@ describe('ascendancyMods', () => {
         config: { enemyIsBoss: 'Pinnacle' },
       });
       expect(db.override('WeaponBaseCritChance', ModFlag.Attack)).toBe(8);
-      // Bane of Legends (1.2) * Headsman (1.2) = 1.44
-      expect(db.more('Damage')).toBeCloseTo(1.44, 5);
+      // PoE 1 3.25+: Bane of Legends grants 20% MORE vs Unique; Headsman only grants 20% Culling Strike (no 20% MORE)
+      expect(db.more('Damage')).toBeCloseTo(1.2, 5);
       expect(db.sum('BASE', 'CullingStrikeThreshold')).toBe(20);
 
       applyPostLifeAscendancyMechanics({
@@ -721,15 +721,17 @@ describe('ascendancyMods', () => {
     });
 
     it('Deadeye (PoE 1), Champion, Inquisitor, Trickster, Gladiator & Pathfinder', () => {
-      // Deadeye (PoE 1)
+      // Deadeye (PoE 1): Gathering Winds emits Condition:Tailwind + base ActionSpeed without double-counting Speed MORE
       const dbDeadeye = new ModDB();
       applyPreStatAscendancyMechanics({
         game: 'poe1',
         db: dbDeadeye,
         allocatedNodes: [mkNode('Gathering Winds', [], 'Deadeye', 1), mkNode('Far Shot', [], 'Deadeye', 2)],
       });
+      expect(dbDeadeye.flag('HasTailwind')).toBe(true);
+      expect(dbDeadeye.flag('Condition:Tailwind')).toBe(true);
       expect(dbDeadeye.sum('INC', 'ActionSpeed')).toBe(8);
-      expect(dbDeadeye.more('Speed', ModFlag.Attack)).toBeCloseTo(1.08, 5);
+      expect(dbDeadeye.more('Speed', ModFlag.Attack)).toBeCloseTo(1.0, 5);
       expect(dbDeadeye.more('Damage', ModFlag.Projectile)).toBeCloseTo(1.3, 5);
 
       // Champion
@@ -786,7 +788,8 @@ describe('ascendancyMods', () => {
       });
       expect(dbGlad.flag('BlockChanceIsLucky')).toBe(true);
       expect(dbGlad.flag('AggravatedBleeding')).toBe(true);
-      expect(dbGlad.more('Damage', ModFlag.Ailment | ModFlag.Dot, KeywordFlag.Bleed)).toBeCloseTo(2.0, 5);
+      // AggravatedBleeding drives the 3x (210% vs 70%) bleed rate in skillActorRuntime without double-counting MORE 100
+      expect(dbGlad.more('Damage', ModFlag.Ailment | ModFlag.Dot, KeywordFlag.Bleed)).toBeCloseTo(1.0, 5);
 
       // Pathfinder
       const dbPf = new ModDB();
@@ -1105,6 +1108,105 @@ describe('ascendancyMods', () => {
           keywordFlags: 0,
         }),
       ]);
+    });
+
+    it('handles Wave 4O PoE 1 Slayer dedup/Impact, Deadeye/Ascendant Tailwind, Occultist Vile Bastion, and Reliquarian Scales of Justice', () => {
+      // 1. Slayer Bane of Legends dedup + Impact proximity MORE + Headsman no phantom MORE
+      const dbSlayer = new ModDB();
+      const baneNode = mkNode(
+        'Bane of Legends',
+        ["10% more Damage if you've Killed Recently", '20% more Damage with Hits and Ailments against Unique Enemies'],
+        'Slayer',
+        62817,
+      );
+      const impactNode = mkNode(
+        'Impact',
+        ['Deal up to 15% more Melee Damage to Enemies, based on proximity'],
+        'Slayer',
+        38180,
+      );
+      const headsmanNode = mkNode(
+        'Headsman',
+        ['Kill Enemies that have 20% or lower Life when Hit by your Skills'],
+        'Slayer',
+        3184,
+      );
+      dbSlayer.addMods(parseModLines(baneNode.stats, 'Tree: Bane of Legends'));
+      dbSlayer.addMods(parseModLines(impactNode.stats, 'Tree: Impact'));
+      dbSlayer.addMods(parseModLines(headsmanNode.stats, 'Tree: Headsman'));
+      applyPreStatAscendancyMechanics({
+        game: 'poe1',
+        db: dbSlayer,
+        allocatedNodes: [baneNode, impactNode, headsmanNode],
+        config: { enemyIsBoss: 'Pinnacle' },
+      });
+      dbSlayer.setCondition('EnemyRareOrUnique', true);
+      dbSlayer.setCondition('MeleeProximity', true);
+      // Only Impact (1.15) applies on Attack|Melee without Bane double-count or Headsman phantom MORE
+      // (Bane tree mod has ModFlag.Hit|ModFlag.Ailment expanded in skillActorRuntime; ascendancyMods must not double-add)
+      expect(dbSlayer.more('Damage', ModFlag.Attack | ModFlag.Melee)).toBeCloseTo(1.15, 5);
+      expect(dbSlayer.sum('BASE', 'CullingStrikeThreshold')).toBe(20);
+
+      // 2. Deadeye Gathering Winds with config delegates Tailwind to engine.ts (0 direct ActionSpeed); Ascendant Deadeye emits Condition:Tailwind
+      const dbDeCfg = new ModDB();
+      applyPreStatAscendancyMechanics({
+        game: 'poe1',
+        db: dbDeCfg,
+        allocatedNodes: [mkNode('Gathering Winds', [], 'Deadeye', 1)],
+        config: { buffTailwind: false },
+      });
+      expect(dbDeCfg.flag('Condition:Tailwind')).toBe(true);
+      expect(dbDeCfg.sum('INC', 'ActionSpeed')).toBe(0);
+
+      const dbAscDe = new ModDB();
+      applyPreStatAscendancyMechanics({
+        game: 'poe1',
+        db: dbAscDe,
+        allocatedNodes: [mkNode('Deadeye', ['You and nearby Allies have Tailwind'], 'Ascendant', 34567)],
+        config: {},
+      });
+      expect(dbAscDe.flag('HasTailwind')).toBe(true);
+      expect(dbAscDe.flag('Condition:Tailwind')).toBe(true);
+
+      // 3. Occultist Vile Bastion: Maximum Energy Shield increased by capped Spell Block Chance
+      const dbOcc = new ModDB();
+      dbOcc.addMod({ name: 'SpellBlockChance', type: 'BASE', value: 40, flags: 0, keywordFlags: 0, source: 'Gear' });
+      dbOcc.addMod({ name: 'SpellBlockChance', type: 'MORE', value: 100, flags: 0, keywordFlags: 0, source: 'Glancing Blows' });
+      applyPostLifeAscendancyMechanics({
+        game: 'poe1',
+        db: dbOcc,
+        allocatedNodes: [mkNode('Vile Bastion', ['Maximum Energy Shield is increased by Chance to Block Spell Damage'], 'Occultist', 1)],
+        str: 100,
+        dex: 100,
+        int: 300,
+        maxLife: 1,
+        maxMana: 1000,
+      });
+      // 40 * 2 = 80 capped at 75
+      expect(dbOcc.sum('INC', 'EnergyShield')).toBe(75);
+
+      // 4. Reliquarian The Scales of Justice: 4 to 8 added Fire Damage per 100 of min(Life, Mana)
+      const dbRel = new ModDB();
+      applyPostLifeAscendancyMechanics({
+        game: 'poe1',
+        db: dbRel,
+        allocatedNodes: [
+          mkNode(
+            'The Scales of Justice',
+            ['4 to 8 added Fire Damage per 100 of Maximum Life or Maximum Mana, whichever is lower'],
+            'Reliquarian',
+            1,
+          ),
+        ],
+        str: 100,
+        dex: 100,
+        int: 200,
+        maxLife: 4500,
+        maxMana: 3250,
+      });
+      // floor(3250 / 100) = 32 -> 128 to 256 added Fire
+      expect(dbRel.sum('BASE', 'FireMin')).toBe(128);
+      expect(dbRel.sum('BASE', 'FireMax')).toBe(256);
     });
   });
 });

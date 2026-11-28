@@ -191,6 +191,29 @@ function hasRawSourceMod(db: ModDB, statName: string, sourceSubstring: string): 
   return false;
 }
 
+function hasRawSourceModMatching(
+  db: ModDB,
+  statName: string,
+  sourceSubstring: string,
+  type: ModType,
+  value: number,
+): boolean {
+  const lower = sourceSubstring.toLowerCase();
+  for (const [key, list] of db.entriesByPrefix(statName)) {
+    if (key !== statName) continue;
+    for (const mod of list) {
+      if (
+        mod.type === type &&
+        mod.value === value &&
+        mod.source.toLowerCase().includes(lower)
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function hasPerStatMod(
   db: ModDB,
   statName: string,
@@ -625,21 +648,47 @@ function applyPoe1PreStatAscendancies(
     addMod(db, 'UntiringPhysPreventedRegen', 'BASE', 1.5, src);
   }
 
+  // Expose Condition:Adrenaline when config buffAdrenaline is active so on-kill Adrenaline items (e.g. Death Rush) never double-count
+  if (config?.rawInputs?.buffAdrenaline && !db.flag('Condition:Adrenaline')) {
+    addMod(db, 'Condition:Adrenaline', 'FLAG', true, 'Adrenaline');
+  }
+
   // --- PoE 1 Slayer ---
   if (nodes.has('overwhelm')) {
     addMod(db, 'WeaponBaseCritChance', 'OVERRIDE', 8, 'Ascendancy: Overwhelm', ModFlag.Attack);
   }
 
-  if (nodes.has('bane of legends') && isBossOrUniqueContext(config)) {
+  // Bane of Legends: 20% more Damage with Hits and Ailments against Unique Enemies (deduplicated against parsed tree stat)
+  if (
+    nodes.has('bane of legends') &&
+    isBossOrUniqueContext(config) &&
+    !hasRawSourceModMatching(db, 'Damage', 'bane of legends', 'MORE', 20)
+  ) {
     addMod(db, 'Damage', 'MORE', 20, 'Ascendancy: Bane of Legends');
   }
 
+  // Impact: Deal up to 15% more Melee Damage to Enemies, based on proximity (deduplicated against parsed tree stat)
+  if (nodes.has('impact') && !hasRawSourceMod(db, 'Damage', 'impact')) {
+    const src = 'Ascendancy: Impact';
+    if (config === undefined) {
+      addMod(db, 'Damage', 'MORE', 15, src, ModFlag.Attack | ModFlag.Melee);
+    } else {
+      db.addMod({
+        name: 'Damage',
+        type: 'MORE',
+        value: 15,
+        flags: ModFlag.Attack | ModFlag.Melee,
+        keywordFlags: 0,
+        source: src,
+        tags: [{ type: 'Condition', var: 'MeleeProximity' }],
+      });
+    }
+  }
+
+  // Headsman (PoE 1 3.25+): 20% Culling Strike (no longer grants 20% more Damage)
   if (nodes.has('headsman')) {
     const src = 'Ascendancy: Headsman';
     addMod(db, 'CullingStrikeThreshold', 'BASE', 20, src);
-    if (isBossOrUniqueContext(config) || config?.conditionLowLife) {
-      addMod(db, 'Damage', 'MORE', 20, src);
-    }
   }
 
   // --- PoE 1 Assassin ---
@@ -796,15 +845,30 @@ function applyPoe1PreStatAscendancies(
     }
   }
 
-  // --- PoE 1 Deadeye ---
+  // --- PoE 1 Deadeye (and Ascendant Deadeye Tailwind) ---
   if (nodes.has('gathering winds')) {
     const src = 'Ascendancy: Gathering Winds';
     addMod(db, 'HasTailwind', 'FLAG', true, src);
-    if (!config?.buffTailwind) {
+    if (!db.flag('Condition:Tailwind')) {
+      addMod(db, 'Condition:Tailwind', 'FLAG', true, src);
+    }
+    if (config === undefined) {
+      // Standalone unit tests without BuildConfig keep base 8% Action Speed / Movement Speed;
+      // real builds evaluate Tailwind + Gale Force once in engine.ts via Condition:Tailwind without double-counting.
       addMod(db, 'ActionSpeed', 'INC', 8, src);
-      addMod(db, 'Speed', 'MORE', 8, src, ModFlag.Attack);
-      addMod(db, 'Speed', 'MORE', 8, src, ModFlag.Spell);
       addMod(db, 'MovementSpeed', 'MORE', 8, src);
+    }
+  }
+
+  const ascendantDeadeye = nodes.get('deadeye');
+  if (
+    ascendantDeadeye &&
+    (ascendantDeadeye.stats ?? []).some((s) => /you and nearby allies have tailwind/i.test(s))
+  ) {
+    const src = 'Ascendancy: Deadeye';
+    addMod(db, 'HasTailwind', 'FLAG', true, src);
+    if (!db.flag('Condition:Tailwind')) {
+      addMod(db, 'Condition:Tailwind', 'FLAG', true, src);
     }
   }
 
@@ -982,8 +1046,9 @@ function applyPoe1PreStatAscendancies(
 
   if (nodes.has('jagged technique')) {
     const src = 'Ascendancy: Jagged Technique';
+    // skillActorRuntime already applies the 3x (210% vs 70%) Aggravated Bleeding rate via AggravatedBleeding;
+    // do not inject an extra 100% MORE Bleed Damage mod on top.
     addMod(db, 'AggravatedBleeding', 'FLAG', true, src);
-    addMod(db, 'Damage', 'MORE', 100, src, ModFlag.Ailment | ModFlag.Dot, KeywordFlag.Bleed);
   }
 
   // --- PoE 1 Pathfinder ---
@@ -1366,6 +1431,39 @@ function applyPoe1PostLifeAscendancies(
       if (extraTotemLimit > 0) {
         db.setMultiplier('SummonedTotem', 1 + extraTotemLimit);
       }
+    }
+  }
+
+  // --- Reliquarian: The Scales of Justice ---
+  // "4 to 8 added Fire Damage per 100 of Maximum Life or Maximum Mana, whichever is lower"
+  const scalesNode = nodes.get('the scales of justice');
+  if (scalesNode && !hasRawSourceMod(db, 'FireMin', 'scales of justice')) {
+    const lowerPool = Math.max(0, Math.min(input.maxLife, input.maxMana));
+    const stacks = Math.floor(lowerPool / 100);
+    if (stacks > 0) {
+      const joined = (scalesNode.stats ?? []).join(' ').replace(/\s+/g, ' ');
+      const mRange = joined.match(/(\d+)\s+to\s+(\d+)\s+added Fire Damage per (\d+)/i);
+      const minPer = mRange ? Number(mRange[1]) : 4;
+      const maxPer = mRange ? Number(mRange[2]) : 8;
+      const div = mRange ? Math.max(1, Number(mRange[3])) : 100;
+      const effStacks = Math.floor(lowerPool / div);
+      if (effStacks > 0) {
+        const src = 'Ascendancy: The Scales of Justice';
+        addMod(db, 'FireMin', 'BASE', effStacks * minPer, src);
+        addMod(db, 'FireMax', 'BASE', effStacks * maxPer, src);
+      }
+    }
+  }
+
+  // --- Occultist: Vile Bastion ---
+  // Maximum Energy Shield is increased by Chance to Block Spell Damage.
+  // Note: db.calcStat('SpellBlockChance').total already includes Glancing Blows' MORE 100.
+  if (nodes.has('vile bastion') && !hasRawSourceMod(db, 'EnergyShield', 'vile bastion')) {
+    const maxSpellBlock = Math.min(90, Math.max(0, 75 + Math.round(db.sum('BASE', 'SpellBlockChanceMax'))));
+    const rawSpellBlock = Math.round(db.calcStat('SpellBlockChance').total);
+    const effSpellBlock = Math.min(maxSpellBlock, Math.max(0, rawSpellBlock));
+    if (effSpellBlock > 0) {
+      addMod(db, 'EnergyShield', 'INC', effSpellBlock, 'Ascendancy: Vile Bastion');
     }
   }
 

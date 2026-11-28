@@ -196,7 +196,7 @@ const PARSER_RULES: ParserRule[] = [
     build: (_, src) => [mkMod('SpellCritChanceFromMainHandWeapon', 'FLAG', true, src)],
   },
   {
-    pattern: /^Attacks have Added Lightning Damage equal to (\d+)% of Maximum Mana$/i,
+    pattern: /^Attack(?:s| Skills) have Added Lightning Damage equal to (\d+)% of Maximum Mana$/i,
     build: (m, src) => [mkMod('MindOfTheCouncilManaPct', 'BASE', Number(m[1]), src)],
   },
   {
@@ -273,6 +273,412 @@ const PARSER_RULES: ParserRule[] = [
         tags: [{ type: 'PerStat', stat: 'Int', div: 1 }],
       },
     ],
+  },
+  // Wave 4O: PoE 1 High-Impact Mechanics (Spiritual Aid/Command, Tailwind, Impact, Str->Acc, Mines, Curses, Ailment/Enemy Mods)
+  {
+    pattern: /^Gain Accuracy Rating equal to your Strength$/i,
+    build: (_, src) => [
+      {
+        ...mkMod('Accuracy', 'BASE', 1, src),
+        tags: [{ type: 'PerStat', stat: 'Str', div: 1 }],
+      },
+    ],
+  },
+  {
+    pattern: /^Increases and Reductions to Minion Damage also affect you$/i,
+    build: (_, src) => [mkMod('SpiritualAid', 'FLAG', true, src)],
+  },
+  // NOTE: SpiritualCommand ("Increases and Reductions to Minion Attack Speed also affect you") is
+  // deferred to Coordinator handoff because skillActorRuntime.ts:1241 currently routes SpiritualCommand
+  // to both ModFlag.Attack and ModFlag.Spell (leaking Minion Attack Speed onto Spells & double-counting hybrids).
+  {
+    pattern: /^You and nearby Allies have Tailwind$/i,
+    build: (_, src) => [
+      mkMod('HasTailwind', 'FLAG', true, src),
+      mkMod('Condition:Tailwind', 'FLAG', true, src),
+    ],
+  },
+  {
+    pattern: /^You have Tailwind if you have dealt a Critical Strike Recently$/i,
+    build: (_, src) => [
+      { ...mkMod('HasTailwind', 'FLAG', true, src), tags: [{ type: 'Condition', var: 'CritRecently' }] },
+      { ...mkMod('Condition:Tailwind', 'FLAG', true, src), tags: [{ type: 'Condition', var: 'CritRecently' }] },
+    ],
+  },
+  {
+    pattern: /^Deal up to (\d+)% more Melee Damage to Enemies, based on proximity$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'MORE', Number(m[1]), src, ModFlag.Attack | ModFlag.Melee),
+        tags: [{ type: 'Condition', var: 'MeleeProximity' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Mine Damage Penetrates (\d+)% Elemental Resistances$/i,
+    build: (m, src) => {
+      const val = Number(m[1]);
+      return [
+        mkMod('FirePenetration', 'BASE', val, src, ModFlag.Hit, KeywordFlag.Mine),
+        mkMod('ColdPenetration', 'BASE', val, src, ModFlag.Hit, KeywordFlag.Mine),
+        mkMod('LightningPenetration', 'BASE', val, src, ModFlag.Hit, KeywordFlag.Mine),
+      ];
+    },
+  },
+  {
+    pattern: /^Can have up to (\d+) additional Remote Mines? placed at a time$/i,
+    build: (m, src) => [mkMod('ActiveMineLimit', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^(\d+)% increased Damage per Curse on you$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Multiplier', var: 'CurseOnSelf' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Enemies Ignited or Chilled by you have (-?\d+)% to Elemental Resistances$/i,
+    build: (m, src) => {
+      const val = Number(m[1]);
+      const tags = [{ type: 'Condition' as const, var: 'EnemyIgnited|EnemyChilled' }];
+      return [
+        { ...mkMod('FireResist', 'BASE', val, src), target: 'enemy' as const, tags },
+        { ...mkMod('ColdResist', 'BASE', val, src), target: 'enemy' as const, tags },
+        { ...mkMod('LightningResist', 'BASE', val, src), target: 'enemy' as const, tags },
+      ];
+    },
+  },
+  {
+    pattern: /^Each Totem applies (\d+)% increased Damage taken to Enemies (?:near it|within \d+(?:\.\d+)? metres)$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('DamageTaken', 'INC', Number(m[1]), src),
+        target: 'enemy' as const,
+        tags: [{ type: 'Multiplier', var: 'SummonedTotem' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Enemies Chilled by your Hits have Cold Damage taken increased by Chill Effect$/i,
+    build: (_, src) => [
+      {
+        ...mkMod('ColdDamageTaken', 'INC', 1, src),
+        target: 'enemy' as const,
+        tags: [
+          { type: 'Multiplier', var: 'EnemyChillEffect' },
+          { type: 'Condition', var: 'EnemyChilled' },
+        ],
+      },
+    ],
+  },
+  {
+    pattern: /^Enemies Chilled by your Hits have Damage taken increased by Chill Effect$/i,
+    build: (_, src) => [
+      {
+        ...mkMod('DamageTaken', 'INC', 1, src),
+        target: 'enemy' as const,
+        tags: [
+          { type: 'Multiplier', var: 'EnemyChillEffect' },
+          { type: 'Condition', var: 'EnemyChilled' },
+        ],
+      },
+    ],
+  },
+  {
+    pattern: /^If you've Impaled an Enemy Recently, you and (?:nearby Allies|Allies within \d+ metres) have \+(\d+) to Armour$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Armour', 'BASE', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: 'ImpaledRecently|ImpaledEnemyRecently' }],
+      },
+    ],
+  },
+  {
+    pattern: /^\+(\d+) to Evasion Rating per (\d+) (?:Player )?Maximum Life$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Evasion', 'BASE', Number(m[1]), src),
+        tags: [{ type: 'PerStat', stat: 'Life', div: Math.max(1, Number(m[2])) }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% chance to Cause Bleeding on Critical Strike$/i,
+    build: (m, src) => [mkMod('CritBleedChance', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^(\d+)% chance to Cause Poison on Critical Strike$/i,
+    build: (m, src) => [mkMod('CritPoisonChance', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^\+(\d+)% to Damage over Time Multiplier for Bleeding from Hits with this Weapon$/i,
+    build: (m, src) => [
+      // Note: skillActorRuntime evaluates PoE 1 Bleed with ailmentDamageFlags (ModFlag.Dot | ModFlag.Ailment | weaponFlags, no ModFlag.Attack)
+      mkMod('PhysicalDotMultiplier', 'BASE', Number(m[1]), src, ModFlag.Dot, KeywordFlag.Bleed),
+    ],
+  },
+  {
+    pattern: /^\+(\d+)% to Damage over Time Multiplier for Bleeding from Critical Strikes$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('PhysicalDotMultiplier', 'BASE', Number(m[1]), src, ModFlag.Dot, KeywordFlag.Bleed),
+        tags: [{ type: 'Condition', var: 'CriticalStrike' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Poison you inflict with Critical Strikes deals (\d+)% more Damage$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'MORE', Number(m[1]), src, 0, KeywordFlag.Poison),
+        tags: [{ type: 'Condition', var: 'CriticalStrike' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Gain Adrenaline for \d+ seconds? on Kill$/i,
+    build: (_, src) => {
+      const tags = [
+        { type: 'Condition' as const, var: 'KilledRecently' },
+        { type: 'Condition' as const, var: 'Adrenaline', neg: true },
+      ];
+      return [
+        { ...mkMod('Damage', 'INC', 100, src), tags },
+        { ...mkMod('Speed', 'INC', 25, src, ModFlag.Attack), tags },
+        { ...mkMod('Speed', 'INC', 25, src, ModFlag.Spell), tags },
+        { ...mkMod('MovementSpeed', 'INC', 25, src), tags },
+        { ...mkMod('PhysDamageReduction', 'BASE', 10, src), tags },
+      ];
+    },
+  },
+  {
+    pattern: /^(\d+)% increased Damage with Skills that Cost Life$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'INC', Number(m[1]), src),
+        tags: [{ type: 'PerStat', stat: 'LifeCost', div: 1, limit: 1 }],
+      },
+    ],
+  },
+  {
+    pattern: /^Hits with this Weapon gain (\d+)% of Physical Damage as Extra (Fire|Cold|Lightning) or (Fire|Cold|Lightning) Damage$/i,
+    build: (m, src) => {
+      const half = Number(m[1]) / 2;
+      const el1 = m[2]![0]!.toUpperCase() + m[2]!.slice(1).toLowerCase();
+      const el2 = m[3]![0]!.toUpperCase() + m[3]!.slice(1).toLowerCase();
+      return [
+        mkMod(`PhysicalGainAs${el1}`, 'BASE', half, src, ModFlag.Attack),
+        mkMod(`PhysicalGainAs${el2}`, 'BASE', half, src, ModFlag.Attack),
+      ];
+    },
+  },
+  {
+    pattern: /^Projectiles gain Damage as they travel farther, dealing up to (\d+)% increased Damage with Hits to targets$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'INC', Number(m[1]), src, ModFlag.Hit | ModFlag.Projectile),
+        tags: [{ type: 'Condition', var: 'DistanceRamp:35:0,70:1' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Arrows gain Damage as they travel farther, dealing up to (\d+)% increased Damage with Hits to targets$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'INC', Number(m[1]), src, ModFlag.Hit | ModFlag.Bow),
+        tags: [{ type: 'Condition', var: 'DistanceRamp:35:0,70:1' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Mana is increased by (\d+)% of Overcapped Lightning Resistance$/i,
+    build: (m, src) => [
+      mkMod('ManaIncreasedByOvercappedLightningRes', 'FLAG', true, src),
+      {
+        ...mkMod('Mana', 'INC', Number(m[1]) / 100, src),
+        tags: [{ type: 'PerStat', stat: 'LightningResistOverCap', div: 1 }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased Main Hand Critical Strike Chance per Murderous Eye Jewel affecting you(?:, up to a maximum of (\d+)%)?$/i,
+    build: (m, src) => {
+      const per = Number(m[1]);
+      const maxPct = m[2] ? Number(m[2]) : undefined;
+      return [
+        {
+          ...mkMod('CritChance', 'INC', per, src, ModFlag.Attack),
+          tags: [
+            {
+              type: 'Multiplier',
+              var: 'MurderousEyeJewel',
+              ...(maxPct !== undefined ? { limit: Math.floor(maxPct / Math.max(1, per)) } : {}),
+            },
+          ],
+        },
+      ];
+    },
+  },
+  {
+    pattern: /^\+(\d+)% to Off Hand Critical Strike Multiplier per Murderous Eye Jewel affecting you(?:, up to a maximum of \+?(\d+)%)?$/i,
+    build: (m, src) => {
+      const per = Number(m[1]);
+      const maxPct = m[2] ? Number(m[2]) : undefined;
+      return [
+        {
+          ...mkMod('CritMultiplier', 'BASE', per, src, ModFlag.Attack),
+          tags: [
+            {
+              type: 'Multiplier',
+              var: 'MurderousEyeJewel',
+              ...(maxPct !== undefined ? { limit: Math.floor(maxPct / Math.max(1, per)) } : {}),
+            },
+            { type: 'Condition', var: 'OffHandAttack' },
+          ],
+        },
+      ];
+    },
+  },
+  {
+    pattern: /^Maximum Energy Shield is increased by Chance to Block Spell Damage$/i,
+    build: (_, src) => [mkMod('EnergyShieldIncreasedBySpellBlock', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Your Critical Strike Chance is Lucky$/i,
+    build: (_, src) => [mkMod('CritChanceIsLucky', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Prevent \+(\d+)% of Suppressed Spell Damage$/i,
+    build: (m, src) => [mkMod('SpellSuppressionEffect', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Prevent \+(\d+)% of Suppressed Spell Damage while on Full Energy Shield$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('SpellSuppressionEffect', 'BASE', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: 'FullEnergyShield' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Enemies (?:nearby|within \d+(?:\.\d+)? metres) are Covered in Ash if you haven't moved in the past \d+ seconds$/i,
+    build: (_, src) => [
+      {
+        ...mkMod('FireDamageTaken', 'INC', 20, src),
+        target: 'enemy' as const,
+        tags: [{ type: 'Condition', var: 'Stationary' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Enemies within \d+(?:\.\d+)? metres are Blinded$/i,
+    build: (_, src) => [mkMod('Condition:EnemyBlinded', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Mines Hinder Enemies (?:near them|within \d+(?:\.\d+)? metres) for \d+ seconds when they Land$/i,
+    build: (_, src) => [mkMod('Condition:EnemyHindered', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^\+(\d+)% to Critical Strike Multiplier per Enemy (?:nearby|within \d+(?:\.\d+)? metres)(?:, up to \+?(\d+)%)?$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritMultiplier', 'BASE', Number(m[1]), src),
+        tags: [
+          {
+            type: 'Multiplier',
+            var: 'NearbyEnemies',
+            ...(m[2] ? { limit: Number(m[2]), limitTotal: true } : {}),
+          } as unknown as NonNullable<Mod['tags']>[number],
+        ],
+      },
+    ],
+  },
+  {
+    pattern: /^If you've Attacked Recently, you and (?:nearby Allies|Allies within \d+(?:\.\d+)? metres) have \+(\d+)% Chance to Block Attack Damage$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('BlockChance', 'BASE', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: 'AttackedRecently' }],
+      },
+    ],
+  },
+  {
+    pattern: /^If you've Cast a Spell Recently, you and (?:nearby Allies|Allies within \d+(?:\.\d+)? metres) have \+(\d+)% Chance to Block Spell Damage$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('SpellBlockChance', 'BASE', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: 'CastSpellRecently' }],
+      },
+    ],
+  },
+  {
+    pattern: /^With at least one corpse (?:nearby|within \d+(?:\.\d+)? metres), you and (?:nearby Allies|Allies within \d+(?:\.\d+)? metres) deal (\d+)% more Damage$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'MORE', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: 'CorpseNearby' }],
+      },
+    ],
+  },
+  {
+    pattern: /^\+(\d+)% to Brand Critical Strike Multiplier$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritMultiplier', 'BASE', Number(m[1]), src),
+        tags: [{ type: 'SkillType', skillType: 'Brand' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased Brand Critical Strike Chance$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritChance', 'INC', Number(m[1]), src),
+        tags: [{ type: 'SkillType', skillType: 'Brand' }],
+      },
+    ],
+  },
+  {
+    pattern: /^You can Cast (?:an|(\d+)) additional Brands?$/i,
+    build: (m, src) => [mkMod('ActiveBrandLimit', 'BASE', m[1] ? Number(m[1]) : 1, src)],
+  },
+  {
+    pattern: /^(\d+)% increased Damage per (\d+)% Chance to Block Attack Damage$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'INC', Number(m[1]), src),
+        tags: [{ type: 'PerStat', stat: 'BlockChance', div: Math.max(1, Number(m[2])) }],
+      },
+    ],
+  },
+  {
+    pattern: /^\+(\d+)% Chance to Block Spell Damage while in Off Hand$/i,
+    build: (m, src) => [mkMod('SpellBlockChance', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^(\d+)% increased (Elemental|Fire|Cold|Lightning) Damage per (\d+)% Fire, Cold, or Lightning Resistance above 75%$/i,
+    build: (m, src) => {
+      const val = Number(m[1]);
+      const stat = `${m[2]![0]!.toUpperCase()}${m[2]!.slice(1).toLowerCase()}Damage`;
+      const div = Math.max(1, Number(m[3]));
+      return [
+        { ...mkMod(stat, 'INC', val, src), tags: [{ type: 'PerStat', stat: 'FireResistOver75', div }] },
+        { ...mkMod(stat, 'INC', val, src), tags: [{ type: 'PerStat', stat: 'ColdResistOver75', div }] },
+        { ...mkMod(stat, 'INC', val, src), tags: [{ type: 'PerStat', stat: 'LightningResistOver75', div }] },
+      ];
+    },
+  },
+  {
+    pattern: /^(\d+)% increased (Elemental|Fire|Cold|Lightning) Damage per (\d+)% (Fire|Cold|Lightning) Resistance above 75%$/i,
+    build: (m, src) => {
+      const val = Number(m[1]);
+      const stat = `${m[2]![0]!.toUpperCase()}${m[2]!.slice(1).toLowerCase()}Damage`;
+      const res = `${m[4]![0]!.toUpperCase()}${m[4]!.slice(1).toLowerCase()}ResistOver75`;
+      const div = Math.max(1, Number(m[3]));
+      return [{ ...mkMod(stat, 'INC', val, src), tags: [{ type: 'PerStat', stat: res, div }] }];
+    },
   },
   {
     pattern: /^Intelligence is added to Accuracy Rating with Wands$/i,
@@ -921,7 +1327,7 @@ const PARSER_RULES: ParserRule[] = [
     },
   },
   {
-    pattern: /^(\d+)% (increased|more|less) Attack Speed(?: with .+)?$/i,
+    pattern: /^(\d+)% (increased|more|less) Attack Speed$/i,
     build: (m, src) => {
       const val = m[2]!.toLowerCase() === 'less' ? -Number(m[1]) : Number(m[1]);
       const type: ModType = m[2]!.toLowerCase() === 'increased' ? 'INC' : 'MORE';
@@ -1185,16 +1591,8 @@ const PARSER_RULES: ParserRule[] = [
     build: (_, src) => [mkMod('NonCritsCannotInflictAilments', 'FLAG', true, src)],
   },
   {
-    pattern: /^Skills that have dealt a Critical Strike in the past 8 seconds deal (\d+)% more Elemental Damage/i,
-    build: (m, src) => [mkMod('ElementalDamage', 'MORE', Number(m[1]), src)],
-  },
-  {
     pattern: /^(\d+)% of Maximum Life Converted to Energy Shield$/i,
     build: (m, src) => [mkMod('LifeConvertToES', 'BASE', Number(m[1]), src)],
-  },
-  {
-    pattern: /^(\d+)% increased Damage with (Bow|Wand|Sword|Axe|Mace|Claw|Dagger|Staff)s?$/i,
-    build: (m, src) => [mkMod('Damage', 'INC', Number(m[1]), src, ModFlag.Attack)],
   },
   // Pain Attunement, Double Damage, Exposure & Minions
   {
@@ -1614,7 +2012,7 @@ const PARSER_RULES: ParserRule[] = [
     build: (_, src) => [mkMod('NoCritExtraDamage', 'FLAG', true, src)],
   },
   {
-    pattern: /^Skills that have dealt a Critical Strike in the past (\d+) seconds deal (\d+)% more Elemental Damage with Hits and Ailments$/i,
+    pattern: /^Skills that have dealt a Critical Strike in the past (\d+) seconds deal (\d+)% more Elemental Damage(?: with Hits and Ailments)?$/i,
     build: (m, src) => {
       const val = Number(m[2]);
       const condTag = { type: 'Condition' as const, var: 'CritInPast8Sec' };
@@ -2167,11 +2565,49 @@ export function parseModLines(
   opts?: ParseModOptions,
 ): Mod[] {
   const result: Mod[] = [];
+  // Expand `\n`-packed entries (official PoB passive nodes pack multiple lines or mid-sentence wraps)
+  const flatLines: string[] = [];
   for (const rawEntry of lines) {
-    // Official PoB passive tree nodes often pack multiple stat lines separated by `\n` (e.g. Resolute Technique)
-    for (const line of rawEntry.split(/\r?\n/)) {
-      if (line.trim()) {
-        result.push(...parseModLine(line, source, opts));
+    const parts = rawEntry
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (parts.length === 0) continue;
+    if (parts.length > 1) {
+      // If a continuation line starts with a lowercase word (mid-sentence wrap like "dealing up\nto 30%..."
+      // or "you\nand nearby Allies..."), test joining the whole entry first.
+      const hasLowercaseWrap = parts.slice(1).some((p) => /^[a-z]/.test(p));
+      if (hasLowercaseWrap) {
+        const joinedWhole = parts.join(' ');
+        const wholeMods = parseModLine(joinedWhole, source, opts);
+        if (wholeMods.length > 0) {
+          result.push(...wholeMods);
+          continue;
+        }
+      }
+    }
+    flatLines.push(...parts);
+  }
+
+  for (let i = 0; i < flatLines.length; i++) {
+    const line = flatLines[i]!;
+    const mods = parseModLine(line, source, opts);
+    if (mods.length > 0) {
+      result.push(...mods);
+      continue;
+    }
+    // Wrapped two-line item/tree modifiers (e.g. The Taming, Master of Metal, Murderous Eye Jewel)
+    // Only join consecutive unparsed fragments so independent valid lines are never merged.
+    if (i + 1 < flatLines.length) {
+      const next = flatLines[i + 1]!;
+      if (parseModLine(next, source, opts).length === 0) {
+        const joined = `${line} ${next}`;
+        const joinedMods = parseModLine(joined, source, opts);
+        if (joinedMods.length > 0) {
+          result.push(...joinedMods);
+          i += 1;
+          continue;
+        }
       }
     }
   }
