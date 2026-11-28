@@ -1211,14 +1211,19 @@ const PARSER_RULES: ParserRule[] = [
       const scope = (m[2] ?? '').trim().toLowerCase() || 'all';
       const flags =
         scope === 'spell' ? ModFlag.Spell : scope === 'attack' ? ModFlag.Attack : 0;
+      const attrCap = capWord(m[4]!);
+      const div = Number(m[3]);
       return [
-        mkMod(
-          `DamagePerAttr:${capWord(m[4]!)}:${scope}`,
-          'BASE',
-          Number(m[1]) / Number(m[3]),
-          src,
-          flags,
-        ),
+        {
+          ...mkMod(
+            `DamagePerAttr:${attrCap}:${scope}`,
+            'BASE',
+            Number(m[1]) / div,
+            src,
+            flags,
+          ),
+          tags: [{ type: 'PerStat', stat: attrCap, div }],
+        },
       ];
     },
   },

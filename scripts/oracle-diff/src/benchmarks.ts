@@ -1,4 +1,5 @@
 import type { GameId } from '@webpob/core';
+import { POE2_EXPANSION_BENCHMARKS } from './poe2ExpansionBenchmarks.js';
 
 export interface OracleBenchmarkCase {
   id: string;
@@ -5253,4 +5254,5 @@ Implicits: 0
   <Notes/>
 </PathOfBuilding>`,
   },
+  ...POE2_EXPANSION_BENCHMARKS,
 ];

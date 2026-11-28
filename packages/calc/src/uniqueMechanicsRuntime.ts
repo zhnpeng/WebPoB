@@ -1403,8 +1403,8 @@ export function evaluatePreStatBuildEnablingUniques(
         continue;
       }
 
-      // 5. Doryani's Prototype (PoE 1: "Nearby Enemies...", PoE 2: "Enemies in your Presence...")
-      if (/^(?:Nearby Enemies|Enemies in your Presence) have Lightning Resistance equal to yours$/i.test(line)) {
+      // 5. Doryani's Prototype (PoE 1: "Nearby Enemies..." / "Enemies within 6 metres...", PoE 2: "Enemies in your Presence...")
+      if (/^(?:Nearby Enemies|Enemies in your Presence|Enemies within \d+ metres) have Lightning Resistance equal to yours$/i.test(line)) {
         doryanisPrototypeActive = true;
         if (!db.flag('DoryanisPrototype')) {
           db.addMod(mkMod('DoryanisPrototype', 'FLAG', true, src));
@@ -1645,8 +1645,42 @@ export function evaluatePreStatBuildEnablingUniques(
     const nonBaseDex = Math.max(0, dexEval.base - baseDex);
     const nonBaseInt = Math.max(0, intEval.base - baseInt);
 
-    const omniFlat = db.sum('BASE', 'Omniscience') + nonBaseStr + nonBaseDex + nonBaseInt;
-    const omniInc = db.sum('INC', 'Omniscience') + strEval.incPct + dexEval.incPct + intEval.incPct;
+    // PoB1 CalcPerform.lua:473-484 — subtract double/triple-dipped hybrid ("+X to Str and Dex") and
+    // "+X to all Attributes" / "% increased Attributes" modifiers so each modifier applies to Omniscience once.
+    let multiAttrBaseReduction = 0;
+    let multiAttrIncReduction = 0;
+    const allEquippedAndJewels = [
+      ...ctx.equippedItems.map((e) => e.item),
+      ...(ctx.socketedJewels ?? []),
+    ];
+    for (const eqItem of allEquippedAndJewels) {
+      for (const rawLine of [...eqItem.implicits, ...eqItem.explicits]) {
+        const clean = rawLine.replace(/\{[^}]*\}/g, '').trim();
+        const mAll = clean.match(/^\+(\d+)\s+to\s+all\s+Attributes$/i);
+        if (mAll) {
+          multiAttrBaseReduction += 2 * Number(mAll[1]);
+          continue;
+        }
+        const mDual = clean.match(
+          /^\+(\d+)\s+to\s+(?:Strength|Dexterity|Intelligence)\s+and\s+(?:Strength|Dexterity|Intelligence)$/i,
+        );
+        if (mDual) {
+          multiAttrBaseReduction += Number(mDual[1]);
+          continue;
+        }
+        const mAllInc = clean.match(/^(\d+)%\s+increased\s+(?:all\s+)?Attributes$/i);
+        if (mAllInc) {
+          multiAttrIncReduction += 2 * Number(mAllInc[1]);
+        }
+      }
+    }
+
+    const omniFlat = Math.max(
+      0,
+      db.sum('BASE', 'Omniscience') + nonBaseStr + nonBaseDex + nonBaseInt - multiAttrBaseReduction,
+    );
+    const omniInc =
+      db.sum('INC', 'Omniscience') + strEval.incPct + dexEval.incPct + intEval.incPct - multiAttrIncReduction;
     const omniMore = db.more('Omniscience');
     omniscienceTotal = Math.max(0, Math.floor(omniFlat * Math.max(0, 1 + omniInc / 100) * omniMore + 1e-9));
 
@@ -2198,7 +2232,7 @@ export function evaluatePostPoolBuildEnablingUniques(
       }
 
       // 10. Doryani's Prototype enemy Lightning Resistance sync (PoE 1 & PoE 2 wording)
-      if (/^(?:Nearby Enemies|Enemies in your Presence) have Lightning Resistance equal to yours$/i.test(line)) {
+      if (/^(?:Nearby Enemies|Enemies in your Presence|Enemies within \d+ metres) have Lightning Resistance equal to yours$/i.test(line)) {
         if (ctx.playerLightningResist !== undefined) {
           const synced = Math.max(-200, Math.round(ctx.playerLightningResist));
           enemyLightningResistOverride = synced;
@@ -2719,11 +2753,13 @@ export function applyPoolConversionsAndKeystones(
     if (!db.flag('ChaosInoculation')) {
       db.addMod(mkMod('ChaosInoculation', 'FLAG', true, src));
     }
-    if (db.override('ChaosResist') !== 100) {
-      db.addMod(mkMod('ChaosResist', 'OVERRIDE', 100, src));
-    }
-    if (db.override('ChaosResistMax') !== 100) {
-      db.addMod(mkMod('ChaosResistMax', 'OVERRIDE', 100, src));
+    if (ctx.game === 'poe1') {
+      if (db.override('ChaosResist') !== 100) {
+        db.addMod(mkMod('ChaosResist', 'OVERRIDE', 100, src));
+      }
+      if (db.override('ChaosResistMax') !== 100) {
+        db.addMod(mkMod('ChaosResistMax', 'OVERRIDE', 100, src));
+      }
     }
     appliedRules.push('ChaosInoculation');
   }

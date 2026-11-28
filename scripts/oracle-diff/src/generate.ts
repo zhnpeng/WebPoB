@@ -105,7 +105,10 @@ async function runUpstreamOracle(bench: OracleBenchmarkCase): Promise<OracleNume
   );
   const srcDir = path.join(repoDir, 'src');
 
-  const tmpXml = path.join(os.tmpdir(), `webpob_oracle_${bench.id}_${Date.now()}.xml`);
+  const tmpXml = path.join(
+    os.tmpdir(),
+    `webpob_oracle_${bench.id}_${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.xml`,
+  );
   await fs.writeFile(tmpXml, bench.xml, 'utf-8');
 
   const luajitBin = process.env.LUAJIT_BIN || path.join(ROOT_DIR, '.cache/luajit-src/src/luajit');
@@ -137,33 +140,81 @@ async function runUpstreamOracle(bench: OracleBenchmarkCase): Promise<OracleNume
   }
 }
 
+async function loadExistingSnapshots(outPath: string): Promise<Map<string, OracleGoldenSnapshot>> {
+  const map = new Map<string, OracleGoldenSnapshot>();
+  try {
+    const raw = await fs.readFile(outPath, 'utf-8');
+    const parsed = JSON.parse(raw) as { snapshots?: OracleGoldenSnapshot[] };
+    for (const s of parsed.snapshots ?? []) {
+      map.set(s.id, s);
+    }
+  } catch {
+    // ignore missing or unreadable file
+  }
+  return map;
+}
+
 async function main() {
-  console.log('=== Generating Official PathOfBuilding Golden Snapshots (LuaJIT Oracle) ===\n');
+  const forceAll = process.argv.includes('--force');
+  console.log(
+    `=== Generating Official PathOfBuilding Golden Snapshots (LuaJIT Oracle${forceAll ? ', --force' : ', incremental'}) ===\n`,
+  );
   const poe1Rev = await getGitRev(path.join(ROOT_DIR, '.cache/upstream-pob'));
   const poe2Rev = await getGitRev(path.join(ROOT_DIR, '.cache/upstream-pob2'));
-  const snapshots: OracleGoldenSnapshot[] = [];
+  const outPath = path.join(FIXTURES_DIR, 'snapshots.json');
+  const existingMap = forceAll ? new Map<string, OracleGoldenSnapshot>() : await loadExistingSnapshots(outPath);
 
-  for (const bench of ORACLE_BENCHMARKS) {
-    process.stdout.write(`Running official PoB (${bench.game}) on [${bench.id}]... `);
-    const oracle = await runUpstreamOracle(bench);
-    console.log(
-      `OK (Life=${Math.round(oracle.Life)}, ES=${Math.round(oracle.EnergyShield)}, DPS=${Math.round(oracle.CombinedDPS)}, Str/Dex/Int=${Math.round(oracle.Str)}/${Math.round(oracle.Dex)}/${Math.round(oracle.Int)})`,
-    );
-    snapshots.push({
-      id: bench.id,
-      title: bench.title,
-      game: bench.game,
-      xml: bench.xml,
-      pobCommit: bench.game === 'poe2' ? poe2Rev : poe1Rev,
-      generatedAt: new Date().toISOString(),
-      oracle,
-    });
+  const results = new Array<OracleGoldenSnapshot>(ORACLE_BENCHMARKS.length);
+  const pendingIndices: number[] = [];
+  let cachedCount = 0;
+
+  for (let i = 0; i < ORACLE_BENCHMARKS.length; i++) {
+    const bench = ORACLE_BENCHMARKS[i]!;
+    const targetRev = bench.game === 'poe2' ? poe2Rev : poe1Rev;
+    const prev = existingMap.get(bench.id);
+    if (prev && prev.xml === bench.xml && prev.pobCommit === targetRev) {
+      results[i] = prev.title === bench.title ? prev : { ...prev, title: bench.title };
+      cachedCount++;
+    } else {
+      pendingIndices.push(i);
+    }
   }
 
+  if (cachedCount > 0) {
+    console.log(`Reused ${cachedCount} unchanged snapshots; running LuaJIT on ${pendingIndices.length} benchmark(s)...\n`);
+  }
+
+  const concurrency = Math.min(6, Math.max(1, pendingIndices.length));
+  let cursor = 0;
+
+  async function worker() {
+    while (true) {
+      const idx = cursor++;
+      if (idx >= pendingIndices.length) return;
+      const benchIdx = pendingIndices[idx]!;
+      const bench = ORACLE_BENCHMARKS[benchIdx]!;
+      const targetRev = bench.game === 'poe2' ? poe2Rev : poe1Rev;
+      const oracle = await runUpstreamOracle(bench);
+      console.log(
+        `[${idx + 1}/${pendingIndices.length}] OK (${bench.game}) [${bench.id}] -> Life=${Math.round(oracle.Life)}, ES=${Math.round(oracle.EnergyShield)}, Spirit=${Math.round(oracle.Spirit)}, DPS=${Math.round(oracle.CombinedDPS)}`,
+      );
+      results[benchIdx] = {
+        id: bench.id,
+        title: bench.title,
+        game: bench.game,
+        xml: bench.xml,
+        pobCommit: targetRev,
+        generatedAt: new Date().toISOString(),
+        oracle,
+      };
+    }
+  }
+
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+
   await fs.mkdir(FIXTURES_DIR, { recursive: true });
-  const outPath = path.join(FIXTURES_DIR, 'snapshots.json');
-  await fs.writeFile(outPath, JSON.stringify({ snapshots }, null, 2), 'utf-8');
-  console.log(`\n✓ Wrote ${snapshots.length} Golden Snapshots to ${outPath}`);
+  await fs.writeFile(outPath, JSON.stringify({ snapshots: results }, null, 2), 'utf-8');
+  console.log(`\n✓ Wrote ${results.length} Golden Snapshots to ${outPath}`);
 }
 
 main().catch((err) => {

@@ -2597,6 +2597,10 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     pattern: /^\+(\d+) to maximum (Fire|Cold|Lightning) Infusions?$/i,
     build: (m, src) => [mkMod(`Max${m[2]}Infusions`, 'BASE', Number(m[1]), src)],
   },
+  {
+    pattern: /^Cannot gain Spirit from Equipment$/i,
+    build: (_, src) => [mkMod('NoSpiritFromEquipment', 'FLAG', true, src)],
+  },
   // Falcon Dive (PoB 2 ModParser.lua:1620): "1% increased Attack Speed per 400 Accuracy Rating, up to 20%"
   {
     pattern: /^(\d+)% (increased|reduced) (Attack|Cast) Speed per (\d+) Accuracy Rating(?:,\s*up to (\d+)%)?$/i,

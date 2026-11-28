@@ -6,6 +6,7 @@ import {
   registerBaseItems,
   registerClusterNotables,
   registerGemsData,
+  registerPoe2RunesData,
   registerTreeData,
   type CompactBaseItemsPayload,
   type CompactClusterNotablesPayload,
@@ -47,6 +48,7 @@ describe('Official PathOfBuilding Oracle Differential Regression Suite (PoE 1 3.
     const poe1Bases = JSON.parse(fs.readFileSync(path.join(dataDir, 'poe1-bases.json'), 'utf-8')) as CompactBaseItemsPayload;
     const poe2Bases = JSON.parse(fs.readFileSync(path.join(dataDir, 'poe2-bases.json'), 'utf-8')) as CompactBaseItemsPayload;
     const poe1Clusters = JSON.parse(fs.readFileSync(path.join(dataDir, 'poe1-clusters.json'), 'utf-8')) as CompactClusterNotablesPayload;
+    const poe2Runes = JSON.parse(fs.readFileSync(path.join(dataDir, 'poe2-runes.json'), 'utf-8')) as unknown;
     registerTreeData(hydrateCompactTree(poe1Tree));
     registerTreeData(hydrateCompactTree(poe2Tree));
     registerGemsData('poe1', poe1Gems);
@@ -54,10 +56,11 @@ describe('Official PathOfBuilding Oracle Differential Regression Suite (PoE 1 3.
     registerBaseItems(poe1Bases);
     registerBaseItems(poe2Bases);
     registerClusterNotables(poe1Clusters);
+    registerPoe2RunesData(poe2Runes);
   });
 
   it('has official LuaJIT golden snapshots loaded', () => {
-    expect(snapshots.length).toBeGreaterThanOrEqual(8);
+    expect(snapshots.length).toBeGreaterThanOrEqual(180);
   });
 
   for (const snap of snapshots) {
@@ -76,6 +79,11 @@ describe('Official PathOfBuilding Oracle Differential Regression Suite (PoE 1 3.
       expectWithinPct(out.defence.energyShield, o.EnergyShield!, 0.5, 1);
       if ((o.Ward ?? 0) > 0) {
         expectWithinPct(out.defence.ward ?? 0, o.Ward!, 0.5, 1);
+      }
+      if (snap.game === 'poe2') {
+        expectWithinPct(out.defence.spirit, o.Spirit!, 0.5, 1);
+        expectWithinPct(out.defence.spiritUnreserved, o.SpiritUnreserved!, 0.5, 1);
+        expect(out.defence.chaosResist).toBe(Math.round(o.ChaosResist!));
       }
       if ((o.SpiritReserved ?? 0) > 0) {
         expect(out.defence.spiritReserved).toBe(Math.round(o.SpiritReserved!));

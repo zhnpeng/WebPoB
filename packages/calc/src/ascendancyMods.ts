@@ -1334,7 +1334,10 @@ function applyBeidatNotable(
   defaultDivisor: number,
   sourceName: string,
 ): void {
-  addMod(db, 'LifeReservedPct', 'BASE', 25, sourceName);
+  const nodeName = node.name.en;
+  if (!hasRawSourceMod(db, 'LifeReservedPct', nodeName)) {
+    addMod(db, 'LifeReservedPct', 'BASE', 25, sourceName);
+  }
   let targetStat: 'Mana' | 'EnergyShield' | 'Spirit' = defaultStat;
   let divisor = defaultDivisor;
 
@@ -1349,6 +1352,13 @@ function applyBeidatNotable(
       if (Number.isFinite(parsedDivisor) && parsedDivisor > 0) divisor = parsedDivisor;
       break;
     }
+  }
+
+  if (
+    hasRawSourceMod(db, targetStat, nodeName) ||
+    hasPerStatMod(db, targetStat, 'Life', nodeName)
+  ) {
+    return;
   }
 
   const bonus = Math.floor(Math.max(0, maxLife) / divisor);
@@ -1440,7 +1450,7 @@ function applyPoe2PostLifeAscendancies(
   }
 
   // --- Gemling Legionnaire: Enhanced Effectiveness (Double inherent attribute bonuses) ---
-  // PoE 2 base inherent bonuses: Str 2 Life/pt (1 with Giant's Blood), Dex 5 Acc/pt, Int 2 Mana/pt -> doubled.
+  // PoE 2 base inherent bonuses: Str 2 Life/pt (1 with Giant's Blood), Dex 6 Acc/pt, Int 2 Mana/pt -> doubled.
   if (nodes.has('enhanced effectiveness') && !db.flag('NoAttributeBonuses') && !db.flag('SupremeOstentation')) {
     const src = 'Ascendancy: Enhanced Effectiveness';
     if (str > 0 && !db.flag('NoStrLifeBonus')) {
@@ -1448,7 +1458,7 @@ function applyPoe2PostLifeAscendancies(
       addMod(db, 'Life', 'BASE', Math.floor(str * strLifePerPt), src);
     }
     if (dex > 0 && !db.flag('NoDexAccuracyBonus')) {
-      addMod(db, 'Accuracy', 'BASE', Math.floor(dex * 5), src);
+      addMod(db, 'Accuracy', 'BASE', Math.floor(dex * 6), src);
     }
     if (int > 0 && !db.flag('NoIntManaBonus')) {
       addMod(db, 'Mana', 'BASE', Math.floor(int * 2), src);

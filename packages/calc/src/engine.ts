@@ -316,10 +316,14 @@ function injectAttributeScaling(db: ModDB, str: number, dex: number, int: number
     if (value <= 0) continue;
     for (const mod of mods) {
       if (mod.type !== 'BASE' || typeof mod.value !== 'number') continue;
+      const perTag = mod.tags?.find((t) => t.type === 'PerStat');
+      const scaledInc = perTag
+        ? Math.floor(value / Math.max(1, perTag.div)) * Math.round(mod.value * perTag.div)
+        : Math.floor(value * mod.value);
       db.addMod({
         name: 'Damage',
         type: 'INC',
-        value: Math.floor(value * mod.value),
+        value: scaledInc,
         flags: mod.flags,
         keywordFlags: mod.keywordFlags,
         source: `Attribute Stacking (${attr} ${value})`,
@@ -5022,7 +5026,8 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
   const coldRaw = zeroEleRes ? 0 : evalSignedResist('ColdResist');
   const lightningRaw = zeroEleRes ? 0 : evalSignedResist('LightningResist');
   const chaosImmune = db.flag('ChaosImmune') || poolConvRes.chaosInoculation;
-  const chaosRaw = chaosImmune ? 100 : evalSignedResist('ChaosResist');
+  const chaosRaw =
+    chaosImmune && build.game === 'poe1' ? 100 : evalSignedResist('ChaosResist');
   db.setStat('UncappedFireResist', fireRaw);
   db.setStat('UncappedColdResist', coldRaw);
   db.setStat('UncappedLightningResist', lightningRaw);
@@ -5156,6 +5161,22 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
       }
     }
   }
+  if (ruleset.supportsSpirit && db.flag('NoSpiritFromEquipment')) {
+    const equipBaseSpirit = db
+      .calcStat('Spirit')
+      .sources.filter((s) => s.type === 'BASE' && typeof s.value === 'number' && /^Item\b/i.test(s.source))
+      .reduce((sum, s) => sum + (s.value as number), 0);
+    if (equipBaseSpirit !== 0) {
+      db.addMod({
+        name: 'Spirit',
+        type: 'BASE',
+        value: -equipBaseSpirit,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Ascendancy: Lead me through Grace... (Cannot gain Spirit from Equipment)',
+      });
+    }
+  }
   const esEval = db.calcStat('EnergyShield');
   const wardEval = db.calcStat('Ward');
   const spiritEval = db.calcStat('Spirit');
@@ -5239,25 +5260,33 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     const agnosticZero = esEval.sources.some((s) => s.type === 'OVERRIDE' && s.value === 0);
     if (!agnosticZero) {
       extraEsFromLife =
-        rawLifeEval.base *
-        (lifeAsExtraEsPct / 100) *
-        (1 + (rawLifeEval.incPct + esEval.incPct) / 100) *
-        rawLifeEval.moreMultiplier *
-        esEval.moreMultiplier;
+        build.game === 'poe2'
+          ? Math.floor(rawLifeEval.base * (lifeAsExtraEsPct / 100)) *
+            Math.max(0, 1 + esEval.incPct / 100) *
+            esEval.moreMultiplier
+          : rawLifeEval.base *
+            (lifeAsExtraEsPct / 100) *
+            (1 + (rawLifeEval.incPct + esEval.incPct) / 100) *
+            rawLifeEval.moreMultiplier *
+            esEval.moreMultiplier;
     }
   }
-  // Hierophant Sanctuary of Thought: Gain X% of Maximum Mana as Extra Maximum Energy Shield
+  // Hierophant Sanctuary of Thought / PoE 2 Mana-as-Extra-ES: Gain X% of Maximum Mana as Extra Maximum Energy Shield
   const manaAsExtraEsPct = Math.max(0, db.sum('BASE', 'ManaAsExtraES'));
   let extraEsFromMana = 0;
   if (manaAsExtraEsPct > 0 && manaEval.base > 0) {
     const agnosticZero = esEval.sources.some((s) => s.type === 'OVERRIDE' && s.value === 0);
     if (!agnosticZero) {
       extraEsFromMana =
-        manaEval.base *
-        (manaAsExtraEsPct / 100) *
-        (1 + (manaEval.incPct + esEval.incPct) / 100) *
-        manaEval.moreMultiplier *
-        esEval.moreMultiplier;
+        build.game === 'poe2'
+          ? Math.floor(manaEval.base * (manaAsExtraEsPct / 100)) *
+            Math.max(0, 1 + esEval.incPct / 100) *
+            esEval.moreMultiplier
+          : manaEval.base *
+            (manaAsExtraEsPct / 100) *
+            (1 + (manaEval.incPct + esEval.incPct) / 100) *
+            manaEval.moreMultiplier *
+            esEval.moreMultiplier;
     }
   }
   // Transfiguration of Mind / Soul / Body (Crown of the Inward Eye, Hierophant Divine Guidance — CalcOffence.lua:548-556)
@@ -5405,10 +5434,11 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     });
   }
 
-  const fireResist = Math.min(fireMaxResist, fireRaw);
-  const coldResist = Math.min(coldMaxResist, coldRaw);
-  const lightningResist = Math.min(lightningMaxResist, lightningRaw);
-  const chaosResist = chaosImmune ? 100 : Math.min(chaosMaxResist, chaosRaw);
+  const fireResist = zeroEleRes ? 0 : Math.min(fireMaxResist, fireRaw);
+  const coldResist = zeroEleRes ? 0 : Math.min(coldMaxResist, coldRaw);
+  const lightningResist = zeroEleRes ? 0 : Math.min(lightningMaxResist, lightningRaw);
+  const chaosResist =
+    chaosImmune && build.game === 'poe1' ? 100 : Math.min(chaosMaxResist, chaosRaw);
 
   if (fireResist < 75 || coldResist < 75 || lightningResist < 75) {
     warnings.push({

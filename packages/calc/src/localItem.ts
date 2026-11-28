@@ -730,6 +730,20 @@ export function resolveItemEffectiveStats(
       ? lines.filter((l) => !/^\d+%\s+increased\s+Spirit$/i.test(normalizeStatLineToEn(l)))
       : [...lines];
 
+  const extraSceptreImplicits: string[] = [];
+  if (injectSceptreBaseSpirit) {
+    let localSpiritInc = 0;
+    for (const l of [...effectiveImplicits, ...effectiveExplicits]) {
+      const mSp = normalizeStatLineToEn(l.replace(/\{[^}]*\}/g, '').trim()).match(
+        /^(\d+)%\s+increased\s+Spirit$/i,
+      );
+      if (mSp) localSpiritInc += Number(mSp[1]);
+    }
+    const qMult = 1 + Math.max(0, item.quality) / 100;
+    const totalSceptreSpirit = Math.round(100 * (1 + localSpiritInc / 100) * qMult);
+    extraSceptreImplicits.push(`+${totalSceptreSpirit} to Spirit`);
+  }
+
   const isWeapon = Boolean(item.weaponStats);
   const isArmour =
     !isWeapon &&
@@ -741,19 +755,6 @@ export function resolveItemEffectiveStats(
       ARMOUR_BASE_NAME_RE.test(item.baseName));
 
   if (!isWeapon && !isArmour) {
-    const extraSceptreImplicits: string[] = [];
-    if (injectSceptreBaseSpirit) {
-      let localSpiritInc = 0;
-      for (const l of [...effectiveImplicits, ...effectiveExplicits]) {
-        const mSp = normalizeStatLineToEn(l.replace(/\{[^}]*\}/g, '').trim()).match(
-          /^(\d+)%\s+increased\s+Spirit$/i,
-        );
-        if (mSp) localSpiritInc += Number(mSp[1]);
-      }
-      const qMult = 1 + Math.max(0, item.quality) / 100;
-      const totalSceptreSpirit = Math.round(100 * (1 + localSpiritInc / 100) * qMult);
-      extraSceptreImplicits.push(`+${totalSceptreSpirit} to Spirit`);
-    }
     return {
       armourStats: item.armourStats,
       weaponStats: item.weaponStats,
@@ -934,7 +935,7 @@ export function resolveItemEffectiveStats(
     return {
       armourStats: undefined,
       weaponStats: preWeapon,
-      globalImplicits: stripLocalSpirit(globalImplicits),
+      globalImplicits: [...extraSceptreImplicits, ...stripLocalSpirit(globalImplicits)],
       globalExplicits: stripLocalSpirit(globalExplicits),
     };
   }
@@ -968,7 +969,7 @@ export function resolveItemEffectiveStats(
   return {
     armourStats: undefined,
     weaponStats: computedWeapon,
-    globalImplicits: stripLocalSpirit(globalImplicits),
+    globalImplicits: [...extraSceptreImplicits, ...stripLocalSpirit(globalImplicits)],
     globalExplicits: stripLocalSpirit(globalExplicits),
   };
 }

@@ -2573,7 +2573,7 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
     build: (_, src) => [mkMod('LightningResDoesNotAffectTaken', 'FLAG', true, src)],
   },
   {
-    pattern: /^Nearby Enemies have Lightning Resistance equal to yours$/i,
+    pattern: /^(?:Nearby Enemies|Enemies in your Presence|Enemies within \d+ metres) have Lightning Resistance equal to yours$/i,
     build: (_, src) => [mkMod('EnemyLightningResEqualsYours', 'FLAG', true, src)],
   },
   {

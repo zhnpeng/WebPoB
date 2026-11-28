@@ -2572,4 +2572,253 @@ describe('Mechanism-Layer Regression Suite (PoE 1 & PoE 2)', () => {
       expect(out.offence.critMultiplier).toBe(350);
     });
   });
+
+  describe('Layer-2 Oracle Expansion Regression Coverage (PoE 1 & PoE 2)', () => {
+    it('keeps PoE 2 Chaos Inoculation ChaosResist at un-overridden value while PoE 1 Chaos Inoculation forces 100%', () => {
+      const s2 = createSamplePoe2Build();
+      const poe2Base: Build = {
+        ...s2,
+        items: {},
+        equipped: {},
+        tree: { ...s2.tree, allocatedNodeIds: [], socketedJewels: {} },
+      };
+      const poe2Ci = calculateBuild(
+        withCustomMods(poe2Base, 'Maximum Life is 1\nImmune to Chaos Damage'),
+      );
+      expect(poe2Ci.defence.life).toBe(1);
+      expect(poe2Ci.defence.chaosResist).toBe(0);
+
+      const s1 = createSamplePoe1Build();
+      const poe1Base: Build = {
+        ...s1,
+        items: {},
+        equipped: {},
+        tree: { ...s1.tree, allocatedNodeIds: [], socketedJewels: {} },
+      };
+      const poe1Ci = calculateBuild(
+        withCustomMods(poe1Base, 'Maximum Life is 1, Immune to Chaos Damage'),
+      );
+      expect(poe1Ci.defence.life).toBe(1);
+      expect(poe1Ci.defence.chaosResist).toBe(100);
+    });
+
+    it('floors DamagePerAttr steps by integer division (ModStore.lua floor(stat / div) * value)', () => {
+      const s2 = createSamplePoe2Build();
+      const base: Build = {
+        ...s2,
+        items: {},
+        equipped: {},
+        tree: { ...s2.tree, allocatedNodeIds: [], socketedJewels: {} },
+        skills: [
+          {
+            id: 'sg_spark_attr',
+            label: 'Spark',
+            enabled: true,
+            gems: [{ instanceId: 'g1', gemId: 'poe2_spark', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_spark_attr',
+      };
+      const baseInt = calculateBuild(base).defence.int;
+      // Adjust Intelligence to 117 so floor(117 / 10) * 2 = 22% (whereas floor(117 * 0.2) would be 23%)
+      const deltaInt = 117 - baseInt;
+      const intLine = deltaInt >= 0 ? `+${deltaInt} to Intelligence` : `${deltaInt} to Intelligence`;
+      const outPerAttr = calculateBuild(
+        withCustomMods(base, `${intLine}\n2% increased Spell Damage per 10 Intelligence`),
+      );
+      const outExact22 = calculateBuild(
+        withCustomMods(base, `${intLine}\n22% increased Spell Damage`),
+      );
+      expect(outPerAttr.defence.int).toBe(117);
+      expect(outPerAttr.offence.averageHit).toBeCloseTo(outExact22.offence.averageHit, 4);
+    });
+
+    it('does not inherit % increased maximum Life into PoE 2 LifeAsExtraES (Atziri\'s Disdain)', () => {
+      const s2 = createSamplePoe2Build();
+      const base: Build = {
+        ...s2,
+        items: {},
+        equipped: {},
+        tree: { ...s2.tree, allocatedNodeIds: [], socketedJewels: {} },
+      };
+      const outBaseLife = calculateBuild(
+        withCustomMods(base, 'Gain 20% of Maximum Life as Extra Maximum Energy Shield'),
+      );
+      const outScaledLife = calculateBuild(
+        withCustomMods(
+          base,
+          '100% increased maximum Life\nGain 20% of Maximum Life as Extra Maximum Energy Shield',
+        ),
+      );
+      expect(outScaledLife.defence.life).toBeGreaterThan(outBaseLife.defence.life * 1.8);
+      expect(outScaledLife.defence.energyShield).toBe(outBaseLife.defence.energyShield);
+    });
+
+    it('forces all three elemental resistances to 0% under ZeroElementalResistances (Veil of the Night)', () => {
+      const base = createSamplePoe2Build();
+      const out = calculateBuild(
+        withCustomMods(base, '+120% to all Elemental Resistances\nYou have no Elemental Resistances'),
+      );
+      expect(out.defence.fireResist).toBe(0);
+      expect(out.defence.coldResist).toBe(0);
+      expect(out.defence.lightningResist).toBe(0);
+    });
+
+    it('injects local-scaled +100 base Spirit on PoE 2 Sceptres that also carry weaponStats and strips equipment Spirit under NoSpiritFromEquipment', () => {
+      const s2 = createSamplePoe2Build();
+      const base: Build = {
+        ...s2,
+        items: {},
+        equipped: {},
+        skills: [],
+        tree: { ...s2.tree, allocatedNodeIds: [], socketedJewels: {} },
+      };
+      const sceptre: Item = {
+        id: 'sceptre_spirit_test',
+        name: 'Hallowed Sceptre',
+        baseName: 'Hallowed Sceptre',
+        rarity: 'RARE',
+        slotType: 'Weapon 2',
+        quality: 20,
+        localStatsPrecomputed: false,
+        weaponStats: {
+          weaponType: 'Mace',
+          twoHanded: false,
+          physicalMin: 10,
+          physicalMax: 20,
+          attacksPerSecond: 1.2,
+          critChance: 5,
+        },
+        implicits: [],
+        explicits: ['50% increased Spirit'],
+      };
+      const amulet: Item = {
+        id: 'amulet_spirit_test',
+        name: 'Solar Amulet',
+        baseName: 'Solar Amulet',
+        rarity: 'RARE',
+        slotType: 'Amulet',
+        quality: 0,
+        implicits: ['+15 to Spirit'],
+        explicits: ['+35 to Spirit'],
+      };
+      const baselineSpirit = calculateBuild(base).defence.spirit;
+      const withEquip = calculateBuild({
+        ...base,
+        items: { [sceptre.id]: sceptre, [amulet.id]: amulet },
+        equipped: { 'Weapon 2': sceptre.id, Amulet: amulet.id },
+      });
+      // Sceptre adds 100 * 1.5 * 1.2 (Q20) = 180 Spirit; Amulet adds 50 => +230
+      expect(withEquip.defence.spirit).toBe(baselineSpirit + 230);
+
+      const withNoEquipSpirit = calculateBuild(
+        withCustomMods(
+          {
+            ...base,
+            items: { [sceptre.id]: sceptre, [amulet.id]: amulet },
+            equipped: { 'Weapon 2': sceptre.id, Amulet: amulet.id },
+          },
+          'Cannot gain Spirit from Equipment',
+        ),
+      );
+      expect(withNoEquipSpirit.defence.spirit).toBe(baselineSpirit);
+    });
+
+    it('deducts double/triple-counted +all Attributes and dual Attributes in PoE 1 Crystallised Omniscience', () => {
+      const s1 = createSamplePoe1Build();
+      const omniAmulet: Item = {
+        id: 'omni_amulet_test',
+        name: 'Crystallised Omniscience',
+        baseName: 'Onyx Amulet',
+        rarity: 'UNIQUE',
+        slotType: 'Amulet',
+        quality: 0,
+        implicits: ['+16 to all Attributes'],
+        explicits: [
+          'Modifiers to Attributes instead apply to Omniscience',
+          '+1% to all Elemental Resistances per 15 Omniscience',
+          'Penetrate 1% Elemental Resistances per 15 Omniscience',
+        ],
+      };
+      const base: Build = {
+        ...s1,
+        items: { [omniAmulet.id]: omniAmulet },
+        equipped: { Amulet: omniAmulet.id },
+        skills: [],
+        tree: { ...s1.tree, allocatedNodeIds: [], socketedJewels: {} },
+      };
+      const ring: Item = {
+        id: 'omni_ring_test',
+        name: 'Attr Ring',
+        baseName: 'Amethyst Ring',
+        rarity: 'RARE',
+        slotType: 'Ring 1',
+        quality: 0,
+        implicits: [],
+        explicits: ['+30 to all Attributes', '+15 to Strength and Intelligence'],
+      };
+      const before = calculateBuild(base);
+      const withAllAndDual = calculateBuild({
+        ...base,
+        items: { ...base.items, [ring.id]: ring },
+        equipped: { ...base.equipped, 'Ring 1': ring.id },
+      });
+      // +30 all Attributes (+30 Omni, NOT +90) + +15 Str/Int (+15 Omni, NOT +30) => +45 Omni => exactly +3% Ele Res
+      expect(withAllAndDual.defence.fireResist - before.defence.fireResist).toBe(3);
+    });
+
+    it('supports PoE 1 3.24+ Doryani\'s Prototype wording ("Enemies within 6 metres have Lightning Resistance equal to yours")', () => {
+      const s1 = createSamplePoe1Build();
+      const base: Build = {
+        ...s1,
+        items: {},
+        equipped: {},
+        tree: { ...s1.tree, allocatedNodeIds: [], socketedJewels: {} },
+        skills: [
+          {
+            id: 'sg_doryani_arc',
+            label: 'Arc',
+            enabled: true,
+            gems: [{ instanceId: 'g1', gemId: 'poe1_arc', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_doryani_arc',
+        config: {
+          ...s1.config,
+          enemyLightningResist: 40,
+        },
+      };
+      const doryani: Item = {
+        id: 'doryani_body_330',
+        name: "Doryani's Prototype",
+        baseName: "Saint's Hauberk",
+        rarity: 'UNIQUE',
+        slotType: 'Body Armour',
+        quality: 20,
+        implicits: [],
+        explicits: [
+          'Armour also applies to Lightning Damage taken from Hits',
+          'Lightning Resistance does not affect Lightning Damage taken',
+          'Deal no Non-Lightning Damage',
+          'Enemies within 6 metres have Lightning Resistance equal to yours',
+        ],
+      };
+      const outPlain = calculateBuild(withCustomMods(base, '-100% to Lightning Resistance'));
+      const doryaniBuild: Build = {
+        ...base,
+        items: { [doryani.id]: doryani },
+        equipped: { 'Body Armour': doryani.id },
+      };
+      const outDoryani = calculateBuild(withCustomMods(doryaniBuild, '-100% to Lightning Resistance'));
+      const outDoryaniWithPen = calculateBuild(
+        withCustomMods(
+          doryaniBuild,
+          '-100% to Lightning Resistance\n35% Lightning Penetration',
+        ),
+      );
+      // Enemy Lightning Resist becomes player's negative Lightning Resist instead of +40%, and Lightning Penetration is zeroed
+      expect(outDoryani.offence.averageHit).toBeGreaterThan(outPlain.offence.averageHit * 2);
+      expect(outDoryaniWithPen.offence.averageHit).toBeCloseTo(outDoryani.offence.averageHit, 4);
+    });
+  });
 });

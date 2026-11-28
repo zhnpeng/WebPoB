@@ -403,7 +403,7 @@ describe('ascendancyMods', () => {
         maxMana: 1500,
       });
       expect(db.sum('BASE', 'Life')).toBe(800); // Extra +2 Life/Str -> total 4/Str
-      expect(db.sum('BASE', 'Accuracy')).toBe(1000); // Extra +5 Acc/Dex -> total 10/Dex
+      expect(db.sum('BASE', 'Accuracy')).toBe(1200); // Extra +6 Acc/Dex -> total 12/Dex
       expect(db.sum('BASE', 'Mana')).toBe(600); // Extra +2 Mana/Int -> total 4/Int
     });
 
@@ -1387,6 +1387,49 @@ describe('ascendancyMods', () => {
       });
       expect(dbGlad.getEvalContext().multipliers.PresenceSeconds).toBe(10);
       expect(dbGlad.more('Damage', 4)).toBeCloseTo(1.1, 4);
+    });
+
+    it('Infernalist Beidat\'s Hand deduplicates EnergyShield and LifeReservedPct when passive node stats are already parsed into ModDB', () => {
+      const dbBeidat = new ModDB();
+      dbBeidat.addMod({
+        name: 'LifeReservedPct',
+        type: 'BASE',
+        value: 25,
+        flags: 0,
+        keywordFlags: 0,
+        source: "Tree: Beidat's Hand",
+      });
+      dbBeidat.addMod({
+        name: 'EnergyShield',
+        type: 'BASE',
+        value: 1,
+        flags: 0,
+        keywordFlags: 0,
+        source: "Tree: Beidat's Hand",
+        tags: [{ type: 'PerStat', stat: 'Life', div: 8 }],
+      });
+      dbBeidat.setStat('Life', 1600);
+
+      applyPostLifeAscendancyMechanics({
+        game: 'poe2',
+        db: dbBeidat,
+        allocatedNodes: [
+          mkNode(
+            "Beidat's Hand",
+            ['Reserves 25% of Life', '+1 to Maximum Energy Shield per 8 Maximum Life'],
+            'Infernalist',
+            1,
+          ),
+        ],
+        str: 100,
+        dex: 100,
+        int: 200,
+        maxLife: 1600,
+        maxMana: 1000,
+      });
+
+      expect(dbBeidat.sum('BASE', 'LifeReservedPct')).toBe(25);
+      expect(dbBeidat.sum('BASE', 'EnergyShield')).toBe(200);
     });
   });
 });
