@@ -1110,6 +1110,129 @@ export function evaluateAllocatedClusterJewels(
   };
 }
 
+/**
+ * Builds PoB1-exact undirected Cluster Jewel subgraph adjacency for Split Personality BFS distance.
+ *
+ * Uses the complete `getClusterTemplateLayout` ring (including UNALLOCATED positions) so BFS through
+ * `activeTreeNodes` never teleports across an unallocated branch via a wrap-around shortcut edge
+ * (e.g. an 8-passive Large Cluster with only positions `0 -> 1 -> 2 -> 4 (medSock0)` allocated must
+ * traverse 3 hops instead of shortcutting `0 <-> medSock0` in 1 hop).
+ */
+export function buildClusterSubgraphAdjacency(
+  entries: readonly EvaluatedClusterJewelEntry[],
+  activeTreeNodes: ReadonlySet<number>,
+): Map<number, number[]> {
+  const clusterAdjacency = new Map<number, number[]>();
+  if (entries.length === 0) return clusterAdjacency;
+
+  const linkUndirected = (a: number, b: number) => {
+    let la = clusterAdjacency.get(a);
+    if (!la) {
+      la = [];
+      clusterAdjacency.set(a, la);
+    }
+    if (!la.includes(b)) la.push(b);
+    let lb = clusterAdjacency.get(b);
+    if (!lb) {
+      lb = [];
+      clusterAdjacency.set(b, lb);
+    }
+    if (!lb.includes(a)) lb.push(a);
+  };
+
+  const medSocketByLargeAndMedIdx = new Map<string, number>();
+  const smallSocketByParent = new Map<number, number>();
+  for (const [sockIdStr, info] of Object.entries(POE1_EXPANSION_SOCKETS)) {
+    const sockId = Number(sockIdStr);
+    if (info.socketSize === 1) {
+      medSocketByLargeAndMedIdx.set(`${info.largeSocketIndex}:${info.mediumSocketIndex}`, sockId);
+    } else if (info.socketSize === 0 && info.parentSocketId !== undefined) {
+      smallSocketByParent.set(info.parentSocketId, sockId);
+    }
+  }
+  const largeSlotToMedIdx: Record<number, number> = { 4: 0, 8: 2, 6: 1 };
+
+  for (const entry of entries) {
+    if (entry.largeSocketIndex === null) continue;
+    const medIdx = entry.mediumSocketIndex ?? 0;
+    const layout = getClusterTemplateLayout(
+      entry.sizeIndex,
+      entry.totalAdded,
+      entry.socketCount,
+      entry.allNotableNames.length,
+    );
+
+    const ringPosToNodeId = new Map<number, number>();
+    const allPosSet = new Set<number>([
+      ...layout.socketIndices,
+      ...layout.notableIndices,
+      ...layout.smallIndices,
+    ]);
+    for (const cid of entry.allocatedClusterNodeIds) {
+      const pos = cid & 0xf;
+      if (pos <= 11) {
+        allPosSet.add(pos);
+        ringPosToNodeId.set(pos, cid);
+      }
+    }
+
+    for (const pos of allPosSet) {
+      if (ringPosToNodeId.has(pos)) continue;
+      ringPosToNodeId.set(
+        pos,
+        encodeClusterNodeId({
+          nodeIndex: pos,
+          sizeIndex: entry.sizeIndex,
+          largeSocketIndex: entry.largeSocketIndex,
+          mediumSocketIndex: medIdx,
+        }),
+      );
+    }
+
+    // Override sub-socket ring positions with their official passive tree expansion socket IDs
+    if (entry.sizeIndex === 2) {
+      for (const [slotPosStr, subMedIdx] of Object.entries(largeSlotToMedIdx)) {
+        const slotPos = Number(slotPosStr);
+        if (!allPosSet.has(slotPos)) continue;
+        const medSockId = medSocketByLargeAndMedIdx.get(`${entry.largeSocketIndex}:${subMedIdx}`);
+        if (medSockId && (activeTreeNodes.has(medSockId) || layout.socketIndices.includes(slotPos))) {
+          ringPosToNodeId.set(slotPos, medSockId);
+        }
+      }
+    } else if (entry.sizeIndex === 1) {
+      if (allPosSet.has(6)) {
+        const smSockId = smallSocketByParent.get(entry.nodeId);
+        if (smSockId && (activeTreeNodes.has(smSockId) || layout.socketIndices.includes(6))) {
+          ringPosToNodeId.set(6, smSockId);
+        }
+      }
+    }
+
+    const entranceId =
+      ringPosToNodeId.get(0) ??
+      encodeClusterNodeId({
+        nodeIndex: 0,
+        sizeIndex: entry.sizeIndex,
+        largeSocketIndex: entry.largeSocketIndex,
+        mediumSocketIndex: medIdx,
+      });
+    linkUndirected(entry.nodeId, entranceId);
+
+    const sortedPositions = [...ringPosToNodeId.keys()].sort((a, b) => a - b);
+    if (sortedPositions.length >= 2) {
+      for (let i = 0; i < sortedPositions.length; i++) {
+        const curNode = ringPosToNodeId.get(sortedPositions[i]!)!;
+        const nextNode = ringPosToNodeId.get(sortedPositions[(i + 1) % sortedPositions.length]!)!;
+        if (curNode !== nextNode) {
+          linkUndirected(curNode, nextNode);
+        }
+      }
+    }
+  }
+
+  return clusterAdjacency;
+}
+
 // ============================================================================
 // 2. Pool-Zeroing & Conversion Keystones / Uniques
 // ============================================================================

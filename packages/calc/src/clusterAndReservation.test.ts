@@ -18,6 +18,7 @@ import {
   decodeClusterNodeId,
   encodeClusterNodeId,
   evaluateAllocatedClusterJewels,
+  buildClusterSubgraphAdjacency,
   evaluateAurasAndWatchersEye,
   getClusterTemplateLayout,
   parseWatchersEyeCondition,
@@ -2048,5 +2049,57 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     expect(tigerDb.sum('INC', 'Speed', ModFlag.Attack)).toBe(35);
     expect(tigerDb.sum('INC', 'Speed', ModFlag.Spell)).toBe(35);
     expect(tigerDb.sum('INC', 'CritChance')).toBe(125);
+  });
+
+  it('builds PoB1-exact full-ring clusterAdjacency without wrap-around shortcuts across unallocated branches (Split Personality)', () => {
+    // 8-passive Large Cluster Jewel in outer socket 7960 (largeSocketIndex = 0) with 2 jewel sockets (4, 8) and 3 notables.
+    // Player allocates ONLY the left branch: entrance (0) -> small/notable (1, 2) -> medium socket 29712 (pos 4).
+    const pos0 = encodeClusterNodeId({ nodeIndex: 0, sizeIndex: 2, largeSocketIndex: 0, mediumSocketIndex: 0 });
+    const pos1 = encodeClusterNodeId({ nodeIndex: 1, sizeIndex: 2, largeSocketIndex: 0, mediumSocketIndex: 0 });
+    const pos2 = encodeClusterNodeId({ nodeIndex: 2, sizeIndex: 2, largeSocketIndex: 0, mediumSocketIndex: 0 });
+    const medSock0 = 29712; // POE1_EXPANSION_SOCKETS: largeSocketIndex=0, mediumSocketIndex=0 (pos 4)
+
+    const activeNodes = new Set<number>([7960, pos0, pos1, pos2, medSock0]);
+    const adj = buildClusterSubgraphAdjacency(
+      [
+        {
+          nodeId: 7960,
+          jewelName: 'Large Cluster Jewel',
+          size: 'Large',
+          sizeIndex: 2,
+          largeSocketIndex: 0,
+          mediumSocketIndex: 0,
+          totalAdded: 8,
+          socketCount: 2,
+          smallEffectPct: 0,
+          allocatedClusterNodeIds: [pos0, pos1, pos2],
+          allNotableNames: ['Feed the Fury', 'Fuel the Fight', 'Martial Prowess'],
+          grantedNotableNames: ['Feed the Fury'],
+          maxSmallCount: 3,
+          grantedSmallCount: 2,
+          scaledSmallGrants: [],
+          usedSubgraphAllocation: true,
+          mods: [],
+        },
+      ],
+      activeNodes,
+    );
+
+    // entrance (pos0) MUST NOT have a direct wrap-around shortcut edge to medSock0 (pos 4)!
+    expect(adj.get(pos0)).not.toContain(medSock0);
+    expect(adj.get(medSock0)).not.toContain(pos0);
+
+    // BFS from outer socket 7960 to medSock0 through activeNodes must take 4 hops: 7960 -> pos0 -> pos1 -> pos2 -> medSock0
+    const dist = new Map<number, number>([[7960, 0]]);
+    const q = [7960];
+    while (q.length > 0) {
+      const u = q.shift()!;
+      for (const v of adj.get(u) ?? []) {
+        if (!activeNodes.has(v) || dist.has(v)) continue;
+        dist.set(v, dist.get(u)! + 1);
+        q.push(v);
+      }
+    }
+    expect(dist.get(medSock0)).toBe(4);
   });
 });
