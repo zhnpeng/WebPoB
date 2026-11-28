@@ -704,6 +704,16 @@ const SUFFIX_RULES: readonly SuffixRule[] = [
     regex: /\s*(?:,\s*)?for\s+each\s+different\s+Spell\s+you(?:'ve|\s+have)\s+Cast\s+in\s+the\s+last\s+(?:\d+|eight)\s+seconds\s*$/i,
     toTag: () => ({ type: 'Multiplier', var: 'NonInstantSpellCastRecently' }),
   },
+  {
+    regex: /\s*(?:,\s*)?per\s+Enemy\s+you(?:'ve|\s+have)\s+Ignited\s+in\s+the\s+last\s+\d+\s+seconds,\s*up\s+to\s+(\d+)%?\s*$/i,
+    toTag: (m) =>
+      ({
+        type: 'Multiplier',
+        var: 'EnemyIgnitedRecently',
+        limit: Number(m[1]),
+        limitTotal: true,
+      }) as unknown as ModTag,
+  },
 
   // --- Conditions (negated first, then positive) ---
   {
@@ -988,6 +998,13 @@ const SUFFIX_RULES: readonly SuffixRule[] = [
   {
     regex: /\s*(?:,\s*)?against\s+Enemies\s+with\s+an\s+Open\s+Weakness\s*$/i,
     toTag: () => ({ type: 'Condition', var: 'EnemyHasOpenWeakness|EnemyOpenWeakness' }),
+  },
+  {
+    regex: /\s*(?:,\s*)?while\s+an\s+Enemy\s+with\s+an\s+Open\s+Weakness\s+is\s+in\s+your\s+Presence\s*$/i,
+    toTag: () => ({
+      type: 'Condition',
+      var: 'OpenWeaknessEnemyPresence|EnemyHasOpenWeakness|EnemyOpenWeakness',
+    }),
   },
   {
     regex: /\s*(?:,\s*)?if\s+you(?:'ve|\s+have)\s+Shapeshifted\s+to\s+Human\s+form\s+Recently\s*$/i,

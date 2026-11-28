@@ -1086,4 +1086,41 @@ describe('parseConditionalSuffix', () => {
       evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'GainedFrenzyChargeRecently' }] }), ctx).active,
     ).toBe(true);
   });
+
+  it('parses and evaluates Wave 4Q suffixes (Open Weakness in Presence, per Enemy Ignited Recently capped)', () => {
+    expect(
+      parseConditionalSuffix('20% increased Movement Speed while an Enemy with an Open Weakness is in your Presence'),
+    ).toEqual({
+      baseLine: '20% increased Movement Speed',
+      tags: [{ type: 'Condition', var: 'OpenWeaknessEnemyPresence|EnemyHasOpenWeakness|EnemyOpenWeakness' }],
+    });
+    expect(
+      parseConditionalSuffix("4% increased Area of Effect for Attacks per Enemy you've Ignited in the last 8 seconds, up to 40%"),
+    ).toEqual({
+      baseLine: '4% increased Area of Effect for Attacks',
+      tags: [{ type: 'Multiplier', var: 'EnemyIgnitedRecently', limit: 40, limitTotal: true }],
+    });
+
+    const ctx = createEmptyEvalContext();
+    ctx.conditions.EnemyOpenWeakness = true;
+    ctx.multipliers.EnemyIgnitedRecently = 15;
+    expect(
+      evaluateModTags(
+        makeMod({ tags: [{ type: 'Condition', var: 'OpenWeaknessEnemyPresence|EnemyHasOpenWeakness|EnemyOpenWeakness' }] }),
+        ctx,
+      ).active,
+    ).toBe(true);
+    expect(
+      applyModTagEval(
+        4,
+        evaluateModTags(
+          makeMod({
+            value: 4,
+            tags: [{ type: 'Multiplier', var: 'EnemyIgnitedRecently', limit: 40, limitTotal: true } as unknown as ModTag],
+          }),
+          ctx,
+        ),
+      ),
+    ).toBe(40);
+  });
 });

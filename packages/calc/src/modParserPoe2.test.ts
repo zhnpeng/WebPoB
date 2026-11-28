@@ -1650,5 +1650,71 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
         }),
       ]);
     });
+
+    it('parses Wave 4Q PoE 2 mechanics (Demolitionist split-line, Penetrate split-line, Engineered Blaze, Marked for Death, Splitting Ground, Critical Weakness, Intimidate, Sustainable Practices)', () => {
+      expect(
+        parseModLine('Gain 4% of Damage as Extra Fire Damage for', 'Tree: Demolitionist'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'DamageGainAsFire',
+          type: 'BASE',
+          value: 4,
+          tags: [{ type: 'Multiplier', var: 'DifferentGrenadeFired' }],
+        }),
+      ]);
+      expect(
+        parseModLine('to 25% of the Accuracy Rating on the Weapon', 'Tree: Penetrate'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'WeaponAccuracyAsAddedPhysPct',
+          type: 'BASE',
+          value: 25,
+          flags: ModFlag.Attack,
+        }),
+      ]);
+      expect(
+        parseModLine(
+          "4% increased Area of Effect for Attacks per Enemy you've Ignited in the last 8 seconds, up to 40%",
+          'Tree: Engineered Blaze',
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'AreaOfEffect',
+          type: 'INC',
+          value: 4,
+          flags: ModFlag.Attack,
+        }),
+      ]);
+      expect(parseModLine('Culling Strike against Enemies you Mark', 'Tree: Marked for Death')).toEqual([
+        expect.objectContaining({
+          name: 'CullingStrike',
+          type: 'FLAG',
+          value: true,
+          tags: [{ type: 'Condition', var: 'EnemyMarked' }],
+        }),
+      ]);
+      expect(
+        parseModLine(
+          'Skills which create Fissures have a 20% chance to create an additional Fissure',
+          'Tree: Splitting Ground',
+        ),
+      ).toEqual([expect.objectContaining({ name: 'AdditionalFissureChance', type: 'BASE', value: 20 })]);
+      expect(
+        parseModLine('Critical Hits with Spells apply 5 Stacks of Critical Weakness', 'Item'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'ApplyCriticalWeaknessOnSpellCrit',
+          type: 'BASE',
+          value: 5,
+          flags: ModFlag.Spell,
+        }),
+      ]);
+      expect(parseModLine('25% chance to Intimidate Enemies for 4 seconds on Hit', 'Item')).toEqual([
+        expect.objectContaining({ name: 'ChanceToIntimidateOnHit', type: 'BASE', value: 25 }),
+      ]);
+      expect(
+        parseModLine('30% of Evasion Rating also grants Elemental Damage reduction', 'Tree: Sustainable Practices'),
+      ).toEqual([expect.objectContaining({ name: 'EvasionAsEleReductionPct', type: 'BASE', value: 30 })]);
+    });
   });
 });

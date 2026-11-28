@@ -2471,6 +2471,64 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     pattern: /^(\d+)% of Physical Damage from Hits taken as Damage of a Random Element$/i,
     build: (m, src) => [mkMod('PhysicalDamageTakenAsRandomElement', 'BASE', Number(m[1]), src)],
   },
+  // Wave 4Q: Demolitionist (split 2-line & single-line), Penetrate (split 2-line & single-line), Engineered Blaze, Marked for Death, Splitting Ground, Critical Weakness, Intimidate
+  {
+    pattern: /^Gain (\d+)% of Damage as Extra (Fire|Cold|Lightning|Chaos|Physical) Damage for(?: every different Grenade fired in the past \d+ seconds)?$/i,
+    build: (m, src) => [
+      {
+        ...mkMod(`DamageGainAs${m[2]}`, 'BASE', Number(m[1]), src),
+        tags: [{ type: 'Multiplier', var: 'DifferentGrenadeFired' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(?:Attacks using your Weapons have Added Physical Damage equal )?to (\d+)% of the Accuracy Rating on the Weapon$/i,
+    build: (m, src) => [mkMod('WeaponAccuracyAsAddedPhysPct', 'BASE', Number(m[1]), src, ModFlag.Attack)],
+  },
+  {
+    pattern: /^(\d+)% (increased|reduced) Area of Effect for Attacks per Enemy you(?:'ve| have) Ignited in the last \d+ seconds,\s*up to (\d+)%$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      return [
+        {
+          ...mkMod('AreaOfEffect', type, value, src, ModFlag.Attack),
+          tags: [
+            {
+              type: 'Multiplier',
+              var: 'EnemyIgnitedRecently',
+              limit: Number(m[3]),
+              limitTotal: true,
+            } as unknown as ModTag,
+          ],
+        },
+      ];
+    },
+  },
+  {
+    pattern: /^Culling Strike against Enemies you Mark$/i,
+    build: (_, src) => [
+      {
+        ...mkMod('CullingStrike', 'FLAG', true, src),
+        tags: [{ type: 'Condition', var: 'EnemyMarked' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Skills which create Fissures have an? (\d+)% chance to create an additional Fissure$/i,
+    build: (m, src) => [mkMod('AdditionalFissureChance', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Critical Hits with Spells apply (\d+) Stacks? of Critical Weakness$/i,
+    build: (m, src) => [mkMod('ApplyCriticalWeaknessOnSpellCrit', 'BASE', Number(m[1]), src, ModFlag.Spell)],
+  },
+  {
+    pattern: /^(\d+)% chance to Intimidate Enemies for \d+ seconds on Hit$/i,
+    build: (m, src) => [mkMod('ChanceToIntimidateOnHit', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^(\d+)% of Evasion Rating also grants Elemental Damage reduction$/i,
+    build: (m, src) => [mkMod('EvasionAsEleReductionPct', 'BASE', Number(m[1]), src)],
+  },
   // Falcon Dive (PoB 2 ModParser.lua:1620): "1% increased Attack Speed per 400 Accuracy Rating, up to 20%"
   {
     pattern: /^(\d+)% (increased|reduced) (Attack|Cast) Speed per (\d+) Accuracy Rating(?:,\s*up to (\d+)%)?$/i,
