@@ -1495,4 +1495,46 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       expect.objectContaining({ name: 'CooldownRecovery:Focus', type: 'INC', value: 25 }),
     ]);
   });
+
+  it('Wave 6A: Graft local-skill isolation & Foulborn unique modifiers', () => {
+    // Graft-local CDR/Duration must NOT leak into global player CooldownRecovery/Duration
+    expect(
+      parseModLine('Skills used by this Graft have 16% increased Cooldown Recovery Rate', 'Item: Graft 1'),
+    ).toEqual([expect.objectContaining({ name: 'GraftSkillLocalMod', type: 'FLAG', value: true })]);
+    expect(
+      parseModLine('Your Damage with Hits is Lucky while on Low Life', "Item: Foulborn Lori's Lantern"),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'DamageIsLucky',
+        type: 'FLAG',
+        value: true,
+        tags: [{ type: 'Condition', var: 'LowLife' }],
+      }),
+    ]);
+    expect(
+      parseModLine(
+        "Adds 1 to 10 Lightning Damage for each Shocked Enemy you've Killed Recently",
+        "Item: Foulborn Esh's Mirror",
+      ),
+    ).toHaveLength(2);
+    expect(
+      parseModLine(
+        'Minions have +5% to Critical Strike Multiplier per Withered Debuff on Enemy',
+        'Item: Foulborn Severed in Sleep',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'MinionCritMultiplier',
+        type: 'BASE',
+        value: 5,
+        tags: [{ type: 'Multiplier', var: 'WitheredStack' }],
+      }),
+    ]);
+    expect(parseModLine('Gain no inherent bonuses from Strength', 'Item: Foulborn The Brass Dome')).toEqual([
+      expect.objectContaining({ name: 'NoStrengthBonus', type: 'FLAG', value: true }),
+    ]);
+    expect(
+      parseModLine('Maximum Energy Shield is increased by Chaos Resistance', "Item: Foulborn Saffell's Frame"),
+    ).toEqual([expect.objectContaining({ name: 'EsIncreasedByChaosRes', type: 'FLAG', value: true })]);
+  });
 });

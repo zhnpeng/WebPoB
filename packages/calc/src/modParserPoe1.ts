@@ -2274,6 +2274,75 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
     pattern: /^Your Lucky or Unlucky effects use the best or worst from three rolls instead of two$/i,
     build: (_, src) => [mkMod('LuckyUsesThreeRolls', 'FLAG', true, src)],
   },
+  // Wave 6A: PoE 1 3.27/3.28 Graft local-skill isolation & Foulborn unique modifiers
+  {
+    // Prevent "Skills used by this Graft have X% increased Cooldown Recovery Rate / Skill Effect Duration"
+    // from falling through to compositionalModParser and polluting global player CooldownRecovery/Duration.
+    pattern: /^Skills used by this Graft\b/i,
+    build: (_, src) => [mkMod('GraftSkillLocalMod', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Your Damage with Hits is Lucky while on Low Life$/i,
+    build: (_, src) => [
+      {
+        ...mkMod('DamageIsLucky', 'FLAG', true, src, ModFlag.Hit),
+        tags: [{ type: 'Condition' as const, var: 'LowLife' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Adds (\d+) to (\d+) (Physical|Fire|Cold|Lightning|Chaos) Damage for each Shocked Enemy you've Killed Recently$/i,
+    build: (m, src) => {
+      const elem = capFirst(m[3]!);
+      const tags = [{ type: 'Multiplier' as const, var: 'ShockedEnemiesKilledRecently' }];
+      return [
+        { ...mkMod(`${elem}Min`, 'BASE', Number(m[1]), src), tags },
+        { ...mkMod(`${elem}Max`, 'BASE', Number(m[2]), src), tags },
+      ];
+    },
+  },
+  {
+    pattern: /^Minions have \+(\d+)% to Critical Strike Multiplier per Withered Debuff on Enemy$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('MinionCritMultiplier', 'BASE', Number(m[1]), src),
+        tags: [{ type: 'Multiplier' as const, var: 'WitheredStack' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Take no Extra Damage from Critical Strikes$/i,
+    build: (_, src) => [mkMod('CritExtraDamageTaken', 'MORE', -100, src)],
+  },
+  {
+    pattern: /^Gain no inherent bonuses from Strength$/i,
+    build: (_, src) => [mkMod('NoStrengthBonus', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Cannot Block Attack Damage$/i,
+    build: (_, src) => [mkMod('CannotBlockAttacks', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Maximum Energy Shield is increased by Chaos Resistance$/i,
+    build: (_, src) => [mkMod('EsIncreasedByChaosRes', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^(\d+)% chance to gain Unholy Might for \d+ seconds on Kill$/i,
+    build: (_, src) => [
+      {
+        ...mkMod('UnholyMight', 'FLAG', true, src),
+        tags: [{ type: 'Condition' as const, var: 'KilledRecently' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Increases and Reductions to Spell Damage also apply to Attack Damage with Retaliation Skills at (\d+)% of their value$/i,
+    build: (m, src) => [mkMod('SpellDamageAppliesToRetaliationPct', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Cover Enemies in Ash when they Hit you$/i,
+    build: (_, src) => [mkMod('EnemyCoveredInAshOnHitYou', 'FLAG', true, src)],
+  },
 ];
 
 /**
