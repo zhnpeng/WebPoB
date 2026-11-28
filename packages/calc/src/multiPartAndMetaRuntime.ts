@@ -437,8 +437,9 @@ export function resolveActiveSkillPartAndStats(
     } else if (/(?:5th|fifth)/i.test(partNameLower)) {
       sequenceDamageMultiplier = 11;
     }
-  } else if (skillKey === 'tempest flurry') {
-    // PoE 2 Quarterstaff combo sequence (1st/2nd normal, 3rd double-hit, 4th final slam, or sequence average)
+  } else if (skillKey === 'tempest flurry' && !selectedPart?.attackDamageMultiplierPct) {
+    // Synthetic / uncompiled fallback for PoE 2 Quarterstaff combo sequence when official PoB 2 part
+    // `attackDamageMultiplierPct` (`am = 140 / 90 / 421`) is absent.
     if (/(?:4th|fourth|final)/i.test(partNameLower) || partIndex === 3) {
       sequenceDamageMultiplier = 1.5;
     } else if (/(?:3rd|third)/i.test(partNameLower) || partIndex === 2) {
@@ -1226,7 +1227,8 @@ export function evaluatePersistentBuffAndStanceSkills(
               : (ctxMult.WindDancerStage ?? ctxMult.WindDancerStacks ?? 0);
           const stages = Math.min(6, Math.max(0, Math.round(configuredStages)));
           if (stages > 0) {
-            const perStagePct = Math.floor(10 + (level - 1) * 0.5);
+            // Upstream PoB 2 WindDancerPlayer: flat 10% more Evasion Rating per stage across all gem levels
+            const perStagePct = 10;
             addPlayerMod({
               name: 'Evasion',
               type: 'MORE',
@@ -1574,21 +1576,15 @@ export function evaluatePersistentBuffAndStanceSkills(
               source: 'Trinity (Resonance)',
             });
           }
+          // PoB 2 Data/Skills/act_int.lua:21850-21854: `trinity_skill_speed_+%_while_all_resonance_is_at_least_250_to_grant`
+          // grants generic Skill Speed (`Speed INC`, flags = 0) applying to Attacks, Spells (Cast), Warcries, and Totems.
           const qualSpeedInc = Math.floor(Math.max(0, gem.quality ?? 0) * 0.75);
           if (qualSpeedInc > 0 && effectiveResonance >= 250) {
             addPlayerMod({
               name: 'Speed',
               type: 'INC',
               value: qualSpeedInc,
-              flags: ModFlag.Attack,
-              keywordFlags: 0,
-              source: 'Trinity (Quality)',
-            });
-            addPlayerMod({
-              name: 'Speed',
-              type: 'INC',
-              value: qualSpeedInc,
-              flags: ModFlag.Spell,
+              flags: 0,
               keywordFlags: 0,
               source: 'Trinity (Quality)',
             });
@@ -1654,9 +1650,12 @@ export function evaluatePersistentBuffAndStanceSkills(
       // PoE 1 Stances & Herald of Agony
       if (game === 'poe1') {
         if (lower === 'blood and sand') {
-          const stancePart = gem.skillPart ?? group.skillPart ?? 1;
+          const explicitPart = gem.skillPart ?? group.skillPart;
+          const isSandStance =
+            explicitPart === 2 ||
+            (explicitPart === undefined && Boolean(playerDb.getEvalContext().conditions.SandStance));
           const stanceBonus = 5 + Math.min(10, Math.max(0, level - 1) * 2); // Lv6 -> 15%
-          if (stancePart === 2) {
+          if (isSandStance) {
             activeStance = 'Sand';
             playerDb.setCondition('SandStance', true);
             playerDb.setCondition('BloodStance', false);
@@ -1702,8 +1701,12 @@ export function evaluatePersistentBuffAndStanceSkills(
         }
 
         if (lower === 'flesh and stone') {
-          const stancePart = gem.skillPart ?? group.skillPart ?? 1;
-          if (stancePart === 2) {
+          const explicitPart = gem.skillPart ?? group.skillPart;
+          const isSandStance =
+            explicitPart === 2 ||
+            (explicitPart === undefined && Boolean(playerDb.getEvalContext().conditions.SandStance));
+          if (isSandStance) {
+            // PoB 1 Data/Skills/act_str.lua:4443-4498: Sand Stance -10%..-(9+floor((lv+1)/2))% less Damage Taken from Hits (-19% at Lv20)
             activeStance = 'Sand';
             playerDb.setCondition('SandStance', true);
             playerDb.setCondition('BloodStance', false);
@@ -1711,21 +1714,22 @@ export function evaluatePersistentBuffAndStanceSkills(
             addPlayerMod({
               name: 'DamageTaken',
               type: 'MORE',
-              value: -(11 + Math.min(10, Math.floor(level / 2))),
+              value: -(9 + Math.floor((level + 1) / 2)),
               flags: 0,
               keywordFlags: 0,
               source: 'Flesh and Stone (Sand Stance)',
             });
           } else {
+            // PoB 1 Data/Skills/act_str.lua:4440-4498: Blood Stance 10%..(10+floor(lv/2))% MORE Physical Damage Taken by Hits (20% at Lv20)
             activeStance = 'Blood';
             playerDb.setCondition('BloodStance', true);
             playerDb.setCondition('SandStance', false);
-            const physTaken = 11 + Math.min(10, Math.floor(level / 2));
+            const physTakenMore = 10 + Math.floor(level / 2);
             addEnemyMod({
               name: 'PhysicalDamageTaken',
-              type: 'INC',
-              value: physTaken,
-              flags: 0,
+              type: 'MORE',
+              value: physTakenMore,
+              flags: ModFlag.Hit,
               keywordFlags: 0,
               source: 'Flesh and Stone (Blood Stance)',
             });

@@ -265,6 +265,95 @@ export const OFFICIAL_GEMS_FILES: Record<GameId, string> = {
   poe2: 'poe2-gems.json',
 };
 
+/**
+ * Official PoE 1 anoint-only (`isBlighted = true`) notables from upstream PoB1 `TreeData/3_30/tree.lua`.
+ * Compact `poe1-tree-*.json` files omit disconnected Blighted notables, so we hydrate them off-canvas
+ * so amulet/boot/helmet `Allocates <Notable>` enchants (e.g. `Force of Darkness`, `Tranquility`,
+ * `Tenacity`, `Crusader`, `Cleansed Thoughts`, `Way of the Warrior`) resolve across all tree versions.
+ */
+const POE1_BLIGHTED_ANOINT_NOTABLES: ReadonlyArray<{
+  id: number;
+  en: string;
+  stats: readonly string[];
+}> = [
+  { id: 203, en: 'Vinespike Cordial', stats: ['Inflict a Grasping Vine on Hit against Enemies with fewer than 8 Grasping Vines during Effect of any Life Flask'] },
+  { id: 1365, en: 'Knowledge Barrier', stats: ['6% increased Energy Shield Recharge Rate for each different type of Mastery you have Allocated'] },
+  { id: 3195, en: 'Legacy of the Wilds', stats: ['Tinctures have 40% increased effect while at or above 10 stacks of Mana Burn'] },
+  { id: 4354, en: 'Beacon of Hope', stats: ['80% increased Area of Effect of Aura Skills'] },
+  { id: 5574, en: 'Force of Darkness', stats: ['Damage Penetrates 15% Chaos Resistance'] },
+  { id: 5624, en: 'Crusader', stats: ['8% increased maximum Mana', 'Transfiguration of Mind'] },
+  { id: 13739, en: 'Always Angry', stats: ['+8 to Minimum Rage'] },
+  { id: 14079, en: 'Wood, Stone, and Spell', stats: ['10% increased effect of Arcane Surge on you per Summoned Totem'] },
+  { id: 14587, en: 'Adaptive Steel', stats: ["5% chance to Defend with 200% of Armour for each time you've been Hit by an Enemy Recently, up to 30%"] },
+  // Note: Omit 'Transfiguration of Soul' until engine.ts:5155 excludes Intelligence's innate 2% ES/10 Int from esEval.incPct
+  { id: 16246, en: 'Tranquility', stats: ['5% increased maximum Energy Shield'] },
+  { id: 20605, en: 'No Forgiveness', stats: ['20% chance for used Retaliation Skills to remain Usable and not consume a Cooldown Use'] },
+  { id: 23549, en: 'Incorporeal', stats: ['Elusive on you reduces in effect 50% slower', 'Elusive is removed from you at 20% effect'] },
+  { id: 24358, en: 'Selective Precision', stats: ['First and Final shots of Barrage sequences fire Projectiles that Return to you'] },
+  { id: 27781, en: 'Worship the Blightheart', stats: ['Create Fungal Ground instead of Consecrated Ground'] },
+  { id: 32853, en: "Sione's Ambition", stats: ['Strike Skills which target additional Enemies can do so from 40% further away'] },
+  { id: 33722, en: 'Hollow Effigy', stats: ['Your Offering Skills do not require a Corpse'] },
+  { id: 37512, en: 'Bastion of Faith', stats: ['Consecrated Ground you create also grants 50% reduced duration of Damaging Ailments on you'] },
+  { id: 38706, en: 'Way of the Warrior', stats: ['16% increased Melee Damage', '16% increased Armour', '+16 to maximum Life', '+30 to Strength'] },
+  { id: 40849, en: 'Persistence', stats: ['-10 Physical Damage taken from Hits', '-1 Physical Damage taken from Hits per Level'] },
+  { id: 41169, en: 'Jagged Wounds', stats: ["20% increased Maximum total Life Recovery per second from Leech if you've dealt a Critical Strike recently"] },
+  { id: 41307, en: 'Deadly Inclinations', stats: ['18% increased Evasion Rating', '+12 to maximum Life', '16% increased Projectile Damage', '+30 to Dexterity'] },
+  { id: 51360, en: 'Mixed Munitions', stats: ['5% increased Cooldown Recovery Rate for throwing Traps per Mine Detonated Recently'] },
+  { id: 52282, en: 'Tenacity', stats: ['5% increased maximum Life', 'Transfiguration of Body'] },
+  { id: 53759, en: 'Cleansed Thoughts', stats: ['Chaos Resistance is doubled'] },
+  { id: 56146, en: 'Deliberate Brutality', stats: ['Impales you inflict gain 50% increased Effect once 1 second of Duration has expired'] },
+  { id: 56207, en: 'Hardened Scars', stats: ['15% increased Life Recovery from Flasks', '25% less Damage over Time taken during Effect of any Life Flask'] },
+  { id: 56274, en: 'Lasting Tempest', stats: ['50% increased Duration of Elemental Ailments on Enemies'] },
+  { id: 57006, en: 'Vengeant Cascade', stats: ['Returning Projectiles have 150% increased Speed'] },
+  { id: 62596, en: 'Mystic Talents', stats: ['16% increased Spell Damage', '+14 to maximum Energy Shield', '25% increased Mana Regeneration Rate', '+30 to Intelligence'] },
+  { id: 64217, en: 'Aspect of Stone', stats: ['20% chance to Avoid Physical Damage from Hits'] },
+];
+
+/**
+ * Official PoE 1 Forbidden Flesh / Forbidden Flame exclusive ascendancy notables from upstream PoB1
+ * `TreeData/3_30/tree.lua` (disconnected nodes omitted by compact `poe1-tree-*.json`).
+ */
+const POE1_FORBIDDEN_ASCENDANCY_NOTABLES: ReadonlyArray<{
+  id: number;
+  en: string;
+  stats: readonly string[];
+}> = [
+  { id: 18054, en: 'Fury of Nature', stats: ['Non-Damaging Elemental Ailments you inflict spread to nearby enemies within 2 metres', 'Non-Damaging Elemental Ailments you inflict have 100% more Effect'] },
+  { id: 19355, en: 'Unleashed Potential', stats: ['400% increased Endurance, Frenzy and Power Charge Duration', '25% chance to gain a Power, Frenzy or Endurance Charge on Kill', '+1 to Maximum Endurance Charges', '+1 to Maximum Frenzy Charges', '+1 to Maximum Power Charges'] },
+  { id: 27602, en: 'Nine Lives', stats: ['25% of Damage taken Recouped as Life, Mana and Energy Shield', 'Recoup Effects instead occur over 3 seconds'] },
+  { id: 42469, en: 'Fatal Flourish', stats: ['Final Repeat of Attack Skills deals 60% more Damage', 'Non-Travel Attack Skills Repeat an additional Time'] },
+  { id: 52435, en: 'Indomitable Resolve', stats: ['Deal 10% less Damage', 'Take 25% less Damage'] },
+  { id: 57331, en: 'Harness the Void', stats: ['27% chance to gain 25% of Non-Chaos Damage with Hits as Extra Chaos Damage', '13% chance to gain 50% of Non-Chaos Damage with Hits as Extra Chaos Damage', '7% chance to gain 100% of Non-Chaos Damage with Hits as Extra Chaos Damage'] },
+  { id: 57568, en: 'Searing Purity', stats: ['45% of Chaos Damage taken as Fire Damage', '45% of Chaos Damage taken as Lightning Damage'] },
+];
+
+/**
+ * Official PoE 2 distilled anoint-only notables from upstream PoB2 `TreeData/0_5/tree.lua`
+ * omitted by compact `poe2-tree-0_5.json`.
+ */
+const POE2_DISTILLED_ANOINT_NOTABLES: ReadonlyArray<{
+  id: number;
+  en: string;
+  stats: readonly string[];
+}> = [
+  { id: 3663, en: "Kaom's Blessing", stats: ['The next Fire Spell you cast yourself after using a Warcry is Ancestrally Boosted'] },
+  { id: 10169, en: 'Unfettered', stats: ['50% increased Armour while Bleeding', '10% increased Movement Speed while Sprinting'] },
+  { id: 13844, en: 'Growing Peril', stats: ['1% increased Chaos Damage over Time per Volatility'] },
+  { id: 17696, en: 'Augmented Flesh', stats: ['Grants 2 additional Skill Slots'] },
+  { id: 20495, en: 'Dark Entropy', stats: ['Withered also causes enemies to deal 1% reduced Damage'] },
+  { id: 20686, en: 'Paragon', stats: ['+5% to Quality of all Skills', '+5 to all Attributes'] },
+  { id: 21251, en: 'Replenishing Horde', stats: ['25% Chance to revive a random Permanent Minion whenever you use a Command Skill'] },
+  { id: 22726, en: "Storm's Rebuke", stats: ['Fully Broken Armour you inflict also increases Cold and Lightning Damage Taken from Hits'] },
+  { id: 26214, en: 'Dominion', stats: ['50% reduced effect of Archon Buffs on you', 'Archon Buffs have no recovery period after you lose one'] },
+  { id: 27704, en: 'Grace of the Ancestors', stats: ['10% increased Attack Speed', 'Every Rage also grants 1% increased Evasion Rating'] },
+  { id: 27779, en: 'Lord of the Squall', stats: ['Grant Elemental Archon to your Minions for 5 seconds when they Revive'] },
+  { id: 35046, en: 'Mystic Avalanche', stats: ['Final Echo of Cascadable Spells also Cascades to either side of the targeted Area along a random axis'] },
+  { id: 37846, en: 'Bastion of Light', stats: ['Blind Enemies 3 metres in front of you every 0.25 seconds while your Shield is raised'] },
+  { id: 37967, en: "Desert's Scorn", stats: ['Enemies standing on Chilled Ground take 25% increased Fire Damage', 'Enemies standing on Ignited Ground take 25% increased Cold Damage'] },
+  { id: 39568, en: 'Magnum Opus', stats: ['Charms applied to you have 100% increased Effect per empty Charm slot'] },
+  { id: 56666, en: 'Thaumaturgic Generator', stats: ['Grants Thaumaturgical Dynamism'] },
+];
+
 export function hydrateCompactTree(payload: CompactTreePayload): PassiveTreeData {
   const nodes: Record<number, PassiveNode> = {};
   for (const cn of payload.nodes) {
@@ -289,6 +378,36 @@ export function hydrateCompactTree(payload: CompactTreePayload): PassiveTreeData
         statsZh: m.sz,
       })),
     };
+  }
+
+  if (payload.game === 'poe1') {
+    for (const bn of [...POE1_BLIGHTED_ANOINT_NOTABLES, ...POE1_FORBIDDEN_ASCENDANCY_NOTABLES]) {
+      if (!nodes[bn.id]) {
+        nodes[bn.id] = {
+          id: bn.id,
+          name: { en: bn.en, zh: bn.en },
+          kind: 'notable',
+          x: -99999,
+          y: -99999,
+          stats: [...bn.stats],
+          adjacent: [],
+        };
+      }
+    }
+  } else if (payload.game === 'poe2' && payload.version === '0_5') {
+    for (const dn of POE2_DISTILLED_ANOINT_NOTABLES) {
+      if (!nodes[dn.id]) {
+        nodes[dn.id] = {
+          id: dn.id,
+          name: { en: dn.en, zh: dn.en },
+          kind: 'notable',
+          x: -99999,
+          y: -99999,
+          stats: [...dn.stats],
+          adjacent: [],
+        };
+      }
+    }
   }
 
   const tree: PassiveTreeData = {
@@ -527,6 +646,251 @@ function hydrateSkillParts(
   });
 }
 
+interface UpstreamMultiplierTagPatch {
+  varName: string;
+  limitTotal?: boolean;
+  divToPerStat?: number;
+}
+
+/**
+ * Restores upstream PoB1/PoB2 `Multiplier` tag metadata (`limitTotal = true`, `div = N`) that was
+ * omitted when compact `poe1-gems.json` / `poe2-gems.json` payloads were exported.
+ */
+const UPSTREAM_MULTIPLIER_TAG_PATCHES: Readonly<
+  Record<GameId, Readonly<Record<string, readonly UpstreamMultiplierTagPatch[]>>>
+> = {
+  poe1: {
+    poe1_supportfocusedchannelling: [{ varName: 'ChannellingTime', limitTotal: true }],
+    poe1_supportexemplar: [{ varName: 'CritRecently', limitTotal: true }],
+    poe1_supportinvention: [{ varName: 'PlacedDuration', limitTotal: true }],
+    poe1_lightningconduit: [{ varName: 'ShockEffect', divToPerStat: 5 }],
+    poe1_galvanicfield: [{ varName: 'ShockEffect', divToPerStat: 5 }],
+    poe1_frostblinkaltx: [{ varName: 'ChillEffect', divToPerStat: 5 }],
+    poe1_supportbloodsoakedbanner: [{ varName: 'ValourStacks', divToPerStat: 8 }],
+    poe1_chainhook: [{ varName: 'Rage', divToPerStat: 5 }],
+    poe1_chainhookalty: [{ varName: 'Rage', divToPerStat: 5 }],
+    poe1_cleavealtx: [{ varName: 'Rage', divToPerStat: 5 }],
+  },
+  poe2: {
+    poe2_incisionsupport: [{ varName: 'IncisionConsumedRecently', limitTotal: true }],
+    poe2_lightningconduit: [{ varName: 'ShockEffect', divToPerStat: 5 }],
+  },
+};
+
+function patchCompiledModsWithUpstreamTags(
+  mods: CompiledGemMod[] | undefined,
+  patches: readonly UpstreamMultiplierTagPatch[] | undefined,
+): CompiledGemMod[] | undefined {
+  if (!mods || !patches || patches.length === 0) return mods;
+  return mods.map((m) => {
+    if (!m.tags || m.tags.length === 0) return m;
+    let changed = false;
+    const nextTags = m.tags.map((tag) => {
+      if (tag.type !== 'Multiplier') return tag;
+      const patch = patches.find((p) => p.varName === tag.var);
+      if (!patch) return tag;
+      if (patch.divToPerStat !== undefined) {
+        changed = true;
+        return {
+          type: 'PerStat' as const,
+          stat: tag.var,
+          div: patch.divToPerStat,
+          ...(tag.limit !== undefined ? { limit: tag.limit } : {}),
+        };
+      }
+      if (patch.limitTotal && tag.limit !== undefined) {
+        const cur = tag as { limitTotal?: boolean };
+        if (!cur.limitTotal) {
+          changed = true;
+          return { ...tag, limitTotal: true } as ModTag;
+        }
+      }
+      return tag;
+    });
+    return changed ? { ...m, tags: nextTags } : m;
+  });
+}
+
+function applyUpstreamTagPatchesToGem(
+  game: GameId,
+  gemId: string,
+  compiledMods: CompiledGemMod[] | undefined,
+  levelScaling: GemDefinition['levelScaling'] | undefined,
+  parts: SkillPartDefinition[] | undefined,
+): {
+  compiledMods: CompiledGemMod[] | undefined;
+  levelScaling: GemDefinition['levelScaling'] | undefined;
+  parts: SkillPartDefinition[] | undefined;
+} {
+  const patches = UPSTREAM_MULTIPLIER_TAG_PATCHES[game][gemId];
+  if (!patches || patches.length === 0) {
+    return { compiledMods, levelScaling, parts };
+  }
+  const patchedCompiled = patchCompiledModsWithUpstreamTags(compiledMods, patches);
+  let patchedLs = levelScaling;
+  if (levelScaling) {
+    patchedLs = {};
+    for (const [lv, snap] of Object.entries(levelScaling)) {
+      const lvNum = Number(lv);
+      patchedLs[lvNum] = snap.compiledMods
+        ? { ...snap, compiledMods: patchCompiledModsWithUpstreamTags(snap.compiledMods, patches) }
+        : snap;
+    }
+  }
+  let patchedParts = parts;
+  if (parts) {
+    patchedParts = parts.map((p) => {
+      let nextLevels = p.levels;
+      if (p.levels) {
+        nextLevels = {};
+        for (const [lv, snap] of Object.entries(p.levels)) {
+          const lvNum = Number(lv);
+          nextLevels[lvNum] = snap.compiledMods
+            ? { ...snap, compiledMods: patchCompiledModsWithUpstreamTags(snap.compiledMods, patches) }
+            : snap;
+        }
+      }
+      return {
+        ...p,
+        ...(p.compiledMods ? { compiledMods: patchCompiledModsWithUpstreamTags(p.compiledMods, patches) } : {}),
+        ...(nextLevels ? { levels: nextLevels } : {}),
+      };
+    });
+  }
+  return { compiledMods: patchedCompiled, levelScaling: patchedLs, parts: patchedParts };
+}
+
+const UPSTREAM_MISSING_SKILL_COMPILED_MODS: Readonly<
+  Record<GameId, Readonly<Record<string, readonly CompiledGemMod[]>>>
+> = {
+  poe1: {
+    // Upstream PoB1 3.30 Data/Skills/act_str.lua & act_int.lua:
+    // active_skill_additive_spell_damage_modifiers_apply_to_attack_damage_at_%_value
+    poe1_heavystrikealty: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 150, flags: 0, keywordFlags: 0 }],
+    poe1_kineticblastaltx: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 150, flags: 0, keywordFlags: 0 }],
+    poe1_kineticbolt: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 200, flags: 0, keywordFlags: 0 }],
+    poe1_kineticfusillade: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 150, flags: 0, keywordFlags: 0 }],
+    poe1_kineticfusilladealtx: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 150, flags: 0, keywordFlags: 0 }],
+    poe1_kineticrain: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 200, flags: 0, keywordFlags: 0 }],
+    poe1_kineticrainaltx: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 200, flags: 0, keywordFlags: 0 }],
+    poe1_kineticrainkineticinstability: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 200, flags: 0, keywordFlags: 0 }],
+    poe1_powersiphon: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 150, flags: 0, keywordFlags: 0 }],
+    poe1_powersiphonaltx: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 150, flags: 0, keywordFlags: 0 }],
+    poe1_vaalpowersiphonaltx: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 150, flags: 0, keywordFlags: 0 }],
+    poe1_somaticshell: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 150, flags: 0, keywordFlags: 0 }],
+  },
+  poe2: {},
+};
+
+const UPSTREAM_SKILL_DATA_OVERRIDES: Readonly<
+  Record<GameId, Readonly<Record<string, Readonly<Record<string, number>>>>>
+> = {
+  poe1: {
+    // Upstream PoB1 3.30 Data/Skills/act_int.lua: lightning_tendrils_channelled_larger_pulse_interval = 3
+    poe1_lightningtendrils: { pulseInterval: 3 },
+  },
+  poe2: {},
+};
+
+const UPSTREAM_MISSING_QUALITY_COMPILED_MODS: Readonly<
+  Record<GameId, Readonly<Record<string, readonly CompiledGemMod[]>>>
+> = {
+  poe1: {
+    // Upstream PoB1 3.30 Data/Skills/act_str.lua: active_skill_hit_ailment_damage_with_projectile_+%_final = 0.5/qual
+    poe1_moltenstrike: [
+      {
+        name: 'Damage',
+        type: 'MORE',
+        value: 0.5,
+        flags: ModFlag.Projectile | ModFlag.Hit | ModFlag.Ailment,
+        keywordFlags: 0,
+      },
+    ],
+    poe1_vaalmoltenstrike: [
+      {
+        name: 'Damage',
+        type: 'MORE',
+        value: 0.5,
+        flags: ModFlag.Projectile | ModFlag.Hit | ModFlag.Ailment,
+        keywordFlags: 0,
+      },
+    ],
+    // Upstream PoB1 3.30 Data/Skills/sup_str.lua: cruelty_effect_+% = 0.25/qual
+    poe1_supportcruelty: [
+      {
+        name: 'CrueltyEffect',
+        type: 'INC',
+        value: 0.25,
+        flags: 0,
+        keywordFlags: 0,
+      },
+    ],
+    // Upstream PoB1 3.30 Data/Skills/act_dex.lua: Windburst 0.5% increased Projectile Damage per quality
+    poe1_windburst: [
+      {
+        name: 'Damage',
+        type: 'INC',
+        value: 0.5,
+        flags: ModFlag.Projectile,
+        keywordFlags: 0,
+      },
+    ],
+    // Upstream PoB1 3.30 Data/Skills/act_int.lua: Bane display_linked_curse_effect_+% = 1/qual
+    poe1_bane: [
+      {
+        name: 'CurseEffect',
+        type: 'INC',
+        value: 1,
+        flags: 0,
+        keywordFlags: 0,
+      },
+    ],
+    // Upstream PoB1 3.30 Data/Skills/sup_str.lua: Maim Support maim_effect_+% = 1/qual
+    poe1_supportmaim: [
+      {
+        name: 'MaimEffect',
+        type: 'INC',
+        value: 1,
+        flags: 0,
+        keywordFlags: 0,
+      },
+    ],
+  },
+  poe2: {
+    // Upstream PoB2 0.5 Data/Skills/act_str.lua: walking_calamity_non_skill_base_all_damage_%_to_gain_as_fire = 0.5/qual
+    poe2_walkingcalamity: [
+      {
+        name: 'DamageGainAsFire',
+        type: 'BASE',
+        value: 0.5,
+        flags: 0,
+        keywordFlags: 0,
+      },
+    ],
+    // Upstream PoB2 0.5 Data/Skills/act_str.lua: armour_break_amount_+% = 1/qual
+    poe2_resonatingshield: [
+      {
+        name: 'ArmourBreak',
+        type: 'INC',
+        value: 1,
+        flags: 0,
+        keywordFlags: 0,
+      },
+    ],
+    // Upstream PoB2 0.5 Data/Skills/act_str.lua: active_skill_damage_+%_final_vs_fully_broken_armour = 1/qual
+    poe2_leapslam: [
+      {
+        name: 'Damage',
+        type: 'MORE',
+        value: 1,
+        flags: 0,
+        keywordFlags: 0,
+        tags: [{ type: 'Condition', var: 'EnemyArmourBroken' }],
+      },
+    ],
+  },
+};
+
 function hydrateQualityStats(
   qs?: Array<{ t: string; q: number }> | Record<string, never>,
 ): GemDefinition['qualityStats'] | undefined {
@@ -606,13 +970,46 @@ function synthesizeGemDefinition(
   const requireSkillTypes = hydrateStringList(entry.reqTypes);
   const addSkillTypes = hydrateStringList(entry.addTypes);
   const excludeSkillTypes = hydrateStringList(entry.excTypes);
-  const compiledMods = hydrateCompiledMods(entry.cmods);
-  const qualityCompiledMods = hydrateCompiledMods(entry.qmods);
-  const skillData = hydrateSkillData(entry.sdata);
-  const minionBase = hydrateMinionBase(entry.mb);
+  const rawCompiledMods = hydrateCompiledMods(entry.cmods);
+  const extraSkillMods = UPSTREAM_MISSING_SKILL_COMPILED_MODS[game][entry.id];
+  const compiledMods = (() => {
+    if (!extraSkillMods || extraSkillMods.length === 0) return rawCompiledMods;
+    const merged = rawCompiledMods ? [...rawCompiledMods] : [];
+    for (const em of extraSkillMods) {
+      if (!merged.some((m) => m.name === em.name && m.type === em.type)) {
+        merged.push({ ...em });
+      }
+    }
+    return merged.length > 0 ? merged : undefined;
+  })();
+  const rawQualityCompiledMods = hydrateCompiledMods(entry.qmods);
   const qualityStats = hydrateQualityStats(entry.qs);
-  const levelScaling = hydrateLevelScaling(entry.ls);
-  const parts = hydrateSkillParts(entry.parts);
+  const fallbackQualityMods =
+    (!rawQualityCompiledMods || rawQualityCompiledMods.length === 0) &&
+    (!qualityStats || qualityStats.length === 0)
+      ? UPSTREAM_MISSING_QUALITY_COMPILED_MODS[game][entry.id]
+      : undefined;
+  const qualityCompiledMods =
+    rawQualityCompiledMods ??
+    (fallbackQualityMods ? fallbackQualityMods.map((m) => ({ ...m })) : undefined);
+  const rawSkillData = hydrateSkillData(entry.sdata);
+  const extraSkillData = UPSTREAM_SKILL_DATA_OVERRIDES[game][entry.id];
+  const skillData = (() => {
+    if (!extraSkillData) return rawSkillData;
+    const merged: Record<string, number> = rawSkillData ? { ...rawSkillData } : {};
+    for (const [k, v] of Object.entries(extraSkillData)) {
+      if (merged[k] === undefined) merged[k] = v;
+    }
+    return Object.keys(merged).length > 0 ? merged : undefined;
+  })();
+  const minionBase = hydrateMinionBase(entry.mb);
+  const rawLevelScaling = hydrateLevelScaling(entry.ls);
+  const rawParts = hydrateSkillParts(entry.parts);
+  const {
+    compiledMods: patchedCompiledMods,
+    levelScaling,
+    parts,
+  } = applyUpstreamTagPatchesToGem(game, entry.id, compiledMods, rawLevelScaling, rawParts);
 
   const structuredFields = {
     ...(altIds ? { altIds } : {}),
@@ -621,7 +1018,7 @@ function synthesizeGemDefinition(
     ...(requireSkillTypes ? { requireSkillTypes } : {}),
     ...(addSkillTypes ? { addSkillTypes } : {}),
     ...(excludeSkillTypes ? { excludeSkillTypes } : {}),
-    ...(compiledMods ? { compiledMods } : {}),
+    ...(patchedCompiledMods ? { compiledMods: patchedCompiledMods } : {}),
     ...(qualityCompiledMods ? { qualityCompiledMods } : {}),
     ...(skillData ? { skillData } : {}),
     ...(minionBase ? { minionBase } : {}),

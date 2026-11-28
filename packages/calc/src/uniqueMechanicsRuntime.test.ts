@@ -197,6 +197,50 @@ describe('uniqueMechanicsRuntime — 1. PoE 2 Ingenuity Utility Belt', () => {
     expect(db.sum('BASE', 'Mana')).toBe(40);
     expect(db.sum('BASE', 'LightningResist')).toBe(32);
   });
+
+  it('consumes non-item Ring1Effect / Ring2Effect INC from ModDB without double-counting Belt Ingenuity sources', () => {
+    const db = new ModDB();
+    const belt = makeItem({
+      id: 'belt',
+      name: 'Ingenuity',
+      baseName: 'Utility Belt',
+      explicits: ['20% increased bonuses gained from left Equipped Ring'],
+    });
+    const leftRing = makeItem({
+      id: 'ring1',
+      name: 'Sapphire Ring',
+      baseName: 'Sapphire Ring',
+      explicits: ['+100 to maximum Life'],
+    });
+    const rightRing = makeItem({
+      id: 'ring2',
+      name: 'Topaz Ring',
+      baseName: 'Topaz Ring',
+      explicits: ['+100 to maximum Mana'],
+    });
+
+    db.addMods(parseModLines(leftRing.explicits, 'Item (Ring 1)'));
+    db.addMods(parseModLines(rightRing.explicits, 'Item (Ring 2)'));
+    // Simulate Ingenuity belt already parsed into db as Ring1Effect (+20) + a separate Passive node (+10 Ring1Effect, +25 Ring2Effect)
+    db.addMod({ name: 'Ring1Effect', type: 'INC', value: 20, flags: 0, keywordFlags: 0, source: 'Belt: Ingenuity' });
+    db.addMod({ name: 'Ring1Effect', type: 'INC', value: 10, flags: 0, keywordFlags: 0, source: 'Passive: Ring Mastery' });
+    db.addMod({ name: 'Ring2Effect', type: 'INC', value: 25, flags: 0, keywordFlags: 0, source: 'Passive: Ring Mastery' });
+
+    const res = evaluateIngenuityAndRingBonuses(
+      [
+        { slot: 'Belt', item: belt },
+        { slot: 'Ring 1', item: leftRing },
+        { slot: 'Ring 2', item: rightRing },
+      ],
+      db,
+    );
+
+    // Belt +20% + Passive +10% = +30% (NOT double-counted to +50%!)
+    expect(res.leftRingBonusPct).toBe(30);
+    expect(res.rightRingBonusPct).toBe(25);
+    expect(db.sum('BASE', 'Life')).toBe(130);
+    expect(db.sum('BASE', 'Mana')).toBe(125);
+  });
 });
 
 describe('uniqueMechanicsRuntime — 2. Morior Invictus & Per-Socket Modifiers', () => {
@@ -1514,5 +1558,94 @@ describe('uniqueMechanicsRuntime — 5. Pool-Conversion Keystones & Faithguard',
     // The Taming (40 * 2 = 80) + Kalandra's Touch reflection (80) = 160 Elemental Damage INC with Hits & Ailments
     expect(postDb.sum('INC', 'ElementalDamage', ModFlag.Hit)).toBe(160);
     expect(postDb.sum('INC', 'ElementalDamage', ModFlag.Ailment)).toBe(160);
+  });
+
+  it('evaluates Legacy of Fury Nearby Enemies are Scorched with Scorch Effect scaling, 30% cap, and dedupe', () => {
+    const db = new ModDB();
+    const legacyOfFury = makeItem({
+      id: 'boots-lof',
+      name: 'Legacy of Fury',
+      baseName: 'Wyrmscale Boots',
+      slotType: 'Boots',
+      explicits: [
+        'Nearby Enemies are Scorched',
+        '48% increased Effect of Scorch',
+      ],
+    });
+    evaluatePreStatBuildEnablingUniques({
+      db,
+      equippedItems: [{ slot: 'Boots', item: legacyOfFury }],
+      game: 'poe1',
+    });
+    // Base -10% Ele Res * (1 + 48/100) = -14.8 -> floor = -14%
+    expect(db.getEvalContext().conditions.EnemyScorched).toBe(true);
+    expect(db.sum('BASE', 'EnemyFireResist')).toBe(-14);
+    expect(db.sum('BASE', 'EnemyColdResist')).toBe(-14);
+    expect(db.sum('BASE', 'EnemyLightningResist')).toBe(-14);
+
+    // Dedupe: calling again when EnemyScorched is already active must not double-apply
+    evaluatePreStatBuildEnablingUniques({
+      db,
+      equippedItems: [{ slot: 'Boots', item: legacyOfFury }],
+      game: 'poe1',
+    });
+    expect(db.sum('BASE', 'EnemyFireResist')).toBe(-14);
+
+    // Cap at -30% when Scorch Effect >= 200%
+    const cappedDb = new ModDB();
+    cappedDb.addMod({
+      name: 'EnemyScorchEffect',
+      type: 'INC',
+      value: 250,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Tree',
+    });
+    evaluatePreStatBuildEnablingUniques({
+      db: cappedDb,
+      equippedItems: [{ slot: 'Boots', item: legacyOfFury }],
+      game: 'poe1',
+    });
+    expect(cappedDb.sum('BASE', 'EnemyFireResist')).toBe(-30);
+    expect(cappedDb.sum('BASE', 'EnemyColdResist')).toBe(-30);
+    expect(cappedDb.sum('BASE', 'EnemyLightningResist')).toBe(-30);
+  });
+
+  it('grants Perseverance Onslaught when only an inactive conditional Onslaught mod exists in ModDB', () => {
+    const db = new ModDB();
+    // Inactive conditional Onslaught (e.g. "Onslaught if you have Killed Recently" when KilledRecently is false)
+    db.addMod({
+      name: 'MovementSpeed',
+      type: 'INC',
+      value: 20,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Tree (Onslaught)',
+      tags: [{ type: 'Condition', var: 'KilledRecently' }],
+    });
+    const perseverance = makeItem({
+      id: 'belt-persev',
+      name: 'Perseverance',
+      baseName: 'Vanguard Belt',
+      slotType: 'Belt',
+      explicits: ['You have Onslaught while you have Fortify'],
+    });
+    evaluatePostPoolBuildEnablingUniques({
+      db,
+      equippedItems: [{ slot: 'Belt', item: perseverance }],
+      str: 100,
+      dex: 100,
+      int: 100,
+      life: 4000,
+      mana: 500,
+      energyShield: 0,
+      armour: 10000,
+      evasion: 10000,
+      fortified: true,
+    });
+    // Inactive conditional Onslaught must NOT suppress Perseverance's active Onslaught
+    expect(db.sum('INC', 'MovementSpeed')).toBe(20);
+    expect(db.sum('INC', 'Speed', ModFlag.Attack)).toBe(20);
+    expect(db.sum('INC', 'Speed', ModFlag.Spell)).toBe(20);
   });
 });

@@ -354,8 +354,8 @@ describe('multiPartAndMetaRuntime', () => {
     expect(evalRes.appliedSkills).toContain('Berserk');
     expect(evalRes.appliedSkills).toContain('Trinity');
 
-    // Wind Dancer: 3 stages * 19% = 57% more Evasion
-    expect(playerDb.more('Evasion')).toBeCloseTo(1.57, 2);
+    // Wind Dancer: 3 stages * 10% = 30% more Evasion (PoB 2 WindDancerPlayer flat 10%/stage)
+    expect(playerDb.more('Evasion')).toBeCloseTo(1.3, 2);
     // Scavenged Plating skipped because weaponSets: [2] vs activeWeaponSet: 1
     expect(playerDb.more('Armour')).toBe(1);
     // Withering Presence: 8 stacks * 5% = 40% increased Chaos Damage Taken on enemyDb
@@ -1132,5 +1132,81 @@ describe('multiPartAndMetaRuntime', () => {
     expect(compiledRes.appliedSkills).toContain('Charge Regulation');
     expect(compiledRes.playerModsAdded).toHaveLength(0);
     expect(compiledDb.sum('INC', 'Speed')).toBe(0);
+  });
+
+  it('applies PoE 2 Trinity quality Skill Speed with flags=0 so both Attack and Cast Speed benefit at >= 250 Resonance (PoB 2 act_int.lua:21851)', () => {
+    const trinityDef = makeGemDef({
+      id: 'poe2_trinity',
+      en: 'Trinity',
+      game: 'poe2',
+      tags: ['Buff', 'Persistent'],
+    });
+    const playerDb = new ModDB();
+    playerDb.setMultiplier('ResonanceCount', 270);
+    const res = evaluatePersistentBuffAndStanceSkills(
+      [makeGroup({ gems: [makeGemInst({ gemId: trinityDef.id, level: 20, quality: 20 })] })],
+      1,
+      'poe2',
+      playerDb,
+      new ModDB(),
+      (id) => (id === trinityDef.id ? trinityDef : undefined),
+    );
+    expect(res.appliedSkills).toContain('Trinity');
+    expect(playerDb.sum('INC', 'Speed', ModFlag.Attack)).toBe(15);
+    expect(playerDb.sum('INC', 'Speed', ModFlag.Cast)).toBe(15);
+  });
+
+  it('honors configured SandStance on PoE 1 Flesh and Stone / Blood and Sand and uses MORE PhysicalDamageTaken (ModFlag.Hit) in Blood Stance (PoB 1 act_str.lua:4440-4498)', () => {
+    const fnsDef = makeGemDef({
+      id: 'poe1_fleshandstone',
+      en: 'Flesh and Stone',
+      game: 'poe1',
+      tags: ['Spell', 'Aura', 'Stance'],
+    });
+    const bnsDef = makeGemDef({
+      id: 'poe1_bloodandsand',
+      en: 'Blood and Sand',
+      game: 'poe1',
+      tags: ['Spell', 'Buff', 'Stance'],
+    });
+    const lookup = (id: string) => (id === fnsDef.id ? fnsDef : id === bnsDef.id ? bnsDef : undefined);
+
+    // 1. Configured SandStance (no explicit skillPart) stays in Sand Stance and does NOT apply Blood Stance PhysicalDamageTaken
+    const sandPlayerDb = new ModDB();
+    const sandEnemyDb = new ModDB();
+    sandPlayerDb.setCondition('SandStance', true);
+    const sandRes = evaluatePersistentBuffAndStanceSkills(
+      [
+        makeGroup({
+          gems: [
+            makeGemInst({ gemId: fnsDef.id, level: 20 }),
+            makeGemInst({ gemId: bnsDef.id, level: 6 }),
+          ],
+        }),
+      ],
+      1,
+      'poe1',
+      sandPlayerDb,
+      sandEnemyDb,
+      lookup,
+    );
+    expect(sandRes.activeStance).toBe('Sand');
+    expect(sandEnemyDb.more('PhysicalDamageTaken', ModFlag.Hit)).toBe(1);
+    expect(sandPlayerDb.more('DamageTaken')).toBeCloseTo(0.81, 4); // -19% less at Lv20
+
+    // 2. Blood Stance (default) emits 20% MORE PhysicalDamageTaken (ModFlag.Hit) at Lv20
+    const bloodPlayerDb = new ModDB();
+    const bloodEnemyDb = new ModDB();
+    const bloodRes = evaluatePersistentBuffAndStanceSkills(
+      [makeGroup({ gems: [makeGemInst({ gemId: fnsDef.id, level: 20 })] })],
+      1,
+      'poe1',
+      bloodPlayerDb,
+      bloodEnemyDb,
+      lookup,
+    );
+    expect(bloodRes.activeStance).toBe('Blood');
+    expect(bloodEnemyDb.more('PhysicalDamageTaken', ModFlag.Hit)).toBeCloseTo(1.2, 4);
+    expect(bloodEnemyDb.more('PhysicalDamageTaken', ModFlag.Dot)).toBe(1);
   });
 });

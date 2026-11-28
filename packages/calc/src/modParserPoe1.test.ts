@@ -561,7 +561,7 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
         name: 'Damage',
         type: 'MORE',
         value: 150,
-        tags: [{ type: 'SocketedIn' }],
+        tags: [{ type: 'SocketedIn' }, { type: 'SkillType', skillType: 'Vaal' }],
       }),
     ]);
 
@@ -1082,6 +1082,361 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
     ]);
     expect(parseModLine('Melee Hits Fortify', 'Mastery')).toEqual([
       expect.objectContaining({ name: 'MeleeHitsFortify', type: 'FLAG', value: true }),
+    ]);
+  });
+
+  it('Wave 4T: PoE 1 Bloodline notables (Unseen Hand, Toad\'s Price, Conjoined Spire, Vivid Cat, Umbral Army, Starlight, etc.)', () => {
+    expect(parseModLine('+1 Ring Slot', 'Tree: The Unseen Hand')).toEqual([
+      expect.objectContaining({ name: 'AdditionalRingSlot', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Utility Flasks are Disabled', "Tree: Toad's Price")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'UtilityFlasksDoNotApplyToPlayer', type: 'FLAG', value: true }),
+        expect.objectContaining({ name: 'DisableUtilityFlasks', type: 'FLAG', value: true }),
+      ]),
+    );
+    expect(
+      parseModLine('Skills used by Totems deal 10% more Damage per maximum number of Summoned Totems', 'Tree: Conjoined Spire'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'Damage',
+        type: 'MORE',
+        value: 10,
+        tags: [
+          { type: 'PerStat', stat: 'ActiveTotemLimit', div: 1 },
+          { type: 'SkillType', skillType: 'Totem' },
+        ],
+      }),
+    ]);
+    expect(parseModLine('50% increased Effect of your Marks while Elusive', 'Tree: The Vivid Cat')).toEqual([
+      expect.objectContaining({
+        name: 'MarkEffect',
+        type: 'INC',
+        value: 50,
+        tags: [{ type: 'Condition', var: 'Elusive' }],
+      }),
+    ]);
+    expect(
+      parseModLine('2% increased Attack and Cast Speed per Summoned Raging Spirit', 'Tree: Umbral Army'),
+    ).toEqual([
+      expect.objectContaining({ name: 'Speed', type: 'INC', value: 2, flags: ModFlag.Attack }),
+      expect.objectContaining({ name: 'Speed', type: 'INC', value: 2, flags: ModFlag.Spell }),
+    ]);
+    expect(parseModLine('15% increased Attack Damage per Raised Zombie', 'Tree: Umbral Army')).toEqual([
+      expect.objectContaining({
+        name: 'Damage',
+        type: 'INC',
+        value: 15,
+        flags: ModFlag.Attack,
+        tags: [{ type: 'PerStat', stat: 'ActiveZombieLimit', div: 1 }],
+      }),
+    ]);
+    expect(parseModLine('70% increased Ward from Equipped Armour Items', 'Tree: Enhanced Starlight')).toEqual([
+      expect.objectContaining({ name: 'Ward', type: 'INC', value: 70 }),
+    ]);
+    expect(
+      parseModLine(
+        'Spells you cast yourself gain Added Physical Damage equal to 75% of Life Cost, if Life Cost is not higher than the maximum you could spend',
+        'Tree: Cannibalised Faith',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'AddedPhysicalDamageFromLifeCostPct',
+        type: 'BASE',
+        value: 75,
+        flags: ModFlag.Spell,
+      }),
+    ]);
+    expect(
+      parseModLine('Hatred has 50% increased Aura Effect while at maximum Frenzy Charges', "Tree: The King's Might"),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'AuraEffect:Hatred',
+        type: 'INC',
+        value: 50,
+        tags: [{ type: 'Condition', var: 'AtMaximumFrenzyCharges' }],
+      }),
+    ]);
+    expect(
+      parseModLine('Unsealed Spells gain 5% more Damage each time their effects Reoccur', 'Tree: The Primal Owl'),
+    ).toEqual([expect.objectContaining({ name: 'MaxSealDamage', type: 'MORE', value: 5 })]);
+    expect(
+      parseModLine('You have Everlasting Sacrifice if at least 6 Corrupted Items are Equipped', "Tree: Corruption's Embrace"),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'CorruptionsEmbrace:EverlastingSacrifice',
+        type: 'FLAG',
+        value: true,
+        tags: [{ type: 'Condition', var: 'MultiplierThreshold:CorruptedItem:6' }],
+      }),
+    ]);
+  });
+
+  it('Wave 4U: SocketedIn slotName binding + Gladiator Determined Survivor, War of Attrition & Weapon Master', () => {
+    expect(parseModLine('Socketed Skills deal 20% more Attack Damage', 'Item (Weapon 1)')).toEqual([
+      expect.objectContaining({
+        name: 'Damage',
+        type: 'MORE',
+        value: 20,
+        flags: ModFlag.Attack,
+        tags: [{ type: 'SocketedIn', slotName: 'Weapon 1' }],
+      }),
+    ]);
+    expect(
+      parseModLine("Gain 50% Chance to Block from Equipped Shield instead of the Shield's value", 'Tree: Determined Survivor'),
+    ).toEqual([expect.objectContaining({ name: 'ShieldBlockOverride', type: 'OVERRIDE', value: 50 })]);
+    expect(parseModLine('Inherent Bonuses from Dual Wielding are doubled', 'Tree: Determined Survivor')).toEqual([
+      expect.objectContaining({ name: 'DualWieldBonusesDoubled', type: 'FLAG', value: true }),
+    ]);
+    expect(
+      parseModLine(
+        "Deal 1% more Damage with Hits and Ailments to Rare and Unique Enemies for each second they've ever been in your Presence, up to a maximum of 100%",
+        'Tree: War of Attrition',
+      ),
+    ).toHaveLength(2);
+    expect(
+      parseModLine(
+        '30% more Damage with Hits and Ailments against Enemies that are on Low Life while you are wielding an Axe',
+        'Tree: Weapon Master',
+      ),
+    ).toHaveLength(2);
+  });
+
+  it('Wave 4V: Elementalist Shaper of Storms ShockMinimum, Hits always Shock & Heart of Destruction AoE', () => {
+    expect(
+      parseModLine('Shocks from your Hits always increase Damage taken by at least 25%', 'Tree: Shaper of Storms'),
+    ).toEqual([expect.objectContaining({ name: 'ShockMinimum', type: 'BASE', value: 25 })]);
+    expect(parseModLine('Hits always Shock', 'Tree: Shaper of Storms')).toEqual([
+      expect.objectContaining({ name: 'ShockChance', type: 'BASE', value: 100 }),
+    ]);
+    expect(
+      parseModLine("60% increased Area of Effect while you don't have Convergence", 'Tree: Heart of Destruction'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'AreaOfEffect',
+        type: 'INC',
+        value: 60,
+        tags: [{ type: 'Condition', var: 'Convergence', neg: true }],
+      }),
+    ]);
+  });
+
+  it('Wave 4W: Onslaught Effect, Nearby Enemies Intimidated, Onslaught on Kill, Saboteur & Warden Bloodline', () => {
+    expect(parseModLine('100% increased Onslaught Effect', 'Item: Daresso')).toEqual([
+      expect.objectContaining({ name: 'OnslaughtEffect', type: 'INC', value: 100 }),
+    ]);
+    expect(parseModLine('Nearby Enemies are Intimidated', 'Item: Belt')).toEqual([
+      expect.objectContaining({
+        name: 'EnemyDamageTaken',
+        type: 'INC',
+        value: 10,
+        tags: [{ type: 'Condition', var: 'EnemyIntimidated', neg: true }],
+      }),
+    ]);
+    expect(parseModLine('15% chance to gain Onslaught for 4 seconds on Kill', 'Item: Boots')).toEqual([
+      expect.objectContaining({ name: 'Speed', type: 'INC', value: 20, source: 'Item: Boots' }),
+      expect.objectContaining({ name: 'MovementSpeed', type: 'INC', value: 20, source: 'Item: Boots' }),
+    ]);
+    expect(parseModLine('Hits have 30% chance to deal 50% more Area Damage', 'Tree: Bomb Specialist')).toEqual([
+      expect.objectContaining({ name: 'Damage', type: 'MORE', value: 15 }),
+    ]);
+    expect(parseModLine('30% less Damage with Triggered Spells', 'Tree: Perfect Crime')).toEqual([
+      expect.objectContaining({ name: 'Damage', type: 'MORE', value: -30 }),
+    ]);
+    expect(
+      parseModLine('Defences from Equipped Body Armour are doubled if it has no Socketed Gems', 'Tree: Oath of the Maji'),
+    ).toEqual([expect.objectContaining({ name: 'OathOfTheMajiBodyArmour', type: 'FLAG', value: true })]);
+  });
+
+  it('Wave 4X: Vaal Skills (Soul Catcher/Yaomac), Roiling Tempest, Luminary & Crit Ailment DoT Multi', () => {
+    expect(parseModLine('112% increased Damage with Vaal Skills', 'Item: Yaomac')).toEqual([
+      expect.objectContaining({
+        name: 'Damage',
+        type: 'INC',
+        value: 112,
+        tags: [{ type: 'SkillType', skillType: 'Vaal' }],
+      }),
+    ]);
+    expect(
+      parseModLine('60% increased Critical Strike Chance with Vaal Skills during effect', 'Item: Soul Catcher'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'CritChance',
+        type: 'INC',
+        value: 60,
+        tags: [{ type: 'SkillType', skillType: 'Vaal' }],
+      }),
+    ]);
+    expect(parseModLine('25% more Maximum Lightning Damage', 'Tree: Roiling Tempest')).toEqual([
+      expect.objectContaining({ name: 'LightningMaxDamage', type: 'MORE', value: 25 }),
+    ]);
+    expect(parseModLine('50% less Minimum Lightning Damage', 'Tree: Roiling Tempest')).toEqual([
+      expect.objectContaining({ name: 'LightningMinDamage', type: 'MORE', value: -50 }),
+    ]);
+    expect(parseModLine('Cannot deal non-Lightning Damage', 'Tree: Roiling Tempest')).toHaveLength(4);
+    expect(
+      parseModLine('Your Mercenary has 50% increased effect of Non-Curse Auras from Skills', 'Tree: Bestowed Knighthood'),
+    ).toEqual([expect.objectContaining({ name: 'MercenaryAuraEffect', type: 'INC', value: 50 })]);
+    expect(
+      parseModLine('+25% to Damage over Time Multiplier for Ailments from Critical Strikes', 'Tree: Dire Torment'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'DotMultiplier',
+        type: 'BASE',
+        value: 25,
+        tags: [{ type: 'Condition', var: 'Crit' }],
+      }),
+    ]);
+  });
+
+  it('Wave 4Y: Bloodline (Catarina/Farrul), Plaguebringer, Opportunistic & Armour/Evasion 4-slot Masteries', () => {
+    expect(
+      parseModLine('Minions deal 20% more Damage while they are on Low Life', 'Tree: Prolonged Servitude'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'MinionDamage',
+        type: 'MORE',
+        value: 20,
+        tags: [{ type: 'Condition', var: 'MinionLowLife' }],
+      }),
+    ]);
+    expect(
+      parseModLine('Minions deal 80% increased Damage if you have Warcried Recently', 'Tree: Primal Roar'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'MinionDamage',
+        type: 'INC',
+        value: 80,
+        tags: [{ type: 'Condition', var: 'UsedWarcryRecently' }],
+      }),
+    ]);
+    expect(parseModLine('Maximum number of Raised Spectres is 1', 'Tree: Farrul')).toEqual([
+      expect.objectContaining({ name: 'ActiveSpectreLimit', type: 'OVERRIDE', value: 1 }),
+    ]);
+    expect(
+      parseModLine(
+        '+1% to all maximum Elemental Resistances if Equipped Helmet, Body Armour, Gloves, and Boots all have Armour',
+        'Tree: Armour Mastery',
+      ),
+    ).toHaveLength(3);
+    expect(
+      parseModLine(
+        '+15% chance to Suppress Spell Damage if Equipped Helmet, Body Armour, Gloves, and Boots all have Evasion Rating',
+        'Tree: Evasion Mastery',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'SpellSuppressionChance',
+        type: 'BASE',
+        value: 15,
+        tags: [{ type: 'Condition', var: 'AllFourArmourSlotsHaveEvasion' }],
+      }),
+    ]);
+  });
+
+  it('Wave 5A: Cinderswallow Urn, Doppelganger Guise (Sane/Insane), Per-Aura/Curse Effect & High-Freq Uniques', () => {
+    expect(
+      parseModLine('Enemies Ignited by you during Effect take 7% increased Damage', 'Item: Cinderswallow Urn'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'EnemyDamageTaken',
+        type: 'INC',
+        value: 7,
+        tags: [{ type: 'Condition', var: 'EnemyIgnited' }],
+      }),
+    ]);
+    expect(
+      parseModLine('40% less Physical and Chaos Damage taken while Sane', 'Item: Doppelganger Guise'),
+    ).toEqual([
+      expect.objectContaining({ name: 'PhysicalDamageTaken', type: 'MORE', value: -40 }),
+      expect.objectContaining({ name: 'ChaosDamageTaken', type: 'MORE', value: -40 }),
+    ]);
+    expect(parseModLine('40% more Damage while Insane', 'Item: Doppelganger Guise')).toEqual([
+      expect.objectContaining({
+        name: 'Damage',
+        type: 'MORE',
+        value: 40,
+        tags: [{ type: 'Condition', var: 'Insane' }],
+      }),
+    ]);
+    expect(parseModLine('40% increased Vulnerability Curse Effect', 'Item: Helmet')).toEqual([
+      expect.objectContaining({ name: 'CurseEffect:Vulnerability', type: 'INC', value: 40 }),
+    ]);
+    expect(
+      parseModLine('Increases and Reductions to Cast Speed apply to Attack Speed', "Item: Wilma's Requital"),
+    ).toEqual([expect.objectContaining({ name: 'CastSpeedAppliesToAttackSpeed', type: 'FLAG', value: true })]);
+    expect(parseModLine('Cannot deal Critical Strikes with Attacks', 'Item: Sandstorm Visage')).toEqual([
+      expect.objectContaining({ name: 'NeverCrit', type: 'FLAG', value: true }),
+    ]);
+    expect(
+      parseModLine('Chaos Damage taken does not bypass Energy Shield during effect', 'Item: Coruscating Elixir'),
+    ).toEqual([expect.objectContaining({ name: 'ChaosDamageDoesNotBypassES', type: 'FLAG', value: true })]);
+  });
+
+  it('Wave 5B: Pathfinder Master Distiller (Diamond/Bismuth/Amethyst Flask Charges consumed)', () => {
+    expect(
+      parseModLine('If Diamond Flask Charges are consumed, 250% increased Critical Strike Chance', 'Tree: Master Distiller'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'CritChance',
+        type: 'INC',
+        value: 250,
+        tags: [
+          { type: 'SkillType', skillType: 'Triggered', neg: true },
+          { type: 'SkillType', skillType: 'Channel', neg: true },
+          { type: 'Condition', var: 'HaveDiamondFlask' },
+        ],
+      }),
+    ]);
+    expect(
+      parseModLine('If Diamond Flask Charges are consumed, +100% to Critical Strike Multiplier', 'Tree: Master Distiller'),
+    ).toEqual([
+      expect.objectContaining({ name: 'CritMultiplier', type: 'BASE', value: 100 }),
+    ]);
+    expect(
+      parseModLine('If Bismuth Flask Charges are consumed, Penetrate 30% Elemental Resistances', 'Tree: Master Distiller'),
+    ).toEqual([
+      expect.objectContaining({ name: 'ElementalPenetration', type: 'BASE', value: 30 }),
+    ]);
+    expect(
+      parseModLine('If Amethyst Flask Charges are consumed, 47% of Physical Damage as Extra Chaos Damage', 'Tree: Master Distiller'),
+    ).toEqual([
+      expect.objectContaining({ name: 'PhysicalDamageGainAsChaos', type: 'BASE', value: 47 }),
+    ]);
+  });
+
+  it('Wave 5C: Saboteur Demolitions Specialist (MineAuraEffect), Calculated Risk (DamageIsUnlucky), Pyromaniac & Eternal Struggle', () => {
+    expect(parseModLine('150% increased Effect of Auras from Mines', 'Tree: Demolitions Specialist')).toEqual([
+      expect.objectContaining({ name: 'MineAuraEffect', type: 'INC', value: 150 }),
+    ]);
+    expect(parseModLine('Damage with Hits is Unlucky', 'Tree: Calculated Risk')).toEqual([
+      expect.objectContaining({ name: 'DamageIsUnlucky', type: 'FLAG', value: true }),
+    ]);
+    expect(
+      parseModLine(
+        'Regenerate 2% of Life per second for each Mine Detonated Recently, up to 10% per second',
+        'Tree: Pyromaniac',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'LifeRegenPercent',
+        type: 'BASE',
+        value: 2,
+        tags: [{ type: 'Multiplier', var: 'MinesDetonatedRecently', limit: 5 }],
+      }),
+    ]);
+    expect(
+      parseModLine(
+        'Kill Enemies that have 15% or lower Life on Hit if The Searing Exarch is dominant',
+        'Item: The Eternal Struggle',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'CullPercent',
+        type: 'MAX',
+        value: 15,
+        tags: [{ type: 'Condition', var: 'SearingExarchDominant' }],
+      }),
     ]);
   });
 });

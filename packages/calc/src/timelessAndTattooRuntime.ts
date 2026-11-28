@@ -979,9 +979,10 @@ export function parseTimelessJewel(
 
 function isAttributeTravelSmallNode(node: PassiveNode): boolean {
   if (node.kind !== 'small' || node.ascendancyId) return false;
+  if (node.name.en.trim().toLowerCase() === 'attribute') return true;
   if (node.stats.length !== 1) return false;
   const line = stripPobTags(node.stats[0]!);
-  return /^\+10 to (?:Strength|Dexterity|Intelligence)$/i.test(line);
+  return /^\+(?:5|10) to (?:Strength|Dexterity|Intelligence|any Attribute)$/i.test(line);
 }
 
 /**
@@ -1041,6 +1042,13 @@ function evaluateDevotionLine(
   );
   if (mAuraSelf) {
     outMods.push(mkMod('AuraEffectOnSelf', 'INC', Number(mAuraSelf[1]), source));
+    return;
+  }
+  const mMinionSpeed = scaledLine.match(
+    /^(\d+)% increased Minion Attack and Cast Speed$/i,
+  );
+  if (mMinionSpeed) {
+    outMods.push(mkMod('MinionSpeed', 'INC', Number(mMinionSpeed[1]), source));
     return;
   }
 
@@ -1278,6 +1286,27 @@ export function evaluateTimelessJewels(
       }
 
       totalDevotion += jewelDevotion;
+      // Evaluate Militant Faith notable Devotion-threshold conditions
+      // (e.g. "Gain 5% of Maximum Mana as Extra Maximum Energy Shield while you have at least 150 Devotion",
+      // "+1% to all maximum Resistances if you have at least 150 Devotion",
+      // "15% of Physical Damage Converted to Fire/Cold/Lightning Damage while you have at least 150 Devotion").
+      if (lutLines.length > 0) {
+        const resolvedLutLines: string[] = [];
+        for (const rawLut of lutLines) {
+          const mThreshold = stripPobTags(rawLut).match(
+            /^(.+?)\s+(?:while|if)\s+you\s+have\s+at\s+least\s+(\d+)\s+Devotion$/i,
+          );
+          if (mThreshold) {
+            if (jewelDevotion >= Number(mThreshold[2])) {
+              resolvedLutLines.push(mThreshold[1]!.trim());
+            }
+          } else {
+            resolvedLutLines.push(rawLut);
+          }
+        }
+        lutLines.length = 0;
+        lutLines.push(...resolvedLutLines);
+      }
       if (jewelDevotion > 0) {
         addedMods.push(mkMod('Devotion', 'BASE', jewelDevotion, jewelSrc));
         const devotionStatLines: string[] = [];
@@ -1309,6 +1338,32 @@ export function evaluateTimelessJewels(
             lines: [`${bonusWardInc}% increased Ward`],
           });
         }
+      }
+      if (lutLookup?.lookupNode) {
+        for (const node of [...smalls, ...notables]) {
+          const hit = lutLookup.lookupNode(parsed.jewelType, parsed.seed, node.id);
+          if (hit) {
+            lutHits++;
+            if (hit.mode === 'replace') suppressedNodeIds.add(node.id);
+            lutLines.push(...hit.stats);
+          }
+        }
+      }
+    } else if (parsed.jewelType === 'Undying Hate') {
+      // Official PoB 2 `Classes/PassiveSpec.lua:1779-1786` (`conqueredBy.conqueror.type == "abyss"`):
+      // - Attribute travel small nodes keep their attribute and gain `+3 to Tribute`.
+      // - Non-attribute small passives in radius are replaced (`abyss_small_tribute`: `+5 to Tribute`).
+      let jewelTribute = 0;
+      for (const s of smalls) {
+        if (isAttributeTravelSmallNode(s)) {
+          jewelTribute += 3;
+        } else {
+          suppressedNodeIds.add(s.id);
+          jewelTribute += 5;
+        }
+      }
+      if (jewelTribute > 0) {
+        addedMods.push(mkMod('Tribute', 'BASE', jewelTribute, jewelSrc));
       }
       if (lutLookup?.lookupNode) {
         for (const node of [...smalls, ...notables]) {
@@ -1434,7 +1489,7 @@ function extractTattooTribe(name?: string): string | null {
 }
 
 function isPerAllocatedTattooLine(line: string): boolean {
-  return /\bper\s+Allocated\s+(?:[A-Za-z]+\s+)?Tattoo$/i.test(line);
+  return /\bper\s+Allocated\s+(?:(?:[A-Za-z]+\s+)?Tattoo|Journey\s+Tattoo\s+of\s+.+)$/i.test(line);
 }
 
 /**
@@ -1543,8 +1598,18 @@ export function evaluateTattoosAndRunegrafts(
     }
   }
 
-  // 3. Journey Tattoos (`per Allocated <Tribe> Tattoo` / `per Allocated Tattoo`)
+  // 3. Journey Tattoos (`per Allocated Journey Tattoo of <Name>` / `per Allocated <Tribe> Tattoo` / `per Allocated Tattoo`)
   //    & Runegrafts (`Runegraft of the Fortress`, `Treachery`, `Gemcraft`, etc.)
+  const byJourneyName: Record<string, number> = {};
+  for (const nodeId of activeTreeNodes) {
+    const ov = nodeOverrides[nodeId];
+    if (!ov?.name) continue;
+    const normName = ov.name.trim().toLowerCase();
+    if (normName.startsWith('journey tattoo of ')) {
+      byJourneyName[normName] = (byJourneyName[normName] ?? 0) + 1;
+    }
+  }
+
   for (const nodeId of activeTreeNodes) {
     const override = nodeOverrides[nodeId];
     if (!override) continue;
@@ -1555,7 +1620,26 @@ export function evaluateTattoosAndRunegrafts(
       const line = stripPobTags(rawLine);
       if (!line) continue;
 
-      // 3a. Journey Tattoo `per Allocated (<Tribe> )?Tattoo` lines
+      // 3a. Journey Tattoo `per Allocated Journey Tattoo of <X>` and `per Allocated (<Tribe> )?Tattoo` lines
+      const mNamedJourney = line.match(
+        /^(.+?)\s+per\s+Allocated\s+(Journey\s+Tattoo\s+of\s+.+)$/i,
+      );
+      if (mNamedJourney) {
+        const baseClause = mNamedJourney[1]!.trim();
+        const targetName = mNamedJourney[2]!.trim();
+        const count = byJourneyName[targetName.toLowerCase()] ?? 0;
+        if (count > 0) {
+          const wtBoostPct = warriorsTaleBoostPctByNode.get(nodeId)?.pct ?? 0;
+          const totalScale = count * (1 + wtBoostPct / 100);
+          const expanded = scaleStatLineNumeric(baseClause, totalScale);
+          addedStatLines.push({
+            source: `${src} (${count} ${targetName})`,
+            lines: [expanded],
+          });
+        }
+        continue;
+      }
+
       const mJourney = line.match(
         /^(.+?)\s+per\s+Allocated\s+(?:([A-Za-z]+)\s+)?Tattoo$/i,
       );
@@ -1665,12 +1749,36 @@ export function evaluateTattoosAndRunegrafts(
           addedMods.push(mkMod('BuffExpireRate', 'INC', -Number(mBuffExpire[1]), src));
           continue;
         }
-        // Runegraft of the Sinistral: "10% more Attack speed with Offhand" (PoB 1 Speed MORE 10, ModFlag.Attack)
+        // Runegraft of Stability: "Your Lucky or Unlucky effects are instead Unexciting" (PoB 1 ModParser.lua:4175)
+        if (/^Your Lucky or Unlucky effects are instead Unexciting$/i.test(line)) {
+          addedMods.push(mkMod('Unexciting', 'FLAG', true, src));
+          continue;
+        }
+        // Runegraft of the Sinistral: "10% more Attack speed with Offhand" (PoB 1 Speed MORE 10, ModFlag.Attack, OffHandAttack)
         const mOffhandSpeed = line.match(/^(\d+)% more Attack speed with Offhand$/i);
         if (mOffhandSpeed) {
           const alreadyNative = skipNative && parseModLines([line], src).length > 0;
           if (!alreadyNative) {
-            addedMods.push(mkMod('Speed', 'MORE', Number(mOffhandSpeed[1]), src, ModFlag.Attack));
+            addedMods.push({
+              ...mkMod('Speed', 'MORE', Number(mOffhandSpeed[1]), src, ModFlag.Attack),
+              tags: [{ type: 'Condition', var: 'OffHandAttack' }],
+            });
+          }
+          continue;
+        }
+        // Runegraft of Refraction: "Skills Chain +1 times" / "Projectiles Fork"
+        const mChain = line.match(/^Skills Chain \+(\d+) times?$/i);
+        if (mChain) {
+          const alreadyNative = skipNative && parseModLines([line], src).length > 0;
+          if (!alreadyNative) {
+            addedMods.push(mkMod('ChainCountMax', 'BASE', Number(mChain[1]), src));
+          }
+          continue;
+        }
+        if (/^Projectiles Fork$/i.test(line)) {
+          const alreadyNative = skipNative && parseModLines([line], src).length > 0;
+          if (!alreadyNative) {
+            addedMods.push(mkMod('ForkCountMax', 'BASE', 1, src));
           }
           continue;
         }
@@ -2584,8 +2692,41 @@ export function evaluatePoe2UnbakedSocketedRunes(
     return POE2_RUNE_CATALOG[rawName.trim().toLowerCase()] ?? null;
   };
 
+  // Count total socketed Idols across all active equipped items for per-Idol scaling runes
+  // such as Carved Majesty ("+3 to Spirit per Idol socketed in your Equipment").
+  const isSocketedIdol = (rawRuneName: string): boolean => {
+    const lowerName = rawRuneName.trim().toLowerCase();
+    const dsEntry = dsMap?.get(lowerName);
+    if (dsEntry) {
+      return Object.values(dsEntry.slots).some((sub) => sub?.type === 'Idol');
+    }
+    return /\bidol\b/i.test(lowerName) || lowerName === 'carved majesty';
+  };
+  let totalSocketedIdols = 0;
+  for (const { item } of equippedItems) {
+    for (const rawRuneName of extractRawRuneNames(item)) {
+      if (isSocketedIdol(rawRuneName)) {
+        totalSocketedIdols += 1;
+      }
+    }
+  }
+  const SPIRIT_PER_IDOL_RE = /^\+?(\d+)\s+to\s+Spirit\s+per\s+Idol\s+socketed\s+in\s+your\s+Equipment$/i;
+  const emitSpiritPerIdolMods = (lines: readonly string[], source: string): void => {
+    if (totalSocketedIdols <= 0) return;
+    for (const rawLine of lines) {
+      const m = stripPobTags(rawLine).match(SPIRIT_PER_IDOL_RE);
+      if (m) {
+        addedMods.push(mkMod('Spirit', 'BASE', Number(m[1]) * totalSocketedIdols, source));
+      }
+    }
+  };
+
   for (const { slot, item } of equippedItems) {
     const runesFound = extractRawRuneNames(item);
+    const bakedSrc = `PoE 2 Rune (${slot}): ${item.name}`;
+    // Evaluate dynamic per-Idol mods (e.g. Carved Majesty) even when `{rune}` implicits are baked
+    emitSpiritPerIdolMods([...item.implicits, ...item.explicits], bakedSrc);
+
     if (runesFound.length === 0) continue;
 
     const slotCategory = classifyPoe2RuneSlotCategory(slot, item);
@@ -2733,6 +2874,7 @@ export function evaluatePoe2UnbakedSocketedRunes(
     }
 
     if (itemStatLines.length > 0) {
+      emitSpiritPerIdolMods(itemStatLines, src);
       addedStatLines.push({
         source: src,
         lines: itemStatLines,

@@ -1061,5 +1061,71 @@ describe('Real-World Corpus Coverage (parseModLine + parseModCompositional fallb
         keywordFlags: KeywordFlag.Bleed,
       }),
     ]);
+
+    // Wave 4T PoE 1 Bloodline Ascendancy phrases
+    expect(parseModCompositional('70% increased Ward from Equipped Armour Items', 'tree')).toEqual([
+      expect.objectContaining({
+        name: 'Ward',
+        type: 'INC',
+        value: 70,
+      }),
+    ]);
+    expect(
+      parseModCompositional('50% less Damage Taken from Damage over Time while you have Unbroken Ward', 'tree'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'DamageTakenOverTime',
+        type: 'MORE',
+        value: -50,
+        tags: [{ type: 'Condition', var: 'HaveUnbrokenWard' }],
+      }),
+    ]);
+    expect(
+      parseModCompositional('20% increased Attack Speed while at Maximum Frenzy Charges', 'tree'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'Speed',
+        type: 'INC',
+        value: 20,
+        tags: [{ type: 'Condition', var: 'AtMaxFrenzyCharges' }],
+      }),
+    ]);
+
+    // Wave 4W Scorch / Brittle / Sap ailment effect modifiers
+    expect(parseModCompositional('48% increased Effect of Scorch', 'item')).toEqual([
+      expect.objectContaining({ name: 'EnemyScorchEffect', type: 'INC', value: 48 }),
+    ]);
+    expect(parseModCompositional('30% increased Effect of Brittle you inflict', 'tree')).toEqual([
+      expect.objectContaining({ name: 'EnemyBrittleEffect', type: 'INC', value: 30 }),
+    ]);
+    expect(parseModCompositional('25% increased Effect of Sap', 'tree')).toEqual([
+      expect.objectContaining({ name: 'EnemySapEffect', type: 'INC', value: 25 }),
+    ]);
+
+    // Wave 5C conditional suffixes (not Ignited/Frozen/Shocked, Ignited an Enemy Recently, Insane/Sane)
+    expect(parseModCompositional('40% increased Armour while not Ignited, Frozen or Shocked', 'item')).toEqual([
+      expect.objectContaining({
+        name: 'Armour',
+        type: 'INC',
+        value: 40,
+        tags: [{ type: 'Condition', var: 'Ignited|Frozen|Shocked', neg: true }],
+      }),
+    ]);
+    expect(parseModCompositional("100% increased Burning Damage if you've Ignited an Enemy Recently", 'item')).toEqual([
+      expect.objectContaining({
+        name: 'IgniteDamage',
+        type: 'INC',
+        value: 100,
+        tags: [{ type: 'Condition', var: 'IgnitedEnemyRecently' }],
+      }),
+    ]);
+    expect(parseModCompositional('47% more Critical Strike Chance while Insane', 'item')).toEqual([
+      expect.objectContaining({
+        name: 'CritChance',
+        type: 'MORE',
+        value: 47,
+        tags: [{ type: 'Condition', var: 'Insane' }],
+      }),
+    ]);
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createEmptyBuild,
   getGemsForGame,
+  hydrateCompactTree,
   registerGemsData,
   resolveGemFromPobRef,
   setRegisteredGems,
@@ -1298,6 +1299,450 @@ describe('Mechanism-Layer Regression Suite — Round 2 (Upstream PoB spec/System
       expect(db.sum('INC', 'CritChance', ModFlag.Attack | ModFlag.Melee)).toBe(100);
       expect(db.sum('INC', 'DotDamage', ModFlag.Attack | ModFlag.Melee, KeywordFlag.Bleed)).toBe(90);
       expect(db.sum('INC', 'DotDamage', ModFlag.Attack | ModFlag.Bow, KeywordFlag.Bleed)).toBe(0);
+    });
+
+    it('injects verified upstream 3.30/0.5 missing qualityCompiledMods in treeLoader and maps PoE 2 SupportCoursingCurrentPlayer to Shock Conduction (Wave 4S)', () => {
+      const prevPoe1 = getGemsForGame('poe1');
+      const prevPoe2 = getGemsForGame('poe2');
+      try {
+        const poe1Hydrated = registerGemsData('poe1', {
+          game: 'poe1',
+          count: 2,
+          gems: [
+            {
+              id: 'poe1_moltenstrike',
+              en: 'Molten Strike',
+              cat: 'active',
+              color: 'red',
+              tags: ['attack', 'melee', 'projectile', 'fire', 'area'],
+              qs: {},
+            },
+            {
+              id: 'poe1_supportcruelty',
+              en: 'Cruelty',
+              cat: 'support',
+              color: 'red',
+              tags: ['support'],
+              qs: {},
+            },
+          ],
+        });
+        const ms = poe1Hydrated.find((g) => g.id === 'poe1_moltenstrike')!;
+        expect(ms.qualityCompiledMods).toEqual([
+          expect.objectContaining({
+            name: 'Damage',
+            type: 'MORE',
+            value: 0.5,
+            flags: ModFlag.Projectile | ModFlag.Hit | ModFlag.Ailment,
+          }),
+        ]);
+        const cruelty = poe1Hydrated.find((g) => g.id === 'poe1_supportcruelty')!;
+        expect(cruelty.qualityCompiledMods).toEqual([
+          expect.objectContaining({ name: 'CrueltyEffect', type: 'INC', value: 0.25 }),
+        ]);
+
+        const poe2Hydrated = registerGemsData('poe2', {
+          game: 'poe2',
+          count: 3,
+          gems: [
+            {
+              id: 'poe2_walkingcalamity',
+              en: 'Walking Calamity',
+              cat: 'active',
+              color: 'red',
+              tags: ['attack', 'fire'],
+            },
+            {
+              id: 'poe2_shockconductionsupport',
+              en: 'Shock Conduction',
+              cat: 'support',
+              color: 'blue',
+              tags: ['support', 'lightning'],
+              altIds: ['SupportShockConductionPlayer', 'SupportGemCoursingCurrent'],
+            },
+            {
+              id: 'poe2_deadlycurrentsupport',
+              en: 'Coursing Current',
+              cat: 'support',
+              color: 'blue',
+              tags: ['support', 'lightning'],
+              altIds: ['SupportDeadlyCurrentPlayer', 'SupportGemDeadlyCurrent'],
+            },
+          ],
+        });
+        const wc = poe2Hydrated.find((g) => g.id === 'poe2_walkingcalamity')!;
+        expect(wc.qualityCompiledMods).toEqual([
+          expect.objectContaining({ name: 'DamageGainAsFire', type: 'BASE', value: 0.5 }),
+        ]);
+        // Legacy SupportCoursingCurrentPlayer -> Shock Conduction (matches upstream PoB2 Gems.lua)
+        expect(
+          resolveGemFromPobRef('poe2', {
+            nameSpec: 'Coursing Current',
+            skillId: 'SupportCoursingCurrentPlayer',
+            gemId: 'Metadata/Items/Gems/SupportGemCoursingCurrent',
+          })?.id,
+        ).toBe('poe2_shockconductionsupport');
+        // Modern v0.5 SupportDeadlyCurrentPlayer -> Coursing Current (poe2_deadlycurrentsupport)
+        expect(
+          resolveGemFromPobRef('poe2', {
+            nameSpec: 'Coursing Current',
+            skillId: 'SupportDeadlyCurrentPlayer',
+            gemId: 'Metadata/Items/Gems/SupportGemDeadlyCurrent',
+          })?.id,
+        ).toBe('poe2_deadlycurrentsupport');
+      } finally {
+        setRegisteredGems('poe1', prevPoe1);
+        setRegisteredGems('poe2', prevPoe2);
+      }
+    });
+
+    it('injects PoE 2 Leap Slam Fully Broken Armour qualityCompiledMod and evaluates it via ModDB (Wave 4T)', () => {
+      const prevPoe2 = getGemsForGame('poe2');
+      try {
+        const hydrated = registerGemsData('poe2', {
+          game: 'poe2',
+          count: 1,
+          gems: [
+            {
+              id: 'poe2_leapslam',
+              en: 'Leap Slam',
+              cat: 'active',
+              color: 'red',
+              tags: ['attack', 'melee', 'area', 'slam'],
+            },
+          ],
+        });
+        const ls = hydrated.find((g) => g.id === 'poe2_leapslam')!;
+        expect(ls.qualityCompiledMods).toEqual([
+          expect.objectContaining({
+            name: 'Damage',
+            type: 'MORE',
+            value: 1,
+            tags: [{ type: 'Condition', var: 'EnemyArmourBroken' }],
+          }),
+        ]);
+        const db = new ModDB();
+        const qMod = ls.qualityCompiledMods![0]!;
+        db.addMod({
+          name: qMod.name,
+          type: qMod.type,
+          value: (qMod.value as number) * 20,
+          flags: qMod.flags,
+          keywordFlags: qMod.keywordFlags,
+          tags: qMod.tags,
+          source: 'Leap Slam Q20',
+        });
+        expect(db.more('Damage')).toBe(1);
+        db.setCondition('EnemyArmourBroken', true);
+        expect(db.more('Damage')).toBeCloseTo(1.2, 4);
+      } finally {
+        setRegisteredGems('poe2', prevPoe2);
+      }
+    });
+
+    it('injects upstream PoB1 3.30 ImprovedSpellDamageAppliesToAttacks & Lightning Tendrils pulseInterval in treeLoader (Wave 4U)', () => {
+      const prevPoe1 = getGemsForGame('poe1');
+      try {
+        const hydrated = registerGemsData('poe1', {
+          game: 'poe1',
+          count: 3,
+          gems: [
+            {
+              id: 'poe1_kineticblastaltx',
+              en: 'Kinetic Blast of Clustering',
+              cat: 'active',
+              color: 'blue',
+              tags: ['attack', 'projectile', 'area'],
+              cmods: [{ n: 'SpellDamageAppliesToAttacks', t: 'FLAG', v: true }],
+            },
+            {
+              id: 'poe1_kineticbolt',
+              en: 'Kinetic Bolt',
+              cat: 'active',
+              color: 'blue',
+              tags: ['attack', 'projectile'],
+              cmods: [{ n: 'SpellDamageAppliesToAttacks', t: 'FLAG', v: true }],
+            },
+            {
+              id: 'poe1_lightningtendrils',
+              en: 'Lightning Tendrils',
+              cat: 'active',
+              color: 'blue',
+              tags: ['spell', 'area', 'channelling', 'lightning'],
+              sdata: { CritChance: 6, DamageEffectiveness: 1.9 },
+            },
+          ],
+        });
+        const kbc = hydrated.find((g) => g.id === 'poe1_kineticblastaltx')!;
+        expect(kbc.compiledMods).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              name: 'ImprovedSpellDamageAppliesToAttacks',
+              type: 'BASE',
+              value: 150,
+            }),
+          ]),
+        );
+        const kb = hydrated.find((g) => g.id === 'poe1_kineticbolt')!;
+        expect(kb.compiledMods).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              name: 'ImprovedSpellDamageAppliesToAttacks',
+              type: 'BASE',
+              value: 200,
+            }),
+          ]),
+        );
+        const lt = hydrated.find((g) => g.id === 'poe1_lightningtendrils')!;
+        expect(lt.skillData?.pulseInterval).toBe(3);
+      } finally {
+        setRegisteredGems('poe1', prevPoe1);
+      }
+    });
+
+    it('skips {disabled} item mod lines and applies PoE 2 {corruptedRange:X} scalar in itemParser (Wave 4V)', () => {
+      const poe1Item = parseItemText(
+        [
+          'Rarity: RARE',
+          'Test Boots',
+          'Sorcerer Boots',
+          'Implicits: 2',
+          '{exarch}{disabled}Drops Scorched Ground while moving, lasting 5 seconds',
+          '{eater}10% increased Movement Speed',
+          '+80 to maximum Life',
+        ].join('\n'),
+        'poe1',
+      );
+      expect(poe1Item?.implicits).toEqual(['10% increased Movement Speed']);
+      expect(poe1Item?.explicits).toEqual(['+80 to maximum Life']);
+
+      const poe2Corrupted = parseItemText(
+        [
+          'Rarity: UNIQUE',
+          'Test Corrupted Weapon',
+          'Expert Warhammer',
+          'Implicits: 0',
+          '{corruptedRange:1.22}{range:1}(80-100)% increased Ignite Magnitude',
+          '{corruptedRange:0.78}{range:0}(60-75)% reduced Ignite Duration on Enemies',
+        ].join('\n'),
+        'poe2',
+      );
+      expect(poe2Corrupted?.explicits).toEqual([
+        '122% increased Ignite Magnitude',
+        '47% reduced Ignite Duration on Enemies',
+      ]);
+    });
+
+    it('matches upstream ModDB.lua OverrideInternal first-active, multi-name Flag/Override, and per-bucket MORE rounding in calcStat (Wave 4W)', () => {
+      const db = new ModDB();
+      // First active OVERRIDE wins (upstream ModDB.lua:239-243)
+      db.addMod({
+        name: 'WeaponBaseCritChance',
+        type: 'OVERRIDE',
+        value: 8,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'First Override',
+      });
+      db.addMod({
+        name: 'WeaponBaseCritChance',
+        type: 'OVERRIDE',
+        value: 5,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Second Override',
+      });
+      expect(db.override('WeaponBaseCritChance')).toBe(8);
+      expect(db.override(['NonExistentStat', 'WeaponBaseCritChance'])).toBe(8);
+      expect(db.calcStat('WeaponBaseCritChance').total).toBe(8);
+
+      // Multi-name flag() support (upstream ModStore.lua:190)
+      db.addMod({
+        name: 'CannotShock',
+        type: 'FLAG',
+        value: true,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Skill',
+      });
+      expect(db.flag(['CannotFreeze', 'CannotShock'])).toBe(true);
+      expect(db.flag(['CannotFreeze', 'CannotChill'])).toBe(false);
+
+      // calcStat() rounds each stat bucket MORE multiplier to 2 decimal places (upstream ModDB.lua:197)
+      db.addMod({ name: 'EnergyShield', type: 'BASE', value: 1000, flags: 0, keywordFlags: 0, source: 'Base' });
+      db.addMod({ name: 'EnergyShield', type: 'MORE', value: 15, flags: 0, keywordFlags: 0, source: 'More A' });
+      db.addMod({ name: 'EnergyShield', type: 'MORE', value: 15, flags: 0, keywordFlags: 0, source: 'More B' });
+      // 1.15 * 1.15 = 1.3225 -> rounded to 1.32 per bucket (matching ModDB.more())
+      const es = db.calcStat('EnergyShield');
+      expect(es.moreMultiplier).toBe(1.32);
+      expect(es.total).toBe(1320);
+    });
+
+    it('restores upstream limitTotal and PerStat div on compact gem cmods/levelScaling and missing Bane/Maim quality stats (Wave 4X)', () => {
+      const prevPoe1 = getGemsForGame('poe1');
+      try {
+        const hydrated = registerGemsData('poe1', {
+          game: 'poe1',
+          count: 3,
+          gems: [
+            {
+              id: 'poe1_supportfocusedchannelling',
+              en: 'Focused Channelling',
+              cat: 'support',
+              color: 'blue',
+              tags: ['support'],
+              cmods: [
+                {
+                  n: 'Damage',
+                  t: 'MORE',
+                  v: 24,
+                  tags: [{ type: 'Multiplier', var: 'ChannellingTime', limit: 60 }],
+                },
+              ],
+              ls: {
+                '20': {
+                  cmods: [
+                    {
+                      n: 'Damage',
+                      t: 'MORE',
+                      v: 24,
+                      tags: [{ type: 'Multiplier', var: 'ChannellingTime', limit: 60 }],
+                    },
+                  ],
+                },
+              },
+            },
+            {
+              id: 'poe1_lightningconduit',
+              en: 'Lightning Conduit',
+              cat: 'active',
+              color: 'blue',
+              tags: ['spell', 'lightning'],
+              cmods: [
+                {
+                  n: 'Damage',
+                  t: 'MORE',
+                  v: 20,
+                  tags: [{ type: 'Multiplier', var: 'ShockEffect' }],
+                },
+              ],
+            },
+            {
+              id: 'poe1_bane',
+              en: 'Bane',
+              cat: 'active',
+              color: 'blue',
+              tags: ['spell', 'chaos'],
+              cmods: [],
+            },
+          ],
+        });
+
+        // Focused Channelling caps total MORE damage at 60% (limitTotal: true) even at 5s channelled
+        const fc = hydrated.find((g) => g.id === 'poe1_supportfocusedchannelling')!;
+        const db = new ModDB();
+        db.setMultiplier('ChannellingTime', 5);
+        for (const cm of fc.levelScaling?.[20]?.compiledMods ?? []) {
+          db.addMod({
+            name: cm.name,
+            type: cm.type,
+            value: cm.value,
+            flags: cm.flags,
+            keywordFlags: cm.keywordFlags,
+            tags: cm.tags,
+            source: 'Focused Channelling',
+          });
+        }
+        expect(db.more('Damage')).toBeCloseTo(1.6, 4);
+
+        // Lightning Conduit scales 20% MORE per 5% ShockEffect (50% shock -> 10 * 20 = 200% MORE = 3.0x)
+        const lc = hydrated.find((g) => g.id === 'poe1_lightningconduit')!;
+        const lcDb = new ModDB();
+        lcDb.setStat('ShockEffect', 50);
+        for (const cm of lc.compiledMods ?? []) {
+          lcDb.addMod({
+            name: cm.name,
+            type: cm.type,
+            value: cm.value,
+            flags: cm.flags,
+            keywordFlags: cm.keywordFlags,
+            tags: cm.tags,
+            source: 'Lightning Conduit',
+          });
+        }
+        expect(lcDb.more('Damage')).toBeCloseTo(3.0, 4);
+
+        // Bane gets 1% CurseEffect per quality when qmods is absent
+        const bane = hydrated.find((g) => g.id === 'poe1_bane')!;
+        expect(bane.qualityCompiledMods).toEqual([
+          expect.objectContaining({ name: 'CurseEffect', type: 'INC', value: 1 }),
+        ]);
+      } finally {
+        setRegisteredGems('poe1', prevPoe1);
+      }
+    });
+
+    it('hydrates PoE 1 anoint-only (isBlighted) notables such as Force of Darkness and Tranquility into compact trees (Wave 4Y)', () => {
+      const tree = hydrateCompactTree({
+        game: 'poe1',
+        version: '3_30',
+        bounds: { minX: -1000, maxX: 1000, minY: -1000, maxY: 1000 },
+        groups: {},
+        classStartNodeIds: {},
+        nodes: [],
+      });
+      expect(tree.nodes[5574]).toMatchObject({
+        id: 5574,
+        kind: 'notable',
+        name: { en: 'Force of Darkness' },
+        stats: ['Damage Penetrates 15% Chaos Resistance'],
+      });
+      expect(tree.nodes[16246]).toMatchObject({
+        id: 16246,
+        kind: 'notable',
+        name: { en: 'Tranquility' },
+        stats: ['5% increased maximum Energy Shield'],
+      });
+      expect(tree.nodes[53759]).toMatchObject({
+        id: 53759,
+        kind: 'notable',
+        name: { en: 'Cleansed Thoughts' },
+        stats: ['Chaos Resistance is doubled'],
+      });
+      // Wave 5B: Forbidden Flesh/Flame exclusive notables
+      expect(tree.nodes[52435]).toMatchObject({
+        id: 52435,
+        kind: 'notable',
+        name: { en: 'Indomitable Resolve' },
+        stats: ['Deal 10% less Damage', 'Take 25% less Damage'],
+      });
+      expect(tree.nodes[19355]).toMatchObject({
+        id: 19355,
+        kind: 'notable',
+        name: { en: 'Unleashed Potential' },
+      });
+
+      // Wave 5B: PoE 2 distilled anoint-only notables
+      const poe2Tree = hydrateCompactTree({
+        game: 'poe2',
+        version: '0_5',
+        bounds: { minX: -1000, maxX: 1000, minY: -1000, maxY: 1000 },
+        groups: {},
+        classStartNodeIds: {},
+        nodes: [],
+      });
+      expect(poe2Tree.nodes[20686]).toMatchObject({
+        id: 20686,
+        kind: 'notable',
+        name: { en: 'Paragon' },
+        stats: ['+5% to Quality of all Skills', '+5 to all Attributes'],
+      });
+      expect(poe2Tree.nodes[27704]).toMatchObject({
+        id: 27704,
+        kind: 'notable',
+        name: { en: 'Grace of the Ancestors' },
+        stats: ['10% increased Attack Speed', 'Every Rage also grants 1% increased Evasion Rating'],
+      });
     });
   });
 });

@@ -157,20 +157,27 @@ function evalSingleConditionVar(varExpr: string, ctx?: ModEvalContext): boolean 
     return Number.isFinite(thresh) && resolveSkillDistance(ctx) < thresh;
   }
   if (!ctx) return false;
+  if (varExpr === 'EnemyFireExposure' && ctx.conditions.CanApplyFireExposure === false) return false;
+  if (varExpr === 'EnemyColdExposure' && ctx.conditions.CanApplyColdExposure === false) return false;
+  if (varExpr === 'EnemyLightningExposure' && ctx.conditions.CanApplyLightningExposure === false) {
+    return false;
+  }
   if (ctx.conditions[varExpr]) return true;
   if (varExpr.startsWith('MultiplierThreshold:')) {
     const parts = varExpr.split(':');
     const name = parts[1] ?? '';
     const thresh = Number(parts[2] ?? 0);
-    const val = ctx.multipliers[name] ?? ctx.stats[name] ?? 0;
-    return val >= thresh;
+    const upper = parts[3] === 'upper';
+    const val = resolveThresholdValue(name, ctx, false);
+    return upper ? val <= thresh : val >= thresh;
   }
   if (varExpr.startsWith('StatThreshold:')) {
     const parts = varExpr.split(':');
     const name = parts[1] ?? '';
     const thresh = Number(parts[2] ?? 0);
-    const val = ctx.stats[name] ?? ctx.multipliers[name] ?? 0;
-    return val >= thresh;
+    const upper = parts[3] === 'upper';
+    const val = resolveThresholdValue(name, ctx, true);
+    return upper ? val <= thresh : val >= thresh;
   }
   if (varExpr.startsWith('AffectedByHeraldOf')) {
     const alt = `AffectedByHeraldof${varExpr.slice('AffectedByHeraldOf'.length)}`;
@@ -180,14 +187,16 @@ function evalSingleConditionVar(varExpr: string, ctx?: ModEvalContext): boolean 
     if (ctx.conditions[alt]) return true;
   }
   if (varExpr === 'EnemyExposure') {
-    return Boolean(
-      ctx.conditions.EnemyFireExposure ||
-        ctx.conditions.EnemyColdExposure ||
-        ctx.conditions.EnemyLightningExposure ||
-        ctx.conditions.FireExposure ||
-        ctx.conditions.ColdExposure ||
-        ctx.conditions.LightningExposure,
-    );
+    const fireExp =
+      ctx.conditions.CanApplyFireExposure !== false &&
+      Boolean(ctx.conditions.EnemyFireExposure || ctx.conditions.FireExposure);
+    const coldExp =
+      ctx.conditions.CanApplyColdExposure !== false &&
+      Boolean(ctx.conditions.EnemyColdExposure || ctx.conditions.ColdExposure);
+    const lightExp =
+      ctx.conditions.CanApplyLightningExposure !== false &&
+      Boolean(ctx.conditions.EnemyLightningExposure || ctx.conditions.LightningExposure);
+    return fireExp || coldExp || lightExp;
   }
   if (varExpr === 'EnemyFireExposure') {
     if (ctx.conditions.CanApplyFireExposure === false) return false;
@@ -239,6 +248,9 @@ function evalSingleConditionVar(varExpr: string, ctx?: ModEvalContext): boolean 
     return Boolean(ctx.conditions.IsUnarmed);
   }
   if (varExpr === 'Shapeshifted') {
+    if (ctx.conditions.ShapeshiftToHuman || ctx.conditions.ShapeshiftedToHumanRecently) {
+      return false;
+    }
     return Boolean(
       ctx.conditions.ShapeshiftedToAnimalRecently || ctx.conditions.ShapeshiftToAnimal,
     );
@@ -329,6 +341,33 @@ function evalSingleConditionVar(varExpr: string, ctx?: ModEvalContext): boolean 
   if (varExpr === 'SpellCostsLife') {
     return (ctx.stats.LifeCost ?? 0) > 0;
   }
+  if (varExpr === 'CritInPast8Sec') {
+    return Boolean(ctx.conditions.CritRecently || ctx.conditions.SkillCritRecently);
+  }
+  if (varExpr === 'CritRecently') {
+    return Boolean(ctx.conditions.SkillCritRecently);
+  }
+  if (varExpr === 'EnemyBurning') {
+    return Boolean(ctx.conditions.EnemyIgnited || ctx.conditions.EnemyOnBurningGround);
+  }
+  if (varExpr === 'Burning') {
+    return Boolean(ctx.conditions.Ignited);
+  }
+  if (varExpr === 'OnConsecratedGround') {
+    return Boolean(ctx.conditions.ConsecratedGround);
+  }
+  if (varExpr === 'ConsecratedGround') {
+    return Boolean(ctx.conditions.OnConsecratedGround);
+  }
+  if (varExpr === 'EnergyShieldRechargeStartedRecently') {
+    return Boolean(ctx.conditions.EnergyShieldRechargePastTwoSec);
+  }
+  if (varExpr === 'EnergyShieldRechargePastTwoSec') {
+    return Boolean(ctx.conditions.EnergyShieldRechargeStartedRecently);
+  }
+  if (varExpr === 'HaveEnergyShield') {
+    return Boolean(ctx.conditions.FullEnergyShield);
+  }
   return false;
 }
 
@@ -364,6 +403,35 @@ function resolveMultiplierValue(varName: string, ctx?: ModEvalContext): number {
   return 0;
 }
 
+const STAT_ALIASES: Record<string, string> = {
+  Strength: 'Str',
+  Str: 'Strength',
+  Dexterity: 'Dex',
+  Dex: 'Dexterity',
+  Intelligence: 'Int',
+  Int: 'Intelligence',
+  ES: 'EnergyShield',
+  EnergyShield: 'ES',
+};
+
+function resolveThresholdValue(name: string, ctx: ModEvalContext, preferStat: boolean): number {
+  const alias = STAT_ALIASES[name];
+  if (preferStat) {
+    if (ctx.stats[name] !== undefined) return ctx.stats[name];
+    if (alias && ctx.stats[alias] !== undefined) return ctx.stats[alias];
+    if (ctx.multipliers[name] !== undefined) return ctx.multipliers[name];
+    if (alias && ctx.multipliers[alias] !== undefined) return ctx.multipliers[alias];
+    return resolveMultiplierValue(name, ctx);
+  }
+  if (ctx.multipliers[name] !== undefined) return ctx.multipliers[name];
+  if (alias && ctx.multipliers[alias] !== undefined) return ctx.multipliers[alias];
+  const resolved = resolveMultiplierValue(name, ctx);
+  if (resolved !== 0) return resolved;
+  if (ctx.stats[name] !== undefined) return ctx.stats[name];
+  if (alias && ctx.stats[alias] !== undefined) return ctx.stats[alias];
+  return 0;
+}
+
 function evalConditionVar(varExpr: string, ctx?: ModEvalContext): boolean {
   if (varExpr.includes('|')) {
     return varExpr.split('|').some((part) => evalSingleConditionVar(part.trim(), ctx));
@@ -381,11 +449,16 @@ export function evaluateModTags(mod: Mod, ctx?: ModEvalContext): ModTagEvalResul
   let offset = 0;
 
   for (const tag of tags) {
-    // Support runtime PoB-style `{ type: 'DistanceRamp', ramp: [[d, m], ...] }` tags even if
-    // not yet present in the narrow `@webpob/core` ModTag union.
+    // Support runtime PoB-style `{ type: 'DistanceRamp' | 'MultiplierThreshold' | 'StatThreshold', ... }`
+    // tags even if not yet present in the narrow `@webpob/core` ModTag union.
     const runtimeTag = tag as unknown as {
       type: string;
       ramp?: ReadonlyArray<readonly [number, number]>;
+      var?: string;
+      stat?: string;
+      threshold?: number;
+      upper?: boolean;
+      neg?: boolean;
     };
     if (runtimeTag.type === 'DistanceRamp') {
       const ramp =
@@ -398,6 +471,28 @@ export function evaluateModTags(mod: Mod, ctx?: ModEvalContext): ModTagEvalResul
       }
       scale *= factor;
       if (offset !== 0) offset *= factor;
+      continue;
+    }
+    if (runtimeTag.type === 'MultiplierThreshold') {
+      const name = runtimeTag.var ?? '';
+      const thresh = runtimeTag.threshold ?? 0;
+      const val = ctx ? resolveThresholdValue(name, ctx, false) : 0;
+      let match = runtimeTag.upper ? val <= thresh : val >= thresh;
+      if (runtimeTag.neg) match = !match;
+      if (!match) {
+        return { active: false, scale: 0 };
+      }
+      continue;
+    }
+    if (runtimeTag.type === 'StatThreshold') {
+      const name = runtimeTag.stat ?? runtimeTag.var ?? '';
+      const thresh = runtimeTag.threshold ?? 0;
+      const val = ctx ? resolveThresholdValue(name, ctx, true) : 0;
+      let match = runtimeTag.upper ? val <= thresh : val >= thresh;
+      if (runtimeTag.neg) match = !match;
+      if (!match) {
+        return { active: false, scale: 0 };
+      }
       continue;
     }
 
@@ -501,7 +596,9 @@ export function evaluateModTags(mod: Mod, ctx?: ModEvalContext): ModTagEvalResul
           tag.stat === 'ShieldArmourAndEvasion'
             ? (ctx?.stats.ShieldArmourAndEvasion ??
                 (ctx?.stats.ShieldArmour ?? 0) + (ctx?.stats.ShieldEvasion ?? 0))
-            : (ctx?.stats[tag.stat] ?? ctx?.multipliers[tag.stat] ?? 0);
+            : ctx
+              ? resolveThresholdValue(tag.stat, ctx, true)
+              : 0;
         const div = tag.div > 0 ? tag.div : 1;
         let mult = Math.floor(statVal / div + 0.0001);
         const runtimeLimit = tag as {

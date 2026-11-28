@@ -867,6 +867,22 @@ export function xmlToBuild(xml: string): Build {
           });
         }
       }
+      // PoE 1 3.28+ Imbued Support Gem on <Skill imbuedSupport="..."> (Level 1 support linked to the skill group)
+      if (game === 'poe1' && attrs.imbuedSupport && attrs.imbuedSupport !== 'nil') {
+        const imbuedId =
+          matchGemId(game, undefined, attrs.imbuedSupport, undefined, undefined) ??
+          matchGemId(game, undefined, `${attrs.imbuedSupport} Support`, undefined, undefined);
+        if (imbuedId && !gems.some((g) => g.gemId === imbuedId)) {
+          gems.push({
+            instanceId: `${prefix}_g_${groupCounter}_${gemCounter++}`,
+            gemId: imbuedId,
+            level: 1,
+            quality: 0,
+            enabled: true,
+            fromItem: true,
+          });
+        }
+      }
       if (gems.length === 0 && attrs.skillId) {
         const itemSkillMatched = matchGemId(game, undefined, attrs.label, attrs.skillId, undefined);
         if (itemSkillMatched) {
@@ -961,6 +977,10 @@ export function xmlToBuild(xml: string): Build {
         }
       }
       if (gems.length > 0) {
+        const parsedGroupCount = parsePositiveIntAttr(attrs.groupCount);
+        if (parsedGroupCount !== undefined && parsedGroupCount > 1 && gems.length === 1 && !gems[0]!.count) {
+          gems[0]!.count = parsedGroupCount;
+        }
         const weaponSets = parseSkillWeaponSets(attrs, game);
         const mainActiveRaw = Number(attrs.mainActiveSkill ?? attrs.mainActiveSkillCalcs ?? 1);
         const groupSkillPart =
@@ -971,7 +991,8 @@ export function xmlToBuild(xml: string): Build {
         const groupStageCount =
           parsePositiveIntAttr(attrs.skillStageCount) ??
           (game === 'poe2' ? parsePositiveIntAttr(attrs.skillStageCountCalcs) : undefined);
-        const groupSource = attrs.source?.trim() || undefined;
+        const groupSource =
+          attrs.source?.trim() || (attrs.mercenary === 'true' ? 'Mercenary' : undefined);
         const groupEnabled =
           attrs.enabled !== undefined ? attrs.enabled !== 'false' : attrs.active !== 'false';
         const groupId = `${prefix}_sg_${groupCounter}`;
@@ -1642,6 +1663,21 @@ export function xmlToBuild(xml: string): Build {
   ) {
     rawInputs.activeMineCount = mainMineCount;
     rawInputs.multiplierActiveMines = mainMineCount;
+  }
+
+  if (game === 'poe1') {
+    for (const fSlot of ['Flask 1', 'Flask 2', 'Flask 3', 'Flask 4', 'Flask 5'] as const) {
+      const fItemId = equipped[fSlot];
+      const fItem = fItemId ? items[fItemId] : undefined;
+      const base = fItem?.baseName?.trim().toLowerCase() ?? '';
+      if (base === 'diamond flask' && rawInputs.conditionHaveDiamondFlask === undefined) {
+        rawInputs.conditionHaveDiamondFlask = true;
+      } else if (base === 'bismuth flask' && rawInputs.conditionHaveBismuthFlask === undefined) {
+        rawInputs.conditionHaveBismuthFlask = true;
+      } else if (base === 'amethyst flask' && rawInputs.conditionHaveAmethystFlask === undefined) {
+        rawInputs.conditionHaveAmethystFlask = true;
+      }
+    }
   }
 
   if (Object.keys(rawInputs).length > 0) {

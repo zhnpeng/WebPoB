@@ -364,4 +364,49 @@ describe('localItem — resolveItemEffectiveStats', () => {
     // None of the local Harvest quality lines leak into globalImplicits
     expect(res.globalImplicits).toEqual(['+25% to Global Critical Strike Multiplier']);
   });
+
+  it('applies PoE 1 Harvest armour alternate quality enchants (disables Quality Defences scaling and expands Grants stat per N% Quality)', () => {
+    const body: Item = {
+      id: 'harvest-body',
+      name: 'Bramble Shell',
+      baseName: 'Synthetic Plate',
+      rarity: 'RARE',
+      slotType: 'Body Armour',
+      quality: 20,
+      localStatsPrecomputed: false,
+      armourStats: { armour: 500 },
+      implicits: [
+        '{crafted}Quality does not increase Defences',
+        '{crafted}Grants +1 to Strength per 2% Quality',
+      ],
+      explicits: ['100% increased Armour'],
+    };
+
+    const res = resolveItemEffectiveStats(body, 'poe1');
+    // Quality does NOT scale Armour: 500 * 2.0 * 1.0 = 1000 (NOT 1200)
+    expect(res.armourStats?.armour).toBe(1000);
+    // Grants +1 to Strength per 2% Quality at Q20 -> +10 to Strength
+    expect(res.globalImplicits).toEqual(['+10 to Strength']);
+  });
+
+  it('expands PoE 1 Harvest weapon Grants <stat> per <N>% Quality enchants into globalImplicits', () => {
+    const weapon = mkWeapon({
+      name: 'Tempest Wand',
+      baseName: 'Imbued Wand',
+      quality: 20,
+      implicits: [
+        '{crafted}Quality does not increase Physical Damage',
+        '{crafted}Grants 1% increased Elemental Damage per 2% Quality',
+        '{crafted}Grants 1% increased Accuracy per 2% Quality',
+        '{crafted}Grants 1% increased Area of Effect per 4% Quality',
+      ],
+    });
+
+    const res = resolveItemEffectiveStats(weapon, 'poe1');
+    expect(res.globalImplicits).toEqual([
+      '10% increased Elemental Damage',
+      '10% increased Accuracy',
+      '5% increased Area of Effect',
+    ]);
+  });
 });

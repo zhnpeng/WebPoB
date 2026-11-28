@@ -1219,4 +1219,285 @@ describe('PoE 2 The Adorned Sinister Sockets & Undying Hate Conquered Passives',
       '3% increased maximum Energy Shield',
     ]);
   });
+
+  it('excludes PoE 2 non-tree Sinister jewel sockets from The Adorned scaling even without Voices in active sockets (PoB 2 CalcSetup.lua:120-126)', () => {
+    // Build a >50-node PoE 2 tree so isFullTree is true
+    const nodeMap: Record<number, PassiveNode> = {
+      1: mkNode(1, 'Start', 'start', 0, 0),
+      46882: mkNode(46882, 'Jewel Socket', 'jewel', 200, 0),
+      7960: mkNode(7960, 'Jewel Socket', 'jewel', 400, 0),
+    };
+    for (let i = 100; i < 160; i++) {
+      nodeMap[i] = mkNode(i, `Small ${i}`, 'small', i * 10, 50, ['+5 to Dexterity']);
+    }
+    const tree: PassiveTreeData = {
+      game: 'poe2',
+      version: '0_5',
+      nodes: nodeMap,
+      groups: {},
+      classStartNodeIds: {},
+      bounds: { minX: 0, maxX: 2000, minY: -500, maxY: 500 },
+    };
+    const adorned = mkItem({
+      id: 'adorned',
+      name: 'The Adorned',
+      baseName: 'Diamond',
+      rarity: 'UNIQUE',
+      corrupted: true,
+      explicits: [
+        '45% increased Effect of Jewel Socket Passive Skills',
+        'containing Corrupted Rare Jewels',
+      ],
+    });
+    const normalRare = mkItem({
+      id: 'normal-rare',
+      name: 'Loath Curio',
+      baseName: 'Emerald',
+      rarity: 'RARE',
+      corrupted: true,
+      explicits: ['34% increased Critical Damage Bonus for Attack Damage'],
+    });
+    const sinisterRare = mkItem({
+      id: 'sinister-rare',
+      name: 'Apocalypse Creed',
+      baseName: 'Emerald',
+      rarity: 'RARE',
+      corrupted: true,
+      explicits: ['33% increased Critical Damage Bonus for Attack Damage'],
+    });
+    const build = mkBuild({
+      game: 'poe2',
+      tree: {
+        title: 'Main',
+        treeVersion: '0_5',
+        allocatedNodeIds: [1, 46882, 7960],
+        weaponSet1NodeIds: [],
+        weaponSet2NodeIds: [],
+        masteryEffects: {},
+        socketedJewels: {
+          46882: 'adorned',
+          7960: 'normal-rare',
+          11184: 'sinister-rare', // Sinister socket absent from base tree (no Voices present)
+        },
+      },
+      items: {
+        adorned,
+        'normal-rare': normalRare,
+        'sinister-rare': sinisterRare,
+      },
+    });
+
+    const activeSockets = resolveActiveSocketedJewels(build, tree, new Set([1, 46882, 7960]));
+    const allJewels = activeSockets.map((s) => s.jewel);
+
+    const normalScale = computeJewelEffectScale(normalRare, allJewels, 'poe2');
+    const sinisterScale = computeJewelEffectScale(sinisterRare, allJewels, 'poe2');
+
+    expect(normalScale.globalScale).toBeCloseTo(1.45, 4);
+    expect(sinisterScale.globalScale).toBe(1);
+  });
+
+  it('scales Grand Spectrum jewels by socketed count (capped at 3) across PoE 1 & PoE 2', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe2',
+      version: '0_5',
+      nodes: {
+        1: mkNode(1, 'Start', 'start', 0, 0),
+        10: mkNode(10, 'Jewel Socket', 'jewel', 200, 0),
+        20: mkNode(20, 'Jewel Socket', 'jewel', 400, 0),
+        30: mkNode(30, 'Jewel Socket', 'jewel', 600, 0),
+      },
+      groups: {},
+      classStartNodeIds: {},
+      bounds: { minX: 0, maxX: 1000, minY: -500, maxY: 500 },
+    };
+    const gs1 = mkItem({
+      id: 'gs1',
+      name: 'Grand Spectrum',
+      baseName: 'Ruby',
+      rarity: 'UNIQUE',
+      explicits: ['2% increased Maximum Life per socketed Grand Spectrum'],
+    });
+    const gs2 = mkItem({
+      id: 'gs2',
+      name: 'Grand Spectrum',
+      baseName: 'Sapphire',
+      rarity: 'UNIQUE',
+      explicits: ['2% increased Spirit per socketed Grand Spectrum'],
+    });
+    const gs3 = mkItem({
+      id: 'gs3',
+      name: 'Grand Spectrum',
+      baseName: 'Emerald',
+      rarity: 'UNIQUE',
+      explicits: ['+7% to all Elemental Resistances per socketed Grand Spectrum'],
+    });
+
+    const res = evaluateRadiusAndDistanceJewels(
+      [
+        { nodeId: 10, jewel: gs1 },
+        { nodeId: 20, jewel: gs2 },
+        { nodeId: 30, jewel: gs3 },
+      ],
+      tree,
+      new Set([1, 10, 20, 30]),
+      1,
+    );
+
+    const allLines = res.addedStatLines.flatMap((e) => e.lines);
+    expect(allLines).toContain('6% increased Maximum Life');
+    expect(allLines).toContain('6% increased Spirit');
+    expect(allLines).toContain('+21% to all Elemental Resistances');
+  });
+
+  it('transforms Life INC to Mana INC at 200% for PoE 1 Healthy Mind and Life INC to ES INC for Energy From Within (ModParser.lua:6288-6293)', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe1',
+      version: '3_28',
+      nodes: {
+        1: mkNode(1, 'Start', 'start', 0, 0),
+        10: mkNode(10, 'Jewel Socket', 'jewel', 0, 0),
+        101: mkNode(101, 'Life Node', 'small', 400, 0, ['5% increased maximum Life']),
+        102: mkNode(102, 'Notable Life', 'notable', 600, 0, ['10% increased maximum Life']),
+      },
+      groups: {},
+      classStartNodeIds: {},
+      bounds: { minX: -2000, maxX: 2000, minY: -2000, maxY: 2000 },
+    };
+    const healthyMind = mkItem({
+      id: 'hm-1',
+      name: 'Healthy Mind',
+      baseName: 'Cobalt Jewel',
+      rarity: 'UNIQUE',
+      explicits: [
+        'Radius: Large',
+        'Increases and Reductions to Life in Radius are Transformed to apply to Mana at 200% of their value',
+      ],
+    });
+
+    const res = evaluateRadiusAndDistanceJewels(
+      [{ nodeId: 10, jewel: healthyMind }],
+      tree,
+      new Set([1, 10, 101, 102]),
+      1,
+    );
+
+    const lifeDelta = res.addedMods
+      .filter((m) => m.name === 'Life' && m.type === 'INC')
+      .reduce((s, m) => s + Number(m.value), 0);
+    const manaDelta = res.addedMods
+      .filter((m) => m.name === 'Mana' && m.type === 'INC')
+      .reduce((s, m) => s + Number(m.value), 0);
+    expect(lifeDelta).toBe(-15);
+    expect(manaDelta).toBe(30);
+  });
+
+  it('honors Tattoo nodeOverrides on unallocated small passives granted by PoE 1 Unnatural Instinct', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe1',
+      version: '3_28',
+      nodes: {
+        1: mkNode(1, 'Start', 'start', 0, 0),
+        10: mkNode(10, 'Jewel Socket', 'jewel', 0, 0),
+        101: mkNode(101, 'Dexterity', 'small', 400, 0, ['+10 to Dexterity']),
+        102: mkNode(102, 'Dexterity', 'small', 500, 0, ['+10 to Dexterity']),
+      },
+      groups: {},
+      classStartNodeIds: {},
+      bounds: { minX: -2000, maxX: 2000, minY: -2000, maxY: 2000 },
+    };
+    const unnatural = mkItem({
+      id: 'ui-1',
+      name: 'Unnatural Instinct',
+      baseName: 'Viridian Jewel',
+      rarity: 'UNIQUE',
+      explicits: [
+        'Radius: Small',
+        'Allocated Small Passive Skills in Radius grant nothing',
+        'Grants all bonuses of Unallocated Small Passive Skills in Radius',
+      ],
+    });
+
+    const res = evaluateRadiusAndDistanceJewels(
+      [{ nodeId: 10, jewel: unnatural }],
+      tree,
+      new Set([1, 10]),
+      1,
+      undefined,
+      {
+        101: { name: 'Tattoo of the Ramako Sniper', stats: ['5% increased Projectile Speed'] },
+      },
+    );
+
+    const uiEntry = res.addedStatLines.find((e) => e.source.includes('Unnatural Instinct'));
+    // Node 101 grants its Tattoo stat instead of +10 to Dexterity; node 102 keeps +10 to Dexterity
+    expect(uiEntry?.lines).toEqual(['5% increased Projectile Speed', '+10 to Dexterity']);
+  });
+
+  it('resolves PoE 1 off-tree Blight-only anoints (Force of Darkness, Tranquility) and hidden Forbidden Flame/Flesh notables (Indomitable Resolve)', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe1',
+      version: '3_30',
+      nodes: {
+        1: mkNode(1, 'Start', 'start', 0, 0),
+        10: mkNode(10, 'Jewel Socket 1', 'jewel', 200, 0),
+        11: mkNode(11, 'Jewel Socket 2', 'jewel', 400, 0),
+      },
+      groups: {},
+      classStartNodeIds: {},
+      bounds: { minX: -1000, maxX: 1000, minY: -1000, maxY: 1000 },
+    };
+    const amulet = mkItem({
+      id: 'amulet-1',
+      name: 'Chaos Amulet',
+      baseName: 'Onyx Amulet',
+      slotType: 'Amulet',
+      implicits: ['Allocates Force of Darkness', 'Allocates Tranquility'],
+    });
+    const ffFlame = mkItem({
+      id: 'ff-flame',
+      name: 'Forbidden Flame',
+      baseName: 'Crimson Jewel',
+      rarity: 'UNIQUE',
+      explicits: ['Allocates Indomitable Resolve if you have the matching modifier on Forbidden Flesh'],
+    });
+    const ffFlesh = mkItem({
+      id: 'ff-flesh',
+      name: 'Forbidden Flesh',
+      baseName: 'Cobalt Jewel',
+      rarity: 'UNIQUE',
+      explicits: ['Allocates Indomitable Resolve if you have the matching modifier on Forbidden Flame'],
+    });
+    const build = mkBuild({
+      game: 'poe1',
+      name: 'OffTreeNotablesTest',
+      classId: 'marauder',
+      ascendancyId: 'juggernaut',
+      level: 95,
+      activeWeaponSet: 1,
+      tree: {
+        title: 'Default',
+        treeVersion: '3_30',
+        allocatedNodeIds: [1, 10, 11],
+        weaponSet1NodeIds: [],
+        weaponSet2NodeIds: [],
+        masteryEffects: {},
+        socketedJewels: { 10: 'ff-flame', 11: 'ff-flesh' },
+      },
+      items: { 'amulet-1': amulet, 'ff-flame': ffFlame, 'ff-flesh': ffFlesh },
+      equipped: { Amulet: 'amulet-1' },
+    });
+
+    const granted = collectAllocatedAnointNodes(build, tree, new Set([1, 10, 11]));
+    const byName = new Map(granted.map((n) => [n.name.en, n.stats]));
+    expect(byName.get('Force of Darkness')).toEqual(['Damage Penetrates 15% Chaos Resistance']);
+    expect(byName.get('Tranquility')).toEqual([
+      '5% increased maximum Energy Shield',
+      'Transfiguration of Soul',
+    ]);
+    expect(byName.get('Indomitable Resolve')).toEqual([
+      'Deal 10% less Damage',
+      'Take 25% less Damage',
+    ]);
+  });
 });

@@ -18,6 +18,7 @@ import {
   decodeClusterNodeId,
   encodeClusterNodeId,
   evaluateAllocatedClusterJewels,
+  buildClusterSubgraphAdjacency,
   evaluateAurasAndWatchersEye,
   getClusterTemplateLayout,
   parseWatchersEyeCondition,
@@ -1861,5 +1862,511 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     });
     // Must keep ONLY the single Lv.19 Sigil of Power (1.16x), NEVER 1.12 * 1.16 = 1.2992x!
     expect(db.more('Damage', ModFlag.Spell)).toBeCloseTo(1.16, 4);
+  });
+
+  it('gates PoE 2 Ice Bite I/II to Attack/Warcry groups (blocking Spell groups like Orb of Storms), deduplicates tiers across groups, and synthesizes PoE 1 Summon Spectral Tiger from tree node 35011', () => {
+    const orbOfStormsDef: GemDefinition = {
+      id: 'poe2_orbofstorms',
+      name: { en: 'Orb of Storms', zh: '风暴漩涡' },
+      category: 'active',
+      game: 'poe2',
+      color: 'blue',
+      tags: ['spell', 'lightning', 'area'],
+      modFlags: ModFlag.Spell,
+      keywordFlags: KeywordFlag.Spell | KeywordFlag.Lightning,
+      stats: [],
+    };
+    const iceShotDef: GemDefinition = {
+      id: 'poe2_iceshot',
+      name: { en: 'Ice Shot', zh: '冰霜射击' },
+      category: 'active',
+      game: 'poe2',
+      color: 'green',
+      tags: ['attack', 'projectile', 'cold'],
+      modFlags: ModFlag.Attack,
+      keywordFlags: KeywordFlag.Attack | KeywordFlag.Cold,
+      stats: [],
+    };
+    const iceBite1Def: GemDefinition = {
+      id: 'poe2_icebitesupport',
+      name: { en: 'Ice Bite I', zh: '霜咬 I' },
+      category: 'support',
+      game: 'poe2',
+      color: 'blue',
+      tags: ['cold', 'duration', 'support'],
+      modFlags: 0,
+      keywordFlags: 0,
+      stats: [],
+      compiledMods: [
+        {
+          name: 'DamageGainAsCold',
+          type: 'BASE',
+          value: 25,
+          flags: 0,
+          keywordFlags: 0,
+          target: 'player',
+          tags: [{ type: 'Condition', var: 'FrozenEnemyRecently' }],
+        },
+      ],
+    };
+    const iceBite2Def: GemDefinition = {
+      id: 'poe2_icebitesupporttwo',
+      name: { en: 'Ice Bite II', zh: '霜咬 II' },
+      category: 'support',
+      game: 'poe2',
+      color: 'blue',
+      tags: ['cold', 'duration', 'support'],
+      modFlags: 0,
+      keywordFlags: 0,
+      stats: [],
+      compiledMods: [
+        {
+          name: 'DamageGainAsCold',
+          type: 'BASE',
+          value: 30,
+          flags: 0,
+          keywordFlags: 0,
+          target: 'player',
+          tags: [{ type: 'Condition', var: 'FrozenEnemyRecently' }],
+        },
+      ],
+    };
+    const gemLookup = (_g: 'poe1' | 'poe2', id: string) =>
+      id === 'poe2_orbofstorms'
+        ? orbOfStormsDef
+        : id === 'poe2_iceshot'
+          ? iceShotDef
+          : id === 'poe2_icebitesupport'
+            ? iceBite1Def
+            : id === 'poe2_icebitesupporttwo'
+              ? iceBite2Def
+              : undefined;
+
+    // 1. Ice Bite II linked to a Spell (Orb of Storms) must NOT grant DamageGainAsCold
+    const spellDb = new ModDB();
+    spellDb.setCondition('FrozenEnemyRecently', true);
+    evaluateAurasAndWatchersEye({
+      build: mkBuild({
+        game: 'poe2',
+        skills: [
+          {
+            id: 'sg-orb',
+            label: 'Orb',
+            enabled: true,
+            gems: [
+              { instanceId: 'g1', gemId: 'poe2_orbofstorms', level: 20, quality: 0, enabled: true },
+              { instanceId: 'g2', gemId: 'poe2_icebitesupporttwo', level: 1, quality: 0, enabled: true },
+            ],
+          },
+        ],
+      }),
+      playerDb: spellDb,
+      getGemByIdFn: gemLookup,
+      maxMana: 1000,
+    });
+    expect(spellDb.sum('BASE', 'DamageGainAsCold')).toBe(0);
+
+    // 2. Ice Bite I + Ice Bite II across two SECONDARY Attack groups -> deduplicated to single Ice Bite II (30, NOT 55!)
+    const atkDb = new ModDB();
+    atkDb.setCondition('FrozenEnemyRecently', true);
+    evaluateAurasAndWatchersEye({
+      build: mkBuild({
+        game: 'poe2',
+        mainSkillGroupId: 'sg-main',
+        skills: [
+          {
+            id: 'sg-main',
+            label: 'Main',
+            enabled: true,
+            gems: [{ instanceId: 'm1', gemId: 'poe2_iceshot', level: 20, quality: 0, enabled: true }],
+          },
+          {
+            id: 'sg-atk1',
+            label: 'Attack 1',
+            enabled: true,
+            gems: [
+              { instanceId: 'a1', gemId: 'poe2_iceshot', level: 20, quality: 0, enabled: true },
+              { instanceId: 'a2', gemId: 'poe2_icebitesupport', level: 1, quality: 0, enabled: true },
+            ],
+          },
+          {
+            id: 'sg-atk2',
+            label: 'Attack 2',
+            enabled: true,
+            gems: [
+              { instanceId: 'b1', gemId: 'poe2_iceshot', level: 20, quality: 0, enabled: true },
+              { instanceId: 'b2', gemId: 'poe2_icebitesupporttwo', level: 1, quality: 0, enabled: true },
+            ],
+          },
+        ],
+      }),
+      playerDb: atkDb,
+      getGemByIdFn: gemLookup,
+      maxMana: 1000,
+    });
+    expect(atkDb.sum('BASE', 'DamageGainAsCold')).toBe(30);
+
+    // 2b. Ice Bite II on the MAIN skill group -> skipped in playerDb so engine.ts does NOT double-count it (0 in playerDb)
+    const mainIbDb = new ModDB();
+    mainIbDb.setCondition('FrozenEnemyRecently', true);
+    evaluateAurasAndWatchersEye({
+      build: mkBuild({
+        game: 'poe2',
+        mainSkillGroupId: 'sg-main',
+        skills: [
+          {
+            id: 'sg-main',
+            label: 'Main',
+            enabled: true,
+            gems: [
+              { instanceId: 'm1', gemId: 'poe2_iceshot', level: 20, quality: 0, enabled: true },
+              { instanceId: 'm2', gemId: 'poe2_icebitesupporttwo', level: 1, quality: 0, enabled: true },
+            ],
+          },
+        ],
+      }),
+      playerDb: mainIbDb,
+      getGemByIdFn: gemLookup,
+      maxMana: 1000,
+    });
+    expect(mainIbDb.sum('BASE', 'DamageGainAsCold')).toBe(0);
+
+    // 3. PoE 1 Summon Spectral Tiger synthesized from Huntleader passive node 35011 (default 5 tigers -> +35% Speed, +125% Crit)
+    const tigerDb = new ModDB();
+    evaluateAurasAndWatchersEye({
+      build: mkBuild({
+        game: 'poe1',
+        tree: {
+          ...mkBuild().tree,
+          allocatedNodeIds: [35011],
+        },
+        skills: [],
+      }),
+      playerDb: tigerDb,
+      maxMana: 1000,
+    });
+    expect(tigerDb.getEvalContext().multipliers.SpectralTigerCount).toBe(5);
+    expect(tigerDb.sum('INC', 'Speed', ModFlag.Attack)).toBe(35);
+    expect(tigerDb.sum('INC', 'Speed', ModFlag.Spell)).toBe(35);
+    expect(tigerDb.sum('INC', 'CritChance')).toBe(125);
+  });
+
+  it('builds PoB1-exact full-ring clusterAdjacency without wrap-around shortcuts across unallocated branches (Split Personality)', () => {
+    // 8-passive Large Cluster Jewel in outer socket 7960 (largeSocketIndex = 0) with 2 jewel sockets (4, 8) and 3 notables.
+    // Player allocates ONLY the left branch: entrance (0) -> small/notable (1, 2) -> medium socket 29712 (pos 4).
+    const pos0 = encodeClusterNodeId({ nodeIndex: 0, sizeIndex: 2, largeSocketIndex: 0, mediumSocketIndex: 0 });
+    const pos1 = encodeClusterNodeId({ nodeIndex: 1, sizeIndex: 2, largeSocketIndex: 0, mediumSocketIndex: 0 });
+    const pos2 = encodeClusterNodeId({ nodeIndex: 2, sizeIndex: 2, largeSocketIndex: 0, mediumSocketIndex: 0 });
+    const medSock0 = 29712; // POE1_EXPANSION_SOCKETS: largeSocketIndex=0, mediumSocketIndex=0 (pos 4)
+
+    const activeNodes = new Set<number>([7960, pos0, pos1, pos2, medSock0]);
+    const adj = buildClusterSubgraphAdjacency(
+      [
+        {
+          nodeId: 7960,
+          jewelName: 'Large Cluster Jewel',
+          size: 'Large',
+          sizeIndex: 2,
+          largeSocketIndex: 0,
+          mediumSocketIndex: 0,
+          totalAdded: 8,
+          socketCount: 2,
+          smallEffectPct: 0,
+          allocatedClusterNodeIds: [pos0, pos1, pos2],
+          allNotableNames: ['Feed the Fury', 'Fuel the Fight', 'Martial Prowess'],
+          grantedNotableNames: ['Feed the Fury'],
+          maxSmallCount: 3,
+          grantedSmallCount: 2,
+          scaledSmallGrants: [],
+          usedSubgraphAllocation: true,
+          mods: [],
+        },
+      ],
+      activeNodes,
+    );
+
+    // entrance (pos0) MUST NOT have a direct wrap-around shortcut edge to medSock0 (pos 4)!
+    expect(adj.get(pos0)).not.toContain(medSock0);
+    expect(adj.get(medSock0)).not.toContain(pos0);
+
+    // BFS from outer socket 7960 to medSock0 through activeNodes must take 4 hops: 7960 -> pos0 -> pos1 -> pos2 -> medSock0
+    const dist = new Map<number, number>([[7960, 0]]);
+    const q = [7960];
+    while (q.length > 0) {
+      const u = q.shift()!;
+      for (const v of adj.get(u) ?? []) {
+        if (!activeNodes.has(v) || dist.has(v)) continue;
+        dist.set(v, dist.get(u)! + 1);
+        q.push(v);
+      }
+    }
+    expect(dist.get(medSock0)).toBe(4);
+  });
+
+  it('consumes ModDB per-aura AuraEffect:<AuraName> INC without double-counting item-scanned lines', () => {
+    const prideDef: GemDefinition = {
+      id: 'poe1_pride',
+      name: { en: 'Pride', zh: '骄傲' },
+      category: 'active',
+      game: 'poe1',
+      color: 'red',
+      tags: ['aura', 'aoe', 'physical'],
+      modFlags: 0,
+      keywordFlags: 0,
+      manaReservationPct: 50,
+      stats: [],
+      compiledMods: [
+        {
+          name: 'PhysicalDamageTaken',
+          type: 'MORE',
+          value: 39,
+          flags: 0,
+          keywordFlags: 0,
+          target: 'enemy',
+        },
+      ],
+    };
+    const db = new ModDB();
+    // ModDB per-aura effect from tree/bloodline/cluster notable (not an item) -> +50% Pride Aura Effect
+    db.addMod({
+      name: 'AuraEffect:Pride',
+      type: 'INC',
+      value: 50,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Tree: Pride Notable',
+    });
+    // Also simulate a Belt item with "Pride has 20% increased Aura Effect" parsed into BOTH item text and ModDB
+    db.addMod({
+      name: 'AuraEffect:Pride',
+      type: 'INC',
+      value: 20,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Item (Belt): Test Belt',
+    });
+    const res = evaluateAurasAndWatchersEye({
+      build: mkBuild({
+        game: 'poe1',
+        items: {
+          belt1: {
+            id: 'belt1',
+            name: 'Test Belt',
+            baseName: 'Leather Belt',
+            rarity: 'RARE',
+            slotType: 'Belt',
+            quality: 0,
+            implicits: ['Pride has 20% increased Aura Effect'],
+            explicits: [],
+            rawText: '',
+          },
+        },
+        equipped: { Belt: 'belt1' },
+        skills: [
+          {
+            id: 'sg-pride',
+            label: 'Pride',
+            enabled: true,
+            gems: [{ instanceId: 'pr1', gemId: 'poe1_pride', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+      }),
+      playerDb: db,
+      getGemByIdFn: (_game, id) => (id === 'poe1_pride' ? prideDef : undefined),
+      maxMana: 1000,
+    });
+    // Total Pride Aura Effect = +50% (Tree) + 20% (Belt, counted once) = +70% -> trunc(39 * 1.7) = 66% MORE
+    expect(res.enemyDb.more('PhysicalDamageTaken')).toBeCloseTo(1.66, 4);
+  });
+
+  it('applies PoE 1 per-curse & presence-gated curse effect (item + ModDB) without double-counting', () => {
+    const vulnDef: GemDefinition = {
+      id: 'poe1_vulnerability',
+      name: { en: 'Vulnerability', zh: '脆弱' },
+      category: 'active',
+      game: 'poe1',
+      color: 'red',
+      tags: ['spell', 'aoe', 'duration', 'curse', 'hex', 'physical'],
+      modFlags: 0,
+      keywordFlags: KeywordFlag.Curse,
+      stats: [],
+      compiledMods: [
+        {
+          name: 'PhysicalDamageTaken',
+          type: 'INC',
+          value: 30,
+          flags: 0,
+          keywordFlags: 0,
+          target: 'enemy',
+        },
+      ],
+    };
+    const eleWeakDef: GemDefinition = {
+      id: 'poe1_elementalweakness',
+      name: { en: 'Elemental Weakness', zh: '元素要害' },
+      category: 'active',
+      game: 'poe1',
+      color: 'blue',
+      tags: ['spell', 'aoe', 'duration', 'curse', 'hex'],
+      modFlags: 0,
+      keywordFlags: KeywordFlag.Curse,
+      stats: [],
+      compiledMods: [
+        {
+          name: 'FireResist',
+          type: 'BASE',
+          value: -30,
+          flags: 0,
+          keywordFlags: 0,
+          target: 'enemy',
+        },
+      ],
+    };
+    const db = new ModDB();
+    db.addMod({ name: 'EnemyCurseLimit', type: 'BASE', value: 1, flags: 0, keywordFlags: 0, source: 'Tree' });
+    // Tree/ModDB per-curse effect (+20% Vulnerability) + duplicate item source (must not double-count!)
+    db.addMod({
+      name: 'CurseEffect:Vulnerability',
+      type: 'INC',
+      value: 20,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Tree: Curse Mastery',
+    });
+    db.addMod({
+      name: 'CurseEffect:Vulnerability',
+      type: 'INC',
+      value: 11,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Item (Helmet): Exarch Helm',
+    });
+
+    const res = evaluateAurasAndWatchersEye({
+      build: mkBuild({
+        game: 'poe1',
+        config: {
+          ...mkBuild().config,
+          enemyIsBoss: 'Pinnacle',
+        },
+        items: {
+          helm1: {
+            id: 'helm1',
+            name: 'Exarch Helm',
+            baseName: 'Royal Burgonet',
+            rarity: 'RARE',
+            slotType: 'Helmet',
+            quality: 0,
+            implicits: [
+              '11% increased Vulnerability Curse Effect',
+              'While a Unique Enemy is in your Presence, 20% increased Elemental Weakness Curse Effect',
+            ],
+            explicits: [],
+            rawText: '',
+          },
+        },
+        equipped: { Helmet: 'helm1' },
+        skills: [
+          {
+            id: 'sg-curses',
+            label: 'Curses',
+            enabled: true,
+            gems: [
+              { instanceId: 'c1', gemId: 'poe1_vulnerability', level: 20, quality: 0, enabled: true },
+              { instanceId: 'c2', gemId: 'poe1_elementalweakness', level: 20, quality: 0, enabled: true },
+            ],
+          },
+        ],
+      }),
+      playerDb: db,
+      getGemByIdFn: (_game, id) => {
+        if (id === 'poe1_vulnerability') return vulnDef;
+        if (id === 'poe1_elementalweakness') return eleWeakDef;
+        return undefined;
+      },
+      maxMana: 1000,
+    });
+    // Vulnerability: 30 * (1 + (11 + 20) / 100) = 39.3 -> trunc = 39% INC PhysicalDamageTaken
+    expect(res.enemyDb.sum('INC', 'PhysicalDamageTaken')).toBe(39);
+    // Elemental Weakness (Unique enemy in presence active via Pinnacle): -30 * 1.2 = -36 FireResist
+    expect(res.enemyDb.sum('BASE', 'FireResist')).toBe(-36);
+  });
+
+  it('applies base-aura per-aura effect to Vaal Aura variants and deduplicates [Implicit] ModDB sources', () => {
+    const vaalHasteDef: GemDefinition = {
+      id: 'poe1_vaalhaste',
+      name: { en: 'Vaal Haste', zh: '瓦尔·迅捷' },
+      category: 'active',
+      game: 'poe1',
+      color: 'green',
+      tags: ['area', 'aura', 'dexterity', 'duration', 'spell', 'vaal'],
+      modFlags: 0,
+      keywordFlags: 0,
+      stats: [],
+      compiledMods: [
+        { name: 'Speed', type: 'INC', value: 30, flags: ModFlag.Attack, keywordFlags: 0, target: 'player' },
+      ],
+    };
+    const db = new ModDB();
+    // Simulate modParser also emitting AuraEffect:Haste with [Implicit] suffix for the same Body Armour
+    db.addMod({
+      name: 'AuraEffect:Haste',
+      type: 'INC',
+      value: 25,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Item (Body Armour): Exarch Chest [Implicit]',
+    });
+    // Plus a separate Tree source (+25%) that SHOULD stack
+    db.addMod({
+      name: 'AuraEffect:Haste',
+      type: 'INC',
+      value: 25,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Tree: Haste Mastery',
+    });
+    evaluateAurasAndWatchersEye({
+      build: mkBuild({
+        game: 'poe1',
+        items: {
+          body1: {
+            id: 'body1',
+            name: 'Exarch Chest',
+            baseName: 'Astral Plate',
+            rarity: 'RARE',
+            slotType: 'Body Armour',
+            quality: 0,
+            implicits: ['Haste has 25% increased Aura Effect'],
+            explicits: [],
+            rawText: '',
+          },
+        },
+        equipped: { 'Body Armour': 'body1' },
+        skills: [
+          {
+            id: 'sg-vh',
+            label: 'Vaal Haste',
+            enabled: true,
+            gems: [
+              {
+                instanceId: 'vh1',
+                gemId: 'poe1_vaalhaste',
+                level: 20,
+                quality: 0,
+                enabled: true,
+                enableGlobal1: false,
+                enableGlobal2: true,
+              },
+            ],
+          },
+        ],
+      }),
+      playerDb: db,
+      getGemByIdFn: (_game, id) => (id === 'poe1_vaalhaste' ? vaalHasteDef : undefined),
+      maxMana: 1000,
+    });
+    // Total Haste Aura Effect on Vaal Haste = +25% (Body Armour, counted once) + 25% (Tree) = +50% -> 30 * 1.5 = 45% Attack Speed
+    expect(db.sum('INC', 'Speed', ModFlag.Attack)).toBe(45);
   });
 });

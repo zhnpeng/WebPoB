@@ -290,8 +290,9 @@ export function evaluateIngenuityAndRingBonuses(
   let leftRingBonusPct = 0;
   let rightRingBonusPct = 0;
   const beltSourceNames: string[] = [];
+  const beltSourceSlots = new Set<string>();
 
-  for (const { item } of entries) {
+  for (const { slot, item } of entries) {
     let matchedItem = false;
     for (const line of collectCleanItemLines(item)) {
       const mBoth = line.match(
@@ -325,8 +326,40 @@ export function evaluateIngenuityAndRingBonuses(
     }
     if (matchedItem) {
       beltSourceNames.push(item.name);
+      beltSourceSlots.add(slot.toLowerCase());
     }
   }
+
+  // Also consume non-item `Ring1Effect` / `Ring2Effect` INC modifiers parsed into `db`
+  // (e.g. PoE 2 passive tree / ascendancy / jewel ring-effect bonuses) without double-counting
+  // lines already scanned from equipped items like `Ingenuity` (whose ModDB source is the slot name e.g. 'Belt').
+  const beltSourceLower = new Set(beltSourceNames.map((n) => n.toLowerCase()));
+  const extraDbRingEffect = (statName: 'Ring1Effect' | 'Ring2Effect'): number => {
+    let extra = 0;
+    for (const s of db.calcStat(statName).sources) {
+      if (s.type !== 'INC' || typeof s.value !== 'number') continue;
+      const srcLower = s.source.toLowerCase();
+      let fromScannedItem = false;
+      for (const slotL of beltSourceSlots) {
+        if (srcLower === slotL || srcLower.startsWith(`${slotL}:`) || srcLower.includes(`(${slotL})`)) {
+          fromScannedItem = true;
+          break;
+        }
+      }
+      if (!fromScannedItem) {
+        for (const bName of beltSourceLower) {
+          if (bName && srcLower.includes(bName)) {
+            fromScannedItem = true;
+            break;
+          }
+        }
+      }
+      if (!fromScannedItem) extra += s.value;
+    }
+    return extra;
+  };
+  leftRingBonusPct += extraDbRingEffect('Ring1Effect');
+  rightRingBonusPct += extraDbRingEffect('Ring2Effect');
 
   const ring1Entry = entries.find((e) => e.slot === 'Ring 1');
   const ring2Entry = entries.find((e) => e.slot === 'Ring 2');
@@ -1460,6 +1493,34 @@ export function evaluatePreStatBuildEnablingUniques(
         continue;
       }
 
+      // 8b. Legacy of Fury ("Nearby Enemies are Scorched" — base -10% Ele Res, scaled by Scorch Effect, cap 30%)
+      if (/^Nearby Enemies are Scorched$/i.test(line)) {
+        if (
+          !db.getEvalContext().conditions.EnemyScorched &&
+          !hasStatSource(db, 'EnemyFireResist', 'BASE', 'Scorch')
+        ) {
+          let localScorchEff = 0;
+          for (const otherLine of lines) {
+            const mScEff = otherLine.match(/^(\d+)% increased Effect of Scorch$/i);
+            if (mScEff) localScorchEff += Number(mScEff[1]);
+          }
+          const dbScorchEff =
+            db.sum('INC', 'EnemyScorchEffect') + db.sum('INC', 'EnemyAilmentEffect');
+          // Avoid double-counting if modParser already parsed local "increased Effect of Scorch" into db
+          const totalScorchEffInc = Math.max(localScorchEff, dbScorchEff);
+          const scorchVal = Math.min(30, Math.floor(10 * Math.max(0, 1 + totalScorchEffInc / 100) + 1e-9));
+          if (scorchVal > 0) {
+            const scorchSrc = `${src} (Scorched)`;
+            db.addMod(mkMod('EnemyFireResist', 'BASE', -scorchVal, scorchSrc));
+            db.addMod(mkMod('EnemyColdResist', 'BASE', -scorchVal, scorchSrc));
+            db.addMod(mkMod('EnemyLightningResist', 'BASE', -scorchVal, scorchSrc));
+          }
+        }
+        db.setCondition('EnemyScorched', true);
+        appliedSources.push(src);
+        continue;
+      }
+
       // 9. Singularity ("Nearby Enemies are Hindered, with 25% reduced Movement Speed")
       if (/^Nearby Enemies are Hindered\b/i.test(line)) {
         db.setCondition('EnemyHindered', true);
@@ -2080,7 +2141,10 @@ export function evaluatePostPoolBuildEnablingUniques(
       if (/^You have Onslaught while (?:you have Fortify|Fortified)$/i.test(line)) {
         if (ctx.fortified) {
           perseveranceGrantedOnslaught = true;
-          if (!hasStatSource(db, 'MovementSpeed', 'INC', 'Onslaught')) {
+          const hasActiveOnslaught = db
+            .calcStat('MovementSpeed')
+            .sources.some((s) => s.type === 'INC' && /onslaught/i.test(s.source));
+          if (!hasActiveOnslaught) {
             db.addMod(mkMod('Speed', 'INC', 20, `${src} (Onslaught)`, ModFlag.Attack));
             db.addMod(mkMod('Speed', 'INC', 20, `${src} (Onslaught)`, ModFlag.Spell));
             db.addMod(mkMod('MovementSpeed', 'INC', 20, `${src} (Onslaught)`));

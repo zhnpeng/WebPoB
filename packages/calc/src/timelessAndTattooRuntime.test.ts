@@ -1373,4 +1373,320 @@ describe('evaluatePoe2UnbakedSocketedRunes', () => {
       ]),
     );
   });
+
+  it('replaces non-attribute small passives with +5 Tribute and adds +3 Tribute on attribute travel nodes for PoE 2 Undying Hate (PassiveSpec.lua:1779-1786)', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe2',
+      version: '0_5',
+      nodes: {
+        26196: mkNode(26196, 'Jewel Socket', 'jewel', 0, 0),
+        101: mkNode(101, 'Attribute', 'small', 400, 0, ['+5 to Intelligence']),
+        102: mkNode(102, 'Cast Speed', 'small', 600, 0, ['6% increased Cast Speed']),
+        103: mkNode(103, 'Spell Damage', 'small', 900, 0, ['12% increased Spell Damage']),
+        104: mkNode(104, 'Arcane Surge Notable', 'notable', 1000, 0, ['25% increased Spell Damage']),
+      },
+      groups: {},
+      classStartNodeIds: {},
+      bounds: { minX: -2000, maxX: 2000, minY: -2000, maxY: 2000 },
+    };
+    const undyingHate = mkItem({
+      id: 'uh-1',
+      name: 'Undying Hate',
+      baseName: 'Timeless Jewel',
+      rarity: 'UNIQUE',
+      explicits: [
+        'Glorifying the defilement of 4575 souls in tribute to Ulaman',
+        'Passives in radius are Conquered by the Abyssals',
+      ],
+    });
+
+    const res = evaluateTimelessJewels(
+      [{ nodeId: 26196, jewel: undyingHate }],
+      tree,
+      new Set([26196, 101, 102, 103, 104]),
+      { game: 'poe2' },
+    );
+
+    // Non-attribute small passives (102, 103) are replaced; attribute travel node (101) is NOT suppressed
+    expect(res.suppressedNodeIds.has(101)).toBe(false);
+    expect(res.suppressedNodeIds.has(102)).toBe(true);
+    expect(res.suppressedNodeIds.has(103)).toBe(true);
+    // Tribute = 3 (1 attr node) + 2 * 5 (2 non-attr smalls) = 13
+    expect(res.addedMods).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'Tribute', type: 'BASE', value: 13 }),
+      ]),
+    );
+  });
+
+  it('evaluates PoE 2 Carved Majesty (+3 to Spirit per Idol socketed in your Equipment) on baked rune items', () => {
+    const body = mkItem({
+      id: 'body-temporalis',
+      name: 'Temporalis',
+      baseName: 'Silk Robe',
+      rarity: 'UNIQUE',
+      implicits: [
+        '{enchant}{rune}+3 to Spirit per Idol socketed in your Equipment',
+        '{enchant}{rune}Idols socketed in this item gain the benefits of their Bonded modifiers',
+      ],
+      rawText: [
+        'Rarity: UNIQUE',
+        'Temporalis',
+        'Silk Robe',
+        'Rune: Carved Majesty',
+        'Rune: Fox Idol',
+        'Rune: Rabbit Idol',
+      ].join('\n'),
+    });
+    const focus = mkItem({
+      id: 'w2-focus',
+      name: 'Storm Focus',
+      baseName: 'Vortex Focus',
+      rarity: 'RARE',
+      rawText: ['Rarity: RARE', 'Storm Focus', 'Vortex Focus', 'Rune: Owl Idol', 'Rune: Owl Idol'].join('\n'),
+    });
+    const helm = mkItem({
+      id: 'helm-1',
+      name: 'Oracle Crown',
+      baseName: 'Tiara',
+      rarity: 'RARE',
+      rawText: ['Rarity: RARE', 'Oracle Crown', 'Tiara', 'Rune: Idol of Eeshta'].join('\n'),
+    });
+
+    const res = evaluatePoe2UnbakedSocketedRunes(
+      [
+        { slot: 'Body Armour', item: body },
+        { slot: 'Weapon 2', item: focus },
+        { slot: 'Helmet', item: helm },
+      ],
+      'poe2',
+    );
+
+    // 6 Idols total (Carved Majesty + Fox Idol + Rabbit Idol + 2x Owl Idol + Idol of Eeshta) * 3 = +18 Spirit
+    expect(res.addedMods).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'Spirit', type: 'BASE', value: 18 }),
+      ]),
+    );
+  });
+
+  it('evaluates Militant Faith Devotion Minion Attack and Cast Speed as MinionSpeed INC', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe1',
+      version: '3_28',
+      nodes: {
+        1: mkNode(1, 'Jewel Socket', 'jewel', 0, 0),
+        2: mkNode(2, 'Small Str', 'small', 200, 0, ['+10 to Strength']),
+        3: mkNode(3, 'Small Int', 'small', 300, 0, ['+10 to Intelligence']),
+        4: mkNode(4, 'Notable A', 'notable', 400, 0, ['20% increased Damage']),
+      },
+      groups: {},
+      classStartNodeIds: {},
+      bounds: { minX: -2000, maxX: 2000, minY: -2000, maxY: 2000 },
+    };
+    const mf = mkItem({
+      id: 'mf-minion-speed',
+      name: 'Militant Faith',
+      baseName: 'Timeless Jewel',
+      rarity: 'UNIQUE',
+      explicits: [
+        'Carved to glorify 2000 new faithful converted by High Templar Dominus',
+        '1% increased Minion Attack and Cast Speed per 10 Devotion',
+      ],
+    });
+    const res = evaluateTimelessJewels(
+      [{ nodeId: 1, jewel: mf }],
+      tree,
+      new Set([1, 2, 3, 4]),
+      { game: 'poe1' },
+    );
+    // 30 Devotion -> floor(30/10) = 3% MinionSpeed
+    expect(res.addedMods).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'MinionSpeed', type: 'INC', value: 3 }),
+      ]),
+    );
+  });
+
+  it('evaluates named Journey Tattoos (Journey Tattoo of the Soul / Mind) per allocated copy', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe1',
+      version: '3_28',
+      nodes: {
+        1: mkNode(1, 'Int 1', 'small', 0, 0, ['+10 to Intelligence']),
+        2: mkNode(2, 'Int 2', 'small', 100, 0, ['+10 to Intelligence']),
+        3: mkNode(3, 'Int 3', 'small', 200, 0, ['+10 to Intelligence']),
+      },
+      groups: {},
+      classStartNodeIds: {},
+      bounds: { minX: -1000, maxX: 1000, minY: -1000, maxY: 1000 },
+    };
+    const build = {
+      id: 'b-journey',
+      name: 'Journey Test',
+      game: 'poe1',
+      level: 100,
+      activeWeaponSet: 1,
+      tree: {
+        title: 'Default',
+        treeVersion: '3_28',
+        allocatedNodeIds: [1, 2, 3],
+        weaponSet1NodeIds: [],
+        weaponSet2NodeIds: [],
+        masteryEffects: {},
+        nodeOverrides: {
+          1: {
+            name: 'Journey Tattoo of the Soul',
+            stats: ['+40 to maximum Energy Shield per Allocated Journey Tattoo of the Soul'],
+          },
+          2: {
+            name: 'Journey Tattoo of the Soul',
+            stats: ['+40 to maximum Energy Shield per Allocated Journey Tattoo of the Soul'],
+          },
+          3: {
+            name: 'Journey Tattoo of the Soul',
+            stats: ['+40 to maximum Energy Shield per Allocated Journey Tattoo of the Soul'],
+          },
+        },
+      },
+      items: {},
+      equipped: {},
+      skills: [],
+      config: {},
+    } as unknown as Build;
+
+    const res = evaluateTattoosAndRunegrafts(build, tree, new Set([1, 2, 3]));
+    const esLines = res.addedStatLines.flatMap((e) => e.lines);
+    // 3 allocated copies -> each grants +40 * 3 = +120 to maximum Energy Shield (+360 total)
+    expect(esLines).toEqual([
+      '+120 to maximum Energy Shield',
+      '+120 to maximum Energy Shield',
+      '+120 to maximum Energy Shield',
+    ]);
+  });
+
+  it('resolves Militant Faith 150-Devotion notable threshold lines when Devotion >= 150 and suppresses when < 150', () => {
+    const nodes: PassiveTreeData['nodes'] = {
+      1: mkNode(1, 'Jewel Socket', 'jewel', 0, 0),
+      100: mkNode(100, 'Notable Target', 'notable', 300, 0, ['20% increased Damage']),
+    };
+    const activeHigh = new Set<number>([1, 100]);
+    for (let i = 2; i <= 16; i++) {
+      nodes[i] = mkNode(i, `Str ${i}`, 'small', 100 + i * 20, 0, ['+10 to Strength']);
+      activeHigh.add(i);
+    }
+    const tree: PassiveTreeData = {
+      game: 'poe1',
+      version: '3_28',
+      nodes,
+      groups: {},
+      classStartNodeIds: {},
+      bounds: { minX: -2000, maxX: 2000, minY: -2000, maxY: 2000 },
+    };
+    const mf = mkItem({
+      id: 'mf-150',
+      name: 'Militant Faith',
+      baseName: 'Timeless Jewel',
+      rarity: 'UNIQUE',
+      explicits: ['Carved to glorify 4904 new faithful converted by High Templar Dominus'],
+    });
+    const lutLookup = {
+      lookupNode: (_jt: string, _seed: number, nodeId: number) =>
+        nodeId === 100
+          ? {
+              mode: 'replace' as const,
+              stats: [
+                '+5 to Devotion',
+                'Gain 5% of Maximum Mana as Extra Maximum Energy Shield while you have at least 150 Devotion',
+                '+1% to all maximum Resistances if you have at least 150 Devotion',
+              ],
+            }
+          : null,
+    };
+
+    // 15 small travel nodes * 10 + 5 from notable = 155 Devotion >= 150 -> threshold lines unlocked
+    const resHigh = evaluateTimelessJewels([{ nodeId: 1, jewel: mf }], tree, activeHigh, {
+      game: 'poe1',
+      lutLookup,
+    });
+    const highLines = resHigh.addedStatLines.flatMap((e) => e.lines);
+    expect(highLines).toContain('Gain 5% of Maximum Mana as Extra Maximum Energy Shield');
+    expect(highLines).toContain('+1% to all maximum Resistances');
+
+    // Only 5 small travel nodes * 10 + 5 = 55 Devotion < 150 -> threshold lines suppressed
+    const activeLow = new Set<number>([1, 2, 3, 4, 5, 6, 100]);
+    const resLow = evaluateTimelessJewels([{ nodeId: 1, jewel: mf }], tree, activeLow, {
+      game: 'poe1',
+      lutLookup,
+    });
+    const lowLines = resLow.addedStatLines.flatMap((e) => e.lines);
+    expect(lowLines).not.toContain('Gain 5% of Maximum Mana as Extra Maximum Energy Shield');
+    expect(lowLines).not.toContain('+1% to all maximum Resistances');
+  });
+
+  it('emits Unexciting flag for Runegraft of Stability, OffHandAttack-scoped speed for Sinistral, and Chain/Fork for Refraction', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe1',
+      version: '3_30',
+      nodes: {
+        1: mkNode(1, 'Mastery 1', 'mastery', 0, 0, []),
+        2: mkNode(2, 'Mastery 2', 'mastery', 100, 0, []),
+        3: mkNode(3, 'Mastery 3', 'mastery', 200, 0, []),
+      },
+      groups: {},
+      classStartNodeIds: {},
+      bounds: { minX: -1000, maxX: 1000, minY: -1000, maxY: 1000 },
+    };
+    const build = {
+      id: 'b-runegrafts',
+      name: 'Runegrafts Test',
+      game: 'poe1',
+      level: 95,
+      activeWeaponSet: 1,
+      tree: {
+        title: 'Default',
+        treeVersion: '3_30',
+        allocatedNodeIds: [1, 2, 3],
+        weaponSet1NodeIds: [],
+        weaponSet2NodeIds: [],
+        masteryEffects: {},
+        nodeOverrides: {
+          1: {
+            name: 'Runegraft of Stability',
+            stats: ['Your Lucky or Unlucky effects are instead Unexciting'],
+          },
+          2: {
+            name: 'Runegraft of the Sinistral',
+            stats: ['10% more Attack speed with Offhand'],
+          },
+          3: {
+            name: 'Runegraft of Refraction',
+            stats: ['Skills Chain +1 times', 'Projectiles Fork'],
+          },
+        },
+      },
+      items: {},
+      equipped: {},
+      skills: [],
+      config: {},
+    } as unknown as Build;
+
+    const res = evaluateTattoosAndRunegrafts(build, tree, new Set([1, 2, 3]), {
+      skipNativelyParsedRunegraftStats: false,
+    });
+    expect(res.addedMods).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'Unexciting', type: 'FLAG', value: true }),
+        expect.objectContaining({
+          name: 'Speed',
+          type: 'MORE',
+          value: 10,
+          flags: ModFlag.Attack,
+          tags: [{ type: 'Condition', var: 'OffHandAttack' }],
+        }),
+        expect.objectContaining({ name: 'ChainCountMax', type: 'BASE', value: 1 }),
+        expect.objectContaining({ name: 'ForkCountMax', type: 'BASE', value: 1 }),
+      ]),
+    );
+  });
 });

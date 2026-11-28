@@ -1434,4 +1434,59 @@ describe('skillActorRuntime — 5. PoB 1 & PoB 2 Ailment, Skill DoT, Routing & M
     );
     expect(icBuses.playerDb.more('Damage')).toBeCloseTo(1.42, 2);
   });
+
+  it('reads cmods-injected BASE PhysicalDot/FireDot (Exsanguinate of Transmission) and applies Multistrike repeat multipliers to PoE 1 Ailments', () => {
+    // 1. Skill-level BASE PhysicalDot from skillDb cmods (when skillData has no PhysicalDot)
+    const exsangDb = new ModDB();
+    exsangDb.addMod(mkMod('PhysicalDot', 'BASE', 2000));
+    exsangDb.addMod(mkMod('Damage', 'INC', 100, ModFlag.Spell));
+    const exsangRes = computeAuthenticAilmentAndSkillDots({
+      game: 'poe1',
+      skillDb: exsangDb,
+      enemyDb: new ModDB(),
+      baseDamageByType: { Physical: 300 },
+      flags: ModFlag.Spell | ModFlag.Hit,
+      keywordFlags: KeywordFlag.Spell | KeywordFlag.Physical | KeywordFlag.Hit,
+      speed: 2,
+      skillData: { dotIsSpell: true },
+    });
+    // 2000 * (1 + 1.0) = 4000 Physical DoT DPS
+    expect(exsangRes.skillDot.byType.Physical).toBeCloseTo(4000, 1);
+    expect(exsangRes.skillDot.totalDps).toBeCloseTo(4000, 1);
+
+    // 2. Multistrike RepeatOneDamage (+22%) / RepeatTwoDamage (+44%) on PoE 1 Bleed (single-stack final repeat = 1.44x)
+    const msBleedDb = new ModDB();
+    msBleedDb.addMod(mkMod('BleedChance', 'BASE', 100));
+    msBleedDb.addMod(mkMod('RepeatCount', 'BASE', 2, ModFlag.Melee));
+    msBleedDb.addMod(mkMod('RepeatOneDamage', 'MORE', 22, ModFlag.Melee));
+    msBleedDb.addMod(mkMod('RepeatTwoDamage', 'MORE', 44, ModFlag.Melee));
+    const msBleedRes = computeAuthenticAilmentAndSkillDots({
+      game: 'poe1',
+      skillDb: msBleedDb,
+      enemyDb: new ModDB(),
+      baseDamageByType: { Physical: 1000 },
+      flags: ModFlag.Attack | ModFlag.Melee | ModFlag.Hit,
+      speed: 2,
+    });
+    // Single-stack stationary Bleed = 0.70 * 1000 * 1.44 (final repeat) = 1008
+    expect(msBleedRes.bleed.singleStackDps).toBeCloseTo(1008, 1);
+
+    // 3. Multistrike on multi-stack Poison uses average across repeats: (1 + 1.22 + 1.44) / 3 = 1.22x
+    const msPoisonDb = new ModDB();
+    msPoisonDb.addMod(mkMod('PoisonChance', 'BASE', 100));
+    msPoisonDb.addMod(mkMod('RepeatCount', 'BASE', 2, ModFlag.Melee));
+    msPoisonDb.addMod(mkMod('RepeatOneDamage', 'MORE', 22, ModFlag.Melee));
+    msPoisonDb.addMod(mkMod('RepeatTwoDamage', 'MORE', 44, ModFlag.Melee));
+    const msPoisonRes = computeAuthenticAilmentAndSkillDots({
+      game: 'poe1',
+      skillDb: msPoisonDb,
+      enemyDb: new ModDB(),
+      baseDamageByType: { Physical: 1000 },
+      flags: ModFlag.Attack | ModFlag.Melee | ModFlag.Hit,
+      speed: 2,
+      enemyConfig: { enemyChaosResist: 0 },
+    });
+    // Single-stack Poison = 0.30 * 1000 * 1.22 (average repeat) = 366
+    expect(msPoisonRes.poison.singleStackDps).toBeCloseTo(366, 1);
+  });
 });

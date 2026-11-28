@@ -1110,6 +1110,129 @@ export function evaluateAllocatedClusterJewels(
   };
 }
 
+/**
+ * Builds PoB1-exact undirected Cluster Jewel subgraph adjacency for Split Personality BFS distance.
+ *
+ * Uses the complete `getClusterTemplateLayout` ring (including UNALLOCATED positions) so BFS through
+ * `activeTreeNodes` never teleports across an unallocated branch via a wrap-around shortcut edge
+ * (e.g. an 8-passive Large Cluster with only positions `0 -> 1 -> 2 -> 4 (medSock0)` allocated must
+ * traverse 3 hops instead of shortcutting `0 <-> medSock0` in 1 hop).
+ */
+export function buildClusterSubgraphAdjacency(
+  entries: readonly EvaluatedClusterJewelEntry[],
+  activeTreeNodes: ReadonlySet<number>,
+): Map<number, number[]> {
+  const clusterAdjacency = new Map<number, number[]>();
+  if (entries.length === 0) return clusterAdjacency;
+
+  const linkUndirected = (a: number, b: number) => {
+    let la = clusterAdjacency.get(a);
+    if (!la) {
+      la = [];
+      clusterAdjacency.set(a, la);
+    }
+    if (!la.includes(b)) la.push(b);
+    let lb = clusterAdjacency.get(b);
+    if (!lb) {
+      lb = [];
+      clusterAdjacency.set(b, lb);
+    }
+    if (!lb.includes(a)) lb.push(a);
+  };
+
+  const medSocketByLargeAndMedIdx = new Map<string, number>();
+  const smallSocketByParent = new Map<number, number>();
+  for (const [sockIdStr, info] of Object.entries(POE1_EXPANSION_SOCKETS)) {
+    const sockId = Number(sockIdStr);
+    if (info.socketSize === 1) {
+      medSocketByLargeAndMedIdx.set(`${info.largeSocketIndex}:${info.mediumSocketIndex}`, sockId);
+    } else if (info.socketSize === 0 && info.parentSocketId !== undefined) {
+      smallSocketByParent.set(info.parentSocketId, sockId);
+    }
+  }
+  const largeSlotToMedIdx: Record<number, number> = { 4: 0, 8: 2, 6: 1 };
+
+  for (const entry of entries) {
+    if (entry.largeSocketIndex === null) continue;
+    const medIdx = entry.mediumSocketIndex ?? 0;
+    const layout = getClusterTemplateLayout(
+      entry.sizeIndex,
+      entry.totalAdded,
+      entry.socketCount,
+      entry.allNotableNames.length,
+    );
+
+    const ringPosToNodeId = new Map<number, number>();
+    const allPosSet = new Set<number>([
+      ...layout.socketIndices,
+      ...layout.notableIndices,
+      ...layout.smallIndices,
+    ]);
+    for (const cid of entry.allocatedClusterNodeIds) {
+      const pos = cid & 0xf;
+      if (pos <= 11) {
+        allPosSet.add(pos);
+        ringPosToNodeId.set(pos, cid);
+      }
+    }
+
+    for (const pos of allPosSet) {
+      if (ringPosToNodeId.has(pos)) continue;
+      ringPosToNodeId.set(
+        pos,
+        encodeClusterNodeId({
+          nodeIndex: pos,
+          sizeIndex: entry.sizeIndex,
+          largeSocketIndex: entry.largeSocketIndex,
+          mediumSocketIndex: medIdx,
+        }),
+      );
+    }
+
+    // Override sub-socket ring positions with their official passive tree expansion socket IDs
+    if (entry.sizeIndex === 2) {
+      for (const [slotPosStr, subMedIdx] of Object.entries(largeSlotToMedIdx)) {
+        const slotPos = Number(slotPosStr);
+        if (!allPosSet.has(slotPos)) continue;
+        const medSockId = medSocketByLargeAndMedIdx.get(`${entry.largeSocketIndex}:${subMedIdx}`);
+        if (medSockId && (activeTreeNodes.has(medSockId) || layout.socketIndices.includes(slotPos))) {
+          ringPosToNodeId.set(slotPos, medSockId);
+        }
+      }
+    } else if (entry.sizeIndex === 1) {
+      if (allPosSet.has(6)) {
+        const smSockId = smallSocketByParent.get(entry.nodeId);
+        if (smSockId && (activeTreeNodes.has(smSockId) || layout.socketIndices.includes(6))) {
+          ringPosToNodeId.set(6, smSockId);
+        }
+      }
+    }
+
+    const entranceId =
+      ringPosToNodeId.get(0) ??
+      encodeClusterNodeId({
+        nodeIndex: 0,
+        sizeIndex: entry.sizeIndex,
+        largeSocketIndex: entry.largeSocketIndex,
+        mediumSocketIndex: medIdx,
+      });
+    linkUndirected(entry.nodeId, entranceId);
+
+    const sortedPositions = [...ringPosToNodeId.keys()].sort((a, b) => a - b);
+    if (sortedPositions.length >= 2) {
+      for (let i = 0; i < sortedPositions.length; i++) {
+        const curNode = ringPosToNodeId.get(sortedPositions[i]!)!;
+        const nextNode = ringPosToNodeId.get(sortedPositions[(i + 1) % sortedPositions.length]!)!;
+        if (curNode !== nextNode) {
+          linkUndirected(curNode, nextNode);
+        }
+      }
+    }
+  }
+
+  return clusterAdjacency;
+}
+
 // ============================================================================
 // 2. Pool-Zeroing & Conversion Keystones / Uniques
 // ============================================================================
@@ -2229,6 +2352,7 @@ export function evaluateAurasAndWatchersEye(
   // Pre-scan equipped gear & socketed jewels for per-skill aura/herald/golem effect, reservation efficiency,
   // Sublime Vision restrictions, Curse-on-Hit gear mods, Replica Farrul's Fur, Annihilation's Approach, and item Exposure.
   const perSkillEffectPct = new Map<string, number>();
+  const perSkillEffectScannedSources = new Set<string>();
   const perSkillResEffPct = new Map<string, number>();
   let sublimeOnlyAuraLower: string | null = null;
   const curseOnHitEntries: Array<{ curseName: string; effectPct: number; source: string }> = [];
@@ -2252,7 +2376,51 @@ export function evaluateAurasAndWatchersEye(
       if (mSkillEff) {
         const key = mSkillEff[1]!.trim().toLowerCase();
         perSkillEffectPct.set(key, (perSkillEffectPct.get(key) ?? 0) + Number(mSkillEff[2]));
+        perSkillEffectScannedSources.add(`${key}|${label}`);
         continue;
+      }
+      // PoE 1 Eldritch / Enchant / Item per-curse & per-mark effect:
+      // e.g. "11% increased Vulnerability Curse Effect",
+      // "While a Unique Enemy is in your Presence, 17% increased Elemental Weakness Curse Effect",
+      // "Vulnerability has 15% increased Curse Effect"
+      const mPresencePrefix = line.match(
+        /^While a Unique Enemy is in your Presence,\s*(.+)$/i,
+      );
+      const effCandidateLine = mPresencePrefix ? mPresencePrefix[1]!.trim() : line;
+      const presenceActive =
+        !mPresencePrefix ||
+        build.config.enemyIsBoss !== 'None' ||
+        Boolean(playerDb.getEvalContext().conditions.UniqueEnemyInPresence);
+      if (presenceActive) {
+        const mCurseEff = effCandidateLine.match(
+          /^(\d+)% increased (Vulnerability|Despair|Flammability|Frostbite|Conductivity|Elemental Weakness|Punishment|Enfeeble|Temporal Chains|Assassin's Mark|Sniper's Mark|Poacher's Mark|Warlord's Mark|Alchemist's Mark) (?:Curse |Mark )?Effect$/i,
+        );
+        if (mCurseEff) {
+          const key = mCurseEff[2]!.trim().toLowerCase();
+          perSkillEffectPct.set(key, (perSkillEffectPct.get(key) ?? 0) + Number(mCurseEff[1]));
+          perSkillEffectScannedSources.add(`${key}|${label}`);
+          continue;
+        }
+        const mCurseHasEff = effCandidateLine.match(
+          /^(Vulnerability|Despair|Flammability|Frostbite|Conductivity|Elemental Weakness|Punishment|Enfeeble|Temporal Chains|Assassin's Mark|Sniper's Mark|Poacher's Mark|Warlord's Mark|Alchemist's Mark) has (\d+)% increased (?:Curse |Mark )?Effect$/i,
+        );
+        if (mCurseHasEff) {
+          const key = mCurseHasEff[1]!.trim().toLowerCase();
+          perSkillEffectPct.set(key, (perSkillEffectPct.get(key) ?? 0) + Number(mCurseHasEff[2]));
+          perSkillEffectScannedSources.add(`${key}|${label}`);
+          continue;
+        }
+        if (mPresencePrefix) {
+          const mPresAuraEff = effCandidateLine.match(
+            /^([A-Za-z' ]+?) has (\d+)% increased (?:Aura|Buff) Effect$/i,
+          );
+          if (mPresAuraEff) {
+            const key = mPresAuraEff[1]!.trim().toLowerCase();
+            perSkillEffectPct.set(key, (perSkillEffectPct.get(key) ?? 0) + Number(mPresAuraEff[2]));
+            perSkillEffectScannedSources.add(`${key}|${label}`);
+            continue;
+          }
+        }
       }
       const mGolemEff = line.match(
         /^(\d+)% increased Effect of the Buff granted by your (Flame|Ice|Lightning|Chaos|Stone|Carrion) Golems$/i,
@@ -2444,6 +2612,23 @@ export function evaluateAurasAndWatchersEye(
   }> = [];
   const resolvedMainIdx = build.skills.findIndex((g) => g.id === build.mainSkillGroupId);
   const mainGroupIndex = resolvedMainIdx >= 0 ? resolvedMainIdx : 0;
+  // PoE 2 `Ice Bite I/II` GlobalEffect support buff:
+  // Only applies when linked to an Attack/Warcry active skill (never spells like Orb of Storms / Ice Nova),
+  // never stacks across multiple skill groups (keep single highest tier), and must NOT re-inject into
+  // `playerDb` when already socketed on the main active skill group (where engine.ts already injects it
+  // into `skillDb`, otherwise Attack skills like Ice Shot double-count +30% -> +60% DamageGainAsCold!).
+  let poe2IceBiteOnMain = false;
+  let poe2IceBiteBest: { def: GemDefinition; effLevel: number; tier: number } | null = null;
+  const poe2PersistentSupFamilyBest = new Map<string, { def: GemDefinition; effLevel: number; tier: number }>();
+  const resolvePoe2PersistentSupFamily = (
+    supNameL: string,
+  ): { family: string; tier: number } | null => {
+    for (const fam of ['precision', 'clarity', 'vitality', 'mysticism', 'herbalism', 'cannibalism'] as const) {
+      if (supNameL === fam || supNameL === `${fam} i`) return { family: fam, tier: 1 };
+      if (supNameL === `${fam} ii`) return { family: fam, tier: 2 };
+    }
+    return null;
+  };
 
   for (let groupIdx = 0; groupIdx < build.skills.length; groupIdx++) {
     const group = build.skills[groupIdx]!;
@@ -2605,10 +2790,7 @@ export function evaluateAurasAndWatchersEye(
           supNameL === 'blazing critical' ||
           supNameL === 'direstrike' ||
           supNameL === 'direstrike i' ||
-          supNameL === 'direstrike ii' ||
-          supNameL === 'ice bite' ||
-          supNameL === 'ice bite i' ||
-          supNameL === 'ice bite ii'
+          supNameL === 'direstrike ii'
         ) {
           const globalSupCmods = resolveAuraLevelCompiledMods(supDef, effSupLevel);
           if (globalSupCmods && globalSupCmods.length > 0) {
@@ -2619,27 +2801,28 @@ export function evaluateAurasAndWatchersEye(
               });
             }
           }
-        }
-        if (
-          supNameL === 'precision' ||
-          supNameL === 'precision i' ||
-          supNameL === 'precision ii' ||
-          supNameL === 'clarity' ||
-          supNameL === 'clarity i' ||
-          supNameL === 'clarity ii' ||
-          supNameL === 'vitality' ||
-          supNameL === 'vitality i' ||
-          supNameL === 'vitality ii' ||
-          supNameL === 'mysticism' ||
-          supNameL === 'mysticism i' ||
-          supNameL === 'mysticism ii' ||
-          supNameL === 'herbalism' ||
-          supNameL === 'herbalism i' ||
-          supNameL === 'herbalism ii' ||
-          supNameL === 'cannibalism' ||
-          supNameL === 'cannibalism i' ||
-          supNameL === 'cannibalism ii'
-        ) {
+        } else if (supNameL === 'ice bite' || supNameL === 'ice bite i' || supNameL === 'ice bite ii') {
+          if (groupIdx === mainGroupIndex) {
+            poe2IceBiteOnMain = true;
+          } else {
+            const groupHasAttackOrWarcry = group.gems.some((g) => {
+              if (!g.enabled) return false;
+              const gd = lookupGem('poe2', g.gemId);
+              if (!gd || gd.category !== 'active') return false;
+              return gd.tags.some((t) => /^(attack|warcry)$/i.test(t));
+            });
+            if (groupHasAttackOrWarcry) {
+              const tier = supNameL === 'ice bite ii' ? 2 : 1;
+              if (
+                !poe2IceBiteBest ||
+                tier > poe2IceBiteBest.tier ||
+                (tier === poe2IceBiteBest.tier && effSupLevel > poe2IceBiteBest.effLevel)
+              ) {
+                poe2IceBiteBest = { def: supDef, effLevel: effSupLevel, tier };
+              }
+            }
+          }
+        } else if (resolvePoe2PersistentSupFamily(supNameL)) {
           poe2PersistentPlayerSupportMods.push({ def: supDef, effLevel: effSupLevel, effQuality: effSupQuality });
         }
       }
@@ -2654,13 +2837,11 @@ export function evaluateAurasAndWatchersEye(
       });
       if (groupHasPersistentActive) {
         for (const ps of poe2PersistentPlayerSupportMods) {
-          const cmods = resolveAuraLevelCompiledMods(ps.def, ps.effLevel);
-          if (cmods && cmods.length > 0) {
-            const pMods = cmods.filter((m) => m.target === 'player');
-            if (pMods.length > 0) {
-              injectCompiledGemMods(playerDb, enemyDb, minionDb, pMods, `Support Buff: ${ps.def.name.en}`, {
-                game: 'poe2',
-              });
+          const fam = resolvePoe2PersistentSupFamily(stripSupportSuffix(ps.def.name.en));
+          if (fam) {
+            const prev = poe2PersistentSupFamilyBest.get(fam.family);
+            if (!prev || fam.tier > prev.tier || (fam.tier === prev.tier && ps.effLevel > prev.effLevel)) {
+              poe2PersistentSupFamilyBest.set(fam.family, { def: ps.def, effLevel: ps.effLevel, tier: fam.tier });
             }
           }
         }
@@ -2721,7 +2902,6 @@ export function evaluateAurasAndWatchersEye(
               n.includes('cold snap') ||
               n.includes('vortex') ||
               n.includes('creeping frost') ||
-              n.includes('frostblink') ||
               n.includes('arctic armour') ||
               n.includes('wintertide')
             );
@@ -3122,13 +3302,55 @@ export function evaluateAurasAndWatchersEye(
     }
   }
 
-  // Summon Spectral Tiger stack count
-  if (build.game === 'poe1' && allCandidates.some((c) => c.isSpectralTigerBuff)) {
-    const tigerCount =
-      typeof build.config.rawInputs?.multiplierSpectralTigerCount === 'number'
-        ? build.config.rawInputs.multiplierSpectralTigerCount
-        : 5;
-    playerDb.setMultiplier('SpectralTigerCount', Math.max(0, tigerCount));
+  // Inject deduplicated PoE 2 Ice Bite & persistent support buffs (one highest-tier entry per family;
+  // skip Ice Bite when already socketed on the main active skill group so engine.ts never double-counts it).
+  if (build.game === 'poe2') {
+    if (poe2IceBiteBest && !poe2IceBiteOnMain) {
+      const globalSupCmods = resolveAuraLevelCompiledMods(poe2IceBiteBest.def, poe2IceBiteBest.effLevel);
+      if (globalSupCmods && globalSupCmods.length > 0) {
+        const pMods = globalSupCmods.filter((m) => m.target === 'player');
+        if (pMods.length > 0) {
+          injectCompiledGemMods(playerDb, enemyDb, minionDb, pMods, `Support Buff: ${poe2IceBiteBest.def.name.en}`, {
+            game: 'poe2',
+          });
+        }
+      }
+    }
+    for (const best of poe2PersistentSupFamilyBest.values()) {
+      const cmods = resolveAuraLevelCompiledMods(best.def, best.effLevel);
+      if (cmods && cmods.length > 0) {
+        const pMods = cmods.filter((m) => m.target === 'player');
+        if (pMods.length > 0) {
+          injectCompiledGemMods(playerDb, enemyDb, minionDb, pMods, `Support Buff: ${best.def.name.en}`, {
+            game: 'poe2',
+          });
+        }
+      }
+    }
+  }
+
+  // Summon Spectral Tiger stack count & tree/item trigger synthesis (Huntleader node 35011 / Farrul's Chase)
+  if (build.game === 'poe1') {
+    const hasTigerCandidate = allCandidates.some((c) => c.isSpectralTigerBuff);
+    const hasTigerFromTreeOrItem =
+      !hasTigerCandidate &&
+      (build.tree.allocatedNodeIds.includes(35011) ||
+        getActiveEquippedItemsSimple(build).some(({ item }) =>
+          collectCleanItemLines(item).some((l) => /Triggers?\s+Level\s+\d+\s+Summon\s+Spectral\s+Tiger/i.test(l)),
+        ));
+    if (hasTigerCandidate || hasTigerFromTreeOrItem) {
+      const tigerCount =
+        typeof build.config.rawInputs?.multiplierSpectralTigerCount === 'number'
+          ? build.config.rawInputs.multiplierSpectralTigerCount
+          : 5;
+      playerDb.setMultiplier('SpectralTigerCount', Math.max(0, tigerCount));
+      if (hasTigerFromTreeOrItem && tigerCount > 0) {
+        const tigerSrc = `Skill: Summon Spectral Tiger (${tigerCount} tigers)`;
+        playerDb.addMod(mkMod('Speed', 'INC', 7 * tigerCount, tigerSrc, ModFlag.Attack));
+        playerDb.addMod(mkMod('Speed', 'INC', 7 * tigerCount, tigerSrc, ModFlag.Spell));
+        playerDb.addMod(mkMod('CritChance', 'INC', 25 * tigerCount, tigerSrc));
+      }
+    }
   }
 
   // Approaching Flames (Annihilation's Approach boots) -> Adrenaline
@@ -3356,7 +3578,11 @@ export function evaluateAurasAndWatchersEye(
         clampedLv >= 36 ? 31 : clampedLv >= 30 ? 30 : 20 + Math.floor(clampedLv / 3);
       const effectiveMarkQualInc =
         qualCurseEffInc !== 0 ? qualCurseEffInc : Math.trunc(Math.max(0, effQuality) * 0.5);
-      const totalMarkEffInc = baseMarkEffectPct + cand.groupCurseEffectInc + effectiveMarkQualInc;
+      const totalMarkEffInc =
+        baseMarkEffectPct +
+        cand.groupCurseEffectInc +
+        effectiveMarkQualInc +
+        (perSkillEffectPct.get("alchemist's mark") ?? 0);
       const markEffMult = Math.max(0, 1 + totalMarkEffInc / 100);
       const causticPct = Math.floor(baseCausticPct * markEffMult + 1e-9);
       const burningPct = Math.floor(baseBurningPct * markEffMult + 1e-9);
@@ -3469,10 +3695,84 @@ export function evaluateAurasAndWatchersEye(
         lowerAuraName === 'defiance banner');
     const bannerAuraEffInc = isBannerAura ? playerDb.sum('INC', 'BannerAuraEffect') : 0;
 
-    const skillSpecificEffectPct = perSkillEffectPct.get(lowerAuraName) ?? 0;
+    const baseAuraNameLower = lowerAuraName.replace(/^vaal\s+/, '');
+    const auraEffectDbKeys: string[] = [];
+    const auraLabelForKey = cand.canonicalAuraName ?? def.name.en;
+    if (auraLabelForKey) {
+      auraEffectDbKeys.push(`AuraEffect:${auraLabelForKey}`);
+      const noSpaceAura = auraLabelForKey.replace(/\s+/g, '');
+      if (noSpaceAura !== auraLabelForKey) {
+        auraEffectDbKeys.push(`AuraEffect:${noSpaceAura}`);
+      }
+      auraEffectDbKeys.push(`${noSpaceAura}AuraEffect`);
+      if (/^vaal\s+/i.test(auraLabelForKey)) {
+        const baseLabel = auraLabelForKey.replace(/^vaal\s+/i, '');
+        const baseNoSpace = baseLabel.replace(/\s+/g, '');
+        auraEffectDbKeys.push(`AuraEffect:${baseLabel}`);
+        if (baseNoSpace !== baseLabel) {
+          auraEffectDbKeys.push(`AuraEffect:${baseNoSpace}`);
+        }
+        auraEffectDbKeys.push(`${baseNoSpace}AuraEffect`);
+      }
+    }
+    let dbPerAuraEffectPct = 0;
+    for (const statKey of new Set(auraEffectDbKeys)) {
+      const statRes = playerDb.calcStat(statKey);
+      for (const s of statRes.sources) {
+        if (s.type !== 'INC' || typeof s.value !== 'number') continue;
+        const normSrc = s.source.replace(/\s*\[Implicit\]$/i, '');
+        if (
+          perSkillEffectScannedSources.has(`${lowerAuraName}|${normSrc}`) ||
+          (baseAuraNameLower !== lowerAuraName &&
+            perSkillEffectScannedSources.has(`${baseAuraNameLower}|${normSrc}`))
+        ) {
+          continue;
+        }
+        dbPerAuraEffectPct += s.value;
+      }
+    }
+    const skillSpecificCurseEffectPct = (() => {
+      if (!isCurseOrMark) return 0;
+      const curseKeys: string[] = [];
+      const curseLabel = def.name.en;
+      if (curseLabel) {
+        curseKeys.push(`CurseEffect:${curseLabel}`);
+        const noSpace = curseLabel.replace(/[^A-Za-z0-9]/g, '');
+        if (noSpace && noSpace !== curseLabel) {
+          curseKeys.push(`CurseEffect:${noSpace}`);
+        }
+        if (noSpace) {
+          curseKeys.push(`${noSpace}CurseEffect`);
+          if (isMark) {
+            curseKeys.push(`MarkEffect:${curseLabel}`);
+            curseKeys.push(`MarkEffect:${noSpace}`);
+            curseKeys.push(`${noSpace}MarkEffect`);
+          }
+        }
+      }
+      let dbCurseEff = 0;
+      for (const ck of curseKeys) {
+        const res = playerDb.calcStat(ck);
+        for (const s of res.sources) {
+          if (s.type !== 'INC' || typeof s.value !== 'number') continue;
+          const normSrc = s.source.replace(/\s*\[Implicit\]$/i, '');
+          if (perSkillEffectScannedSources.has(`${lowerAuraName}|${normSrc}`)) continue;
+          dbCurseEff += s.value;
+        }
+      }
+      return (perSkillEffectPct.get(lowerAuraName) ?? 0) + dbCurseEff;
+    })();
+    const itemSkillSpecificEffectPct =
+      (perSkillEffectPct.get(lowerAuraName) ?? 0) +
+      (baseAuraNameLower !== lowerAuraName ? (perSkillEffectPct.get(baseAuraNameLower) ?? 0) : 0);
+    const skillSpecificEffectPct = itemSkillSpecificEffectPct + dbPerAuraEffectPct;
     const skillSpecificResEffPct =
       (perSkillResEffPct.get(lowerAuraName) ?? 0) +
-      playerDb.sum('INC', `SkillManaReservationEfficiency:${lowerAuraName}`);
+      (baseAuraNameLower !== lowerAuraName ? (perSkillResEffPct.get(baseAuraNameLower) ?? 0) : 0) +
+      playerDb.sum('INC', `SkillManaReservationEfficiency:${lowerAuraName}`) +
+      (baseAuraNameLower !== lowerAuraName
+        ? playerDb.sum('INC', `SkillManaReservationEfficiency:${baseAuraNameLower}`)
+        : 0);
 
     const auraEffectPctForPlayer = isAura
       ? baseAuraEffectPct +
@@ -3587,7 +3887,10 @@ export function evaluateAurasAndWatchersEye(
             ? 0.5
             : 1;
         const totalCurseInc =
-          (isMark ? baseMarkEffectPct : baseCurseEffectPct) + cand.groupCurseEffectInc + qualCurseEffInc;
+          (isMark ? baseMarkEffectPct : baseCurseEffectPct) +
+          cand.groupCurseEffectInc +
+          qualCurseEffInc +
+          skillSpecificCurseEffectPct;
         const spiderWebStacks =
           build.game === 'poe1' && lowerAuraName === 'aspect of the spider'
             ? Math.max(
@@ -3635,7 +3938,10 @@ export function evaluateAurasAndWatchersEye(
             ? 0.5
             : 1;
         const totalCurseInc =
-          (isMark ? baseMarkEffectPct : baseCurseEffectPct) + cand.groupCurseEffectInc + qualCurseEffInc;
+          (isMark ? baseMarkEffectPct : baseCurseEffectPct) +
+          cand.groupCurseEffectInc +
+          qualCurseEffInc +
+          skillSpecificCurseEffectPct;
         const heraldEffectMult = isHerald
           ? Math.max(
               0,
@@ -3740,8 +4046,12 @@ export function evaluateAurasAndWatchersEye(
         if (isAura && (auraEffectPctForPlayer > 0 || supremeEgoMoreMult !== 1)) {
           const totalMult = (1 + auraEffectPctForPlayer / 100) * supremeEgoMoreMult;
           playerMods = scaleNumericMods(parsedBaseMods, totalMult, true);
-        } else if (isCurseOrMark && baseCurseEffectPct > 0) {
-          playerMods = scaleNumericMods(parsedBaseMods, 1 + baseCurseEffectPct / 100, false);
+        } else if (isCurseOrMark && baseCurseEffectPct + skillSpecificCurseEffectPct > 0) {
+          playerMods = scaleNumericMods(
+            parsedBaseMods,
+            1 + (baseCurseEffectPct + skillSpecificCurseEffectPct) / 100,
+            false,
+          );
         } else {
           playerMods = [...parsedBaseMods];
         }
@@ -3935,7 +4245,38 @@ export function evaluateAurasAndWatchersEye(
       const cmods = resolveAuraLevelCompiledMods(cDef, 1);
       if (cmods && cmods.length > 0) {
         const enemyCmods = cmods.filter((m) => m.target === 'enemy');
-        const totalEff = (isMark ? baseMarkEffectPct : baseCurseEffectPct) + entry.effectPct;
+        const curseSpecificHitEff = (() => {
+          const curseKeys: string[] = [];
+          const curseLabel = cDef.name.en;
+          if (curseLabel) {
+            curseKeys.push(`CurseEffect:${curseLabel}`);
+            const noSpace = curseLabel.replace(/[^A-Za-z0-9]/g, '');
+            if (noSpace && noSpace !== curseLabel) curseKeys.push(`CurseEffect:${noSpace}`);
+            if (noSpace) {
+              curseKeys.push(`${noSpace}CurseEffect`);
+              if (isMark) {
+                curseKeys.push(`MarkEffect:${curseLabel}`);
+                curseKeys.push(`MarkEffect:${noSpace}`);
+                curseKeys.push(`${noSpace}MarkEffect`);
+              }
+            }
+          }
+          let dbCurseEff = 0;
+          for (const ck of curseKeys) {
+            const res = playerDb.calcStat(ck);
+            for (const s of res.sources) {
+              if (s.type !== 'INC' || typeof s.value !== 'number') continue;
+              const normSrc = s.source.replace(/\s*\[Implicit\]$/i, '');
+              if (perSkillEffectScannedSources.has(`${lowerCurse}|${normSrc}`)) continue;
+              dbCurseEff += s.value;
+            }
+          }
+          return (perSkillEffectPct.get(lowerCurse) ?? 0) + dbCurseEff;
+        })();
+        const totalEff =
+          (isMark ? baseMarkEffectPct : baseCurseEffectPct) +
+          entry.effectPct +
+          curseSpecificHitEff;
         const mult = Math.max(0, 1 + totalEff / 100);
         if (enemyCmods.length > 0) {
           injectCompiledGemMods(playerDb, enemyDb, minionDb, enemyCmods, `${entry.source} (${cDef.name.en} on Hit)`, {

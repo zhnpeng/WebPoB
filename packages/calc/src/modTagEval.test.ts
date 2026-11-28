@@ -1145,4 +1145,169 @@ describe('parseConditionalSuffix', () => {
       evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'SpellCostsLife' }] }), ctxAllowed).active,
     ).toBe(true);
   });
+
+  it('enforces CanApply*Exposure===false even when Enemy*Exposure is true and derives CritInPast8Sec from CritRecently (Wave 4S)', () => {
+    const ctxBlocked = createEmptyEvalContext();
+    ctxBlocked.conditions.EnemyLightningExposure = true;
+    ctxBlocked.conditions.CanApplyLightningExposure = false;
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'EnemyLightningExposure' }] }), ctxBlocked)
+        .active,
+    ).toBe(false);
+
+    const ctxCrit = createEmptyEvalContext();
+    ctxCrit.conditions.CritRecently = true;
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'CritInPast8Sec' }] }), ctxCrit).active,
+    ).toBe(true);
+  });
+
+  it('evaluates Wave 4U Bloodline/Threshold tags (string & structured MultiplierThreshold/StatThreshold, upper/neg, PerStat dual-source)', () => {
+    const ctx = createEmptyEvalContext();
+    ctx.multipliers.CorruptedItem = 4;
+    ctx.multipliers.GhastlyEyeJewel = 3;
+    ctx.multipliers.Rage = 12;
+    ctx.multipliers.ActiveTotem = 2;
+    ctx.multipliers.ActiveTotemLimit = 3;
+    ctx.stats.ActiveZombieLimit = 8;
+    ctx.multipliers.ActiveRagingSpiritLimit = 20;
+
+    // String-encoded Condition thresholds
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'MultiplierThreshold:CorruptedItem:4' }] }), ctx).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'MultiplierThreshold:CorruptedItem:5' }] }), ctx).active,
+    ).toBe(false);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'MultiplierThreshold:GhastlyEyeJewel:3' }] }), ctx).active,
+    ).toBe(true);
+    // Aliased multiplier resolution inside MultiplierThreshold
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'MultiplierThreshold:SummonedTotem:2' }] }), ctx).active,
+    ).toBe(true);
+    // Upper-bound threshold
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'MultiplierThreshold:Rage:15:upper' }] }), ctx).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'MultiplierThreshold:Rage:10:upper' }] }), ctx).active,
+    ).toBe(false);
+
+    // Structured runtime MultiplierThreshold & StatThreshold tags
+    expect(
+      evaluateModTags(
+        makeMod({
+          tags: [{ type: 'MultiplierThreshold', var: 'CorruptedItem', threshold: 4 } as unknown as ModTag],
+        }),
+        ctx,
+      ).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(
+        makeMod({
+          tags: [{ type: 'MultiplierThreshold', var: 'Rage', threshold: 10, upper: true } as unknown as ModTag],
+        }),
+        ctx,
+      ).active,
+    ).toBe(false);
+    expect(
+      evaluateModTags(
+        makeMod({
+          tags: [{ type: 'StatThreshold', stat: 'ActiveZombieLimit', threshold: 8 } as unknown as ModTag],
+        }),
+        ctx,
+      ).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(
+        makeMod({
+          tags: [{ type: 'StatThreshold', stat: 'ActiveZombieLimit', threshold: 8, neg: true } as unknown as ModTag],
+        }),
+        ctx,
+      ).active,
+    ).toBe(false);
+
+    // PerStat dual-source fallback (ctx.stats and ctx.multipliers)
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'PerStat', stat: 'ActiveZombieLimit', div: 1 }] }), ctx).scale,
+    ).toBe(8);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'PerStat', stat: 'ActiveRagingSpiritLimit', div: 2 }] }), ctx).scale,
+    ).toBe(10);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'PerStat', stat: 'ActiveTotemLimit', div: 1 }] }), ctx).scale,
+    ).toBe(3);
+  });
+
+  it('guards EnemyExposure with CanApply*Exposure===false and gates Shapeshifted when shifted back to Human (Wave 4V)', () => {
+    const ctxExpBlocked = createEmptyEvalContext();
+    ctxExpBlocked.conditions.EnemyLightningExposure = true;
+    ctxExpBlocked.conditions.CanApplyLightningExposure = false;
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'EnemyExposure' }] }), ctxExpBlocked).active,
+    ).toBe(false);
+
+    const ctxExpAllowed = createEmptyEvalContext();
+    ctxExpAllowed.conditions.EnemyColdExposure = true;
+    ctxExpAllowed.conditions.CanApplyLightningExposure = false;
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'EnemyExposure' }] }), ctxExpAllowed).active,
+    ).toBe(true);
+
+    // Human spell with both ShapeshiftToAnimal and ShapeshiftToHuman is NOT currently Shapeshifted
+    const ctxHuman = createEmptyEvalContext();
+    ctxHuman.conditions.ShapeshiftToAnimal = true;
+    ctxHuman.conditions.ShapeshiftToHuman = true;
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'Shapeshifted' }] }), ctxHuman).active,
+    ).toBe(false);
+
+    // Active Bear/Wolf/Wyvern skill with explicit Shapeshifted=true stays active
+    const ctxBear = createEmptyEvalContext();
+    ctxBear.conditions.Shapeshifted = true;
+    ctxBear.conditions.ShapeshiftToHuman = true;
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'Shapeshifted' }] }), ctxBear).active,
+    ).toBe(true);
+  });
+
+  it('evaluates Wave 4Y PoE 1+2 parity aliases (EnemyBurning<-EnemyIgnited, OnConsecratedGround, CritRecently, PerStat attribute aliases)', () => {
+    const ctx = createEmptyEvalContext();
+    ctx.conditions.EnemyIgnited = true;
+    ctx.conditions.ConsecratedGround = true;
+    ctx.conditions.SkillCritRecently = true;
+    ctx.stats.Str = 450;
+    ctx.stats.EnergyShield = 1200;
+
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'EnemyBurning' }] }), ctx).active).toBe(true);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'OnConsecratedGround' }] }), ctx).active).toBe(true);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'CritRecently' }] }), ctx).active).toBe(true);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'PerStat', stat: 'Strength', div: 10 }] }), ctx).scale).toBe(45);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'PerStat', stat: 'ES', div: 100 }] }), ctx).scale).toBe(12);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'StatThreshold:Strength:400' }] }), ctx).active,
+    ).toBe(true);
+  });
+
+  it('aliases EnergyShieldRechargePastTwoSec <-> EnergyShieldRechargeStartedRecently and HaveEnergyShield <- FullEnergyShield (Wave 4Z)', () => {
+    const ctx = createEmptyEvalContext();
+    ctx.conditions.EnergyShieldRechargePastTwoSec = true;
+    ctx.conditions.FullEnergyShield = true;
+
+    expect(
+      evaluateModTags(
+        makeMod({ tags: [{ type: 'Condition', var: 'EnergyShieldRechargeStartedRecently' }] }),
+        ctx,
+      ).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'HaveEnergyShield' }] }), ctx).active,
+    ).toBe(true);
+
+    const ctxNoEsCond = createEmptyEvalContext();
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'HaveEnergyShield' }] }), ctxNoEsCond).active,
+    ).toBe(false);
+  });
 });

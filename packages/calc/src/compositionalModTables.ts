@@ -1169,6 +1169,27 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
     apply: () => ({ tags: [{ type: 'Condition', var: 'Unarmed' }] }),
   },
   {
+    regex: /(?:\s*,\s*|\s+)while\s+you\s+have\s+Unbroken\s+Ward$/i,
+    apply: () => ({ tags: [{ type: 'Condition', var: 'HaveUnbrokenWard' }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)while\s+at\s+(Maximum|Minimum)\s+(Power|Frenzy|Endurance)\s+Charges$/i,
+    apply: (m) => ({
+      tags: [
+        {
+          type: 'Condition',
+          var: `At${m[1]!.toLowerCase() === 'maximum' ? 'Max' : 'Min'}${capFirst(m[2]!)}Charges`,
+        },
+      ],
+    }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)if\s+you\s+have\s+(?:an\s+)?Equipped\s+(Helmet|Body Armour|Gloves|Boots)\s+with\s+no\s+Socketed\s+Gems$/i,
+    apply: (m) => ({
+      tags: [{ type: 'Condition', var: `NoSocketedGemsIn${toPascalCase(m[1]!)}` }],
+    }),
+  },
+  {
     regex: /(?:\s*,\s*|\s+)while\s+Leeching(?:\s+(Life|Mana|Energy Shield))?$/i,
     apply: (m) => ({
       tags: [{ type: 'Condition', var: m[1] ? `Leeching${toPascalCase(m[1])}` : 'Leeching' }],
@@ -1452,6 +1473,22 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
     apply: (m) => ({ tags: [{ type: 'Condition', var: `Been${capFirst(m[1]!)}Recently` }] }),
   },
   {
+    regex: /(?:\s*,\s*|\s+)while\s+not\s+Ignited,\s+Frozen\s+or\s+Shocked$/i,
+    apply: () => ({ tags: [{ type: 'Condition', var: 'Ignited|Frozen|Shocked', neg: true }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)if\s+you(?:'ve|\s+have)\s+(Ignited|Chilled|Frozen|Shocked|Poisoned|Scorched|Brittle|Sapped)\s+an\s+Enemy\s+Recently$/i,
+    apply: (m) => ({ tags: [{ type: 'Condition', var: `${capFirst(m[1]!)}EnemyRecently` }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)while\s+Insane$/i,
+    apply: () => ({ tags: [{ type: 'Condition', var: 'Insane' }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)while\s+Sane$/i,
+    apply: () => ({ tags: [{ type: 'Condition', var: 'Insane', neg: true }] }),
+  },
+  {
     regex: /(?:\s*,\s*|\s+)if\s+you(?:'ve|\s+have)\s+Shapeshifted(?:\s+to\s+an\s+Animal\s+form)?\s+Recently$/i,
     apply: () => ({ tags: [{ type: 'Condition', var: 'ShapeshiftedRecently' }] }),
   },
@@ -1713,6 +1750,7 @@ export const MOD_NAME_TABLE: Record<string, ModNameTarget> = {
   'maximum energy shield': { names: ['EnergyShield'] },
   'global energy shield': { names: ['EnergyShield'] },
   ward: { names: ['Ward'] },
+  'ward from equipped armour items': { names: ['Ward'] },
   'maximum ward': { names: ['Ward'] },
   'runic ward': { names: ['Ward'] },
   'maximum runic ward': { names: ['Ward'] },
@@ -2014,6 +2052,12 @@ export const MOD_NAME_TABLE: Record<string, ModNameTarget> = {
   'effect of chill': { names: ['ChillEffect'] },
   'effect of chill on you': { names: ['SelfChillEffect'] },
   'effect of chill and shock on you': { names: ['SelfChillEffect', 'SelfShockEffect'] },
+  'effect of scorch': { names: ['EnemyScorchEffect'] },
+  'effect of scorch you inflict': { names: ['EnemyScorchEffect'] },
+  'effect of brittle': { names: ['EnemyBrittleEffect'] },
+  'effect of brittle you inflict': { names: ['EnemyBrittleEffect'] },
+  'effect of sap': { names: ['EnemySapEffect'] },
+  'effect of sap you inflict': { names: ['EnemySapEffect'] },
   'effect of exposure on you': { names: ['ExposureEffectOnSelf'] },
   'magnitude of ignite on you': { names: ['SelfIgniteMagnitude'] },
   'magnitude of shock on you': { names: ['SelfShockMagnitude'] },

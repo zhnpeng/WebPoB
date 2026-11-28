@@ -93,6 +93,11 @@ function resourceModName(raw: string): string {
   return raw;
 }
 
+function makeSocketedInTag(src: string): { type: 'SocketedIn'; slotName?: string } {
+  const m = src.match(/^Item \(([^)]+)\)/i);
+  return m?.[1] ? { type: 'SocketedIn', slotName: m[1] } : { type: 'SocketedIn' };
+}
+
 function capFirst(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 }
@@ -658,14 +663,14 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
   },
   {
     pattern: /^Socketed (?:Gems|Skills) deal Double Damage$/i,
-    build: (_, src) => [{ ...mkMod('DoubleDamageChance', 'BASE', 100, src), tags: [{ type: 'SocketedIn' }] }],
+    build: (_, src) => [{ ...mkMod('DoubleDamageChance', 'BASE', 100, src), tags: [makeSocketedInTag(src)] }],
   },
   {
     pattern: /^Socketed Vaal (?:Gems|Skills) (?:deal|have) (\d+)% (more|less) Damage$/i,
     build: (m, src) => [
       {
         ...mkMod('Damage', 'MORE', (m[2]!.toLowerCase() === 'less' ? -1 : 1) * Number(m[1]), src),
-        tags: [{ type: 'SocketedIn' }],
+        tags: [makeSocketedInTag(src), { type: 'SkillType' as const, skillType: 'Vaal' }],
       },
     ],
   },
@@ -697,7 +702,7 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
       } else if (kind === 'area') {
         flag |= ModFlag.Area;
       }
-      return [{ ...mkMod(statName, 'MORE', val, src, flag), tags: [{ type: 'SocketedIn' }] }];
+      return [{ ...mkMod(statName, 'MORE', val, src, flag), tags: [makeSocketedInTag(src)] }];
     },
   },
 
@@ -1409,6 +1414,728 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
   {
     pattern: /^Melee Hits Fortify$/i,
     build: (_, src) => [mkMod('MeleeHitsFortify', 'FLAG', true, src)],
+  },
+  // Wave 4T: PoE 1 Bloodline Notable ModParser Rules (aligned with upstream PoB 1 ModParser.lua:3105-3176)
+  // 1. The Unseen Hand & Toad's Price (Ritualist Bloodline)
+  {
+    pattern: /^\+1 Ring Slot$/i,
+    build: (_, src) => [mkMod('AdditionalRingSlot', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Utility Flasks are Disabled$/i,
+    build: (_, src) => [
+      mkMod('UtilityFlasksDoNotApplyToPlayer', 'FLAG', true, src),
+      mkMod('DisableUtilityFlasks', 'FLAG', true, src),
+    ],
+  },
+  // 2. Conjoined Spire (Abyssal Bloodline)
+  {
+    pattern: /^(\d+)% less Damage taken while you have a Totem$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('DamageTaken', 'MORE', -Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'HaveTotem' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Skills used by Totems deal (\d+)% more Damage per maximum number of Summoned Totems$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'MORE', Number(m[1]), src),
+        tags: [
+          { type: 'PerStat' as const, stat: 'ActiveTotemLimit', div: 1 },
+          { type: 'SkillType' as const, skillType: 'Totem' },
+        ],
+      },
+    ],
+  },
+  {
+    pattern: /^Skills used by Totems have (\d+)% more Area of Effect per maximum number of Summoned Totems$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('AreaOfEffect', 'MORE', Number(m[1]), src),
+        tags: [
+          { type: 'PerStat' as const, stat: 'ActiveTotemLimit', div: 1 },
+          { type: 'SkillType' as const, skillType: 'Totem' },
+        ],
+      },
+    ],
+  },
+  {
+    pattern: /^Totems have (\d+)% more Life per maximum number of Summoned Totems$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('TotemLife', 'MORE', Number(m[1]), src),
+        tags: [{ type: 'PerStat' as const, stat: 'ActiveTotemLimit', div: 1 }],
+      },
+    ],
+  },
+  // 3. Cryogenesis
+  {
+    pattern: /^You gain Added (Cold|Lightning) Damage instead of Added Damage of other types if (?:Dexterity|Intelligence) exceeds both other Attributes$/i,
+    build: (m, src) => [mkMod(`Cryogenesis${capFirst(m[1]!)}`, 'FLAG', true, src)],
+  },
+  // 4. Bitter Heresy (Profane Ground -> Malediction / Chaotic Might)
+  {
+    pattern: /^Create Profane Ground instead of Consecrated Ground$/i,
+    build: (_, src) => [mkMod('CreateProfaneGround', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Profane Ground you create inflicts Malediction on Enemies$/i,
+    build: (_, src) => [
+      mkMod('ProfaneGroundInflictsMalediction', 'FLAG', true, src),
+      {
+        ...mkMod('EnemyDamageTaken', 'INC', 10, src),
+        tags: [{ type: 'Condition' as const, var: 'EnemyOnConsecratedGround' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Profane Ground you create also affects you and your Allies, granting Chaotic Might$/i,
+    build: (_, src) => [
+      mkMod('ProfaneGroundGrantsChaoticMight', 'FLAG', true, src),
+      {
+        ...mkMod('Condition:ChaoticMight', 'FLAG', true, src),
+        tags: [{ type: 'Condition' as const, var: 'OnConsecratedGround' }],
+      },
+    ],
+  },
+  // 5. The Vivid Cat (Mark Effect while Elusive — consumed natively by engine.ts MarkEffect)
+  {
+    pattern: /^(\d+)% increased Effect of your Marks while Elusive$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('MarkEffect', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'Elusive' }],
+      },
+    ],
+  },
+  // 6. Umbral Army (per SRS / Zombie / Skeleton / Spectre / Phantasm)
+  {
+    pattern: /^(\d+)% increased Attack and Cast Speed per Summoned Raging Spirit$/i,
+    build: (m, src) => {
+      const val = Number(m[1]);
+      const tag = { type: 'PerStat' as const, stat: 'ActiveRagingSpiritLimit', div: 1 };
+      return [
+        { ...mkMod('Speed', 'INC', val, src, ModFlag.Attack), tags: [tag] },
+        { ...mkMod('Speed', 'INC', val, src, ModFlag.Spell), tags: [tag] },
+      ];
+    },
+  },
+  {
+    pattern: /^(\d+)% increased Attack Damage per Raised Zombie$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'INC', Number(m[1]), src, ModFlag.Attack),
+        tags: [{ type: 'PerStat' as const, stat: 'ActiveZombieLimit', div: 1 }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased Spell Damage per Summoned Skeleton$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'INC', Number(m[1]), src, ModFlag.Spell),
+        tags: [{ type: 'PerStat' as const, stat: 'ActiveSkeletonLimit', div: 1 }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased Defences per Raised Spectre$/i,
+    build: (m, src) => {
+      const val = Number(m[1]);
+      const tag = { type: 'PerStat' as const, stat: 'ActiveSpectreLimit', div: 1 };
+      return [
+        { ...mkMod('Armour', 'INC', val, src), tags: [tag] },
+        { ...mkMod('Evasion', 'INC', val, src), tags: [tag] },
+        { ...mkMod('EnergyShield', 'INC', val, src), tags: [tag] },
+        { ...mkMod('Ward', 'INC', val, src), tags: [tag] },
+      ];
+    },
+  },
+  {
+    pattern: /^(\d+)% increased Movement Speed per Summoned Phantasm$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('MovementSpeed', 'INC', Number(m[1]), src),
+        tags: [{ type: 'PerStat' as const, stat: 'ActivePhantasmLimit', div: 1 }],
+      },
+    ],
+  },
+  // 7. Cannibalised Faith & Oshabi Life-Cost Added Damage
+  {
+    pattern: /^Spells you cast yourself gain Added Physical Damage equal to (\d+)% of Life Cost, if Life Cost is not higher than the maximum you could spend$/i,
+    build: (m, src) => [mkMod('AddedPhysicalDamageFromLifeCostPct', 'BASE', Number(m[1]), src, ModFlag.Spell)],
+  },
+  {
+    pattern: /^Skills gain Added Chaos Damage equal to (\d+)% of Life Cost, if Life Cost is not higher than the maximum you could spend$/i,
+    build: (m, src) => [mkMod('AddedChaosDamageFromLifeCostPct', 'BASE', Number(m[1]), src)],
+  },
+  // 8. Enhanced Starlight & small Ward Bloodline nodes
+  {
+    pattern: /^(\d+)% increased Ward from Equipped Armour Items$/i,
+    build: (m, src) => [mkMod('Ward', 'INC', Number(m[1]), src)],
+  },
+  // 9. Ghastly Gaze of the Lich
+  {
+    pattern: /^Unholy Might you grant also causes target's Damage to Penetrate (\d+)% Chaos Resistance$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('UnholyMightAlsoChaosPenetration', 'BASE', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'MultiplierThreshold:GhastlyEyeJewel:3' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Unholy Might you grant also applies (\d+)% increased Effect of Withered$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('UnholyMightAlsoWitherEffect', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'MultiplierThreshold:GhastlyEyeJewel:3' }],
+      },
+    ],
+  },
+  // 10. The King's Might
+  {
+    pattern: /^(Grace|Hatred) has (\d+)% increased Aura Effect while at (Minimum|Maximum) Frenzy Charges$/i,
+    build: (m, src) => [
+      {
+        ...mkMod(`AuraEffect:${capFirst(m[1]!)}`, 'INC', Number(m[2]), src),
+        tags: [
+          {
+            type: 'Condition' as const,
+            var: m[3]!.toLowerCase() === 'minimum' ? 'AtMinimumFrenzyCharges' : 'AtMaximumFrenzyCharges',
+          },
+        ],
+      },
+    ],
+  },
+  // 11. The Primal Owl & Unleash Seal Gain Frequency
+  {
+    pattern: /^Unsealed Spells gain (\d+)% more Damage each time their effects Reoccur$/i,
+    build: (m, src) => [mkMod('MaxSealDamage', 'MORE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Skills Supported by Unleash have (\d+)% increased Seal gain frequency$/i,
+    build: (m, src) => [mkMod('UnleashSealGainFrequency', 'INC', Number(m[1]), src)],
+  },
+  // 12. Precursor's Release (Aul Bloodline)
+  {
+    pattern: /^Action Speed cannot be modified to below Base Value if you have Equipped Boots with no Socketed Gems$/i,
+    build: (_, src) => [mkMod('PrecursorBootsActionSpeed', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Cannot be Stunned if you have an Equipped Helmet with no Socketed Gems$/i,
+    build: (_, src) => [mkMod('PrecursorHelmetStunImmune', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Elemental Ailments cannot be inflicted on you if you have an Equipped Body Armour with no Socketed Gems$/i,
+    build: (_, src) => [mkMod('PrecursorBodyAilmentImmune', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Take no Extra Damage from Critical Strikes if you have Equipped Gloves with no Socketed Gems$/i,
+    build: (_, src) => [mkMod('PrecursorGlovesNoExtraCrit', 'FLAG', true, src)],
+  },
+  // 13. Corruption's Embrace
+  {
+    pattern: /^You have (Shepherd of Souls|Everlasting Sacrifice|Sacrifice of Blood) if at least (\d+) Corrupted Items are Equipped$/i,
+    build: (m, src) => [
+      {
+        ...mkMod(`CorruptionsEmbrace:${m[1]!.replace(/\s+/g, '')}`, 'FLAG', true, src),
+        tags: [{ type: 'Condition' as const, var: `MultiplierThreshold:CorruptedItem:${Number(m[2])}` }],
+      },
+    ],
+  },
+  // 14. Boon of the Mountain & Foul Pact
+  {
+    pattern: /^(\d+)% less Damage Taken from Damage over Time while you have Unbroken Ward$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('DamageTakenOverTime', 'MORE', -Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'UnbrokenWard' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Enemies Pacified by you take (\d+)% increased Damage$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('EnemyDamageTaken', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'EnemyPacified' }],
+      },
+    ],
+  },
+  // Wave 4U: Gladiator Determined Survivor, War of Attrition & Weapon Master
+  {
+    pattern: /^Gain (\d+)% Chance to Block from Equipped Shield instead of the Shield's value$/i,
+    build: (m, src) => [mkMod('ShieldBlockOverride', 'OVERRIDE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Inherent Bonuses from Dual Wielding are doubled$/i,
+    build: (_, src) => [mkMod('DualWieldBonusesDoubled', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Deal (\d+)% more Damage with Hits and Ailments to Rare and Unique Enemies for each second they've ever been in your Presence, up to a maximum of (\d+)%$/i,
+    build: (m, src) => {
+      const perSec = Number(m[1]);
+      const maxPct = Number(m[2]);
+      const tags = [
+        { type: 'Condition' as const, var: 'EnemyRareOrUnique' },
+        { type: 'Multiplier' as const, var: 'PresenceSeconds', limit: Math.floor(maxPct / Math.max(1, perSec)) },
+      ];
+      return [
+        { ...mkMod('Damage', 'MORE', perSec, src, ModFlag.Hit), tags },
+        { ...mkMod('Damage', 'MORE', perSec, src, ModFlag.Ailment), tags },
+      ];
+    },
+  },
+  {
+    pattern: /^(\d+)% more Damage with Hits and Ailments against Enemies that are on Low Life while you are wielding an Axe$/i,
+    build: (m, src) => {
+      const val = Number(m[1]);
+      const tags = [
+        { type: 'Condition' as const, var: 'EnemyLowLife' },
+        { type: 'Condition' as const, var: 'UsingAxe' },
+      ];
+      return [
+        { ...mkMod('Damage', 'MORE', val, src, ModFlag.Hit), tags },
+        { ...mkMod('Damage', 'MORE', val, src, ModFlag.Ailment), tags },
+      ];
+    },
+  },
+  {
+    pattern: /^(\d+)% more Accuracy Rating while wielding a Sword$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Accuracy', 'MORE', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'UsingSword' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% more Area of Effect while wielding a Mace or Sceptre$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('AreaOfEffect', 'MORE', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'UsingMace' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% more Critical Strike Chance while wielding a Dagger$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritChance', 'MORE', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'UsingDagger' }],
+      },
+    ],
+  },
+  // Wave 4V: Elementalist Shaper of Storms (ShockMinimum wired natively in engine.ts:5728)
+  {
+    pattern: /^Shocks from your Hits always increase Damage taken by at least (\d+)%$/i,
+    build: (m, src) => [mkMod('ShockMinimum', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Hits always Shock$/i,
+    build: (_, src) => [mkMod('ShockChance', 'BASE', 100, src)],
+  },
+  {
+    pattern: /^(\d+)% increased Area of Effect while you don't have Convergence$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('AreaOfEffect', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'Convergence', neg: true }],
+      },
+    ],
+  },
+  {
+    pattern: /^Nearby Hindered Enemies deal (\d+)% reduced Damage over Time$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('EnemyDamageDealtOverTime', 'INC', -Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'EnemyHindered' }],
+      },
+    ],
+  },
+  // Wave 4W: High-leverage PoE 1 Onslaught, Intimidate, Saboteur/Occultist/Warden Bloodline notables
+  {
+    pattern: /^(\d+)% increased Onslaught Effect$/i,
+    build: (m, src) => [mkMod('OnslaughtEffect', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Nearby Enemies are Intimidated$/i,
+    build: (_, src) => [
+      {
+        ...mkMod('EnemyDamageTaken', 'INC', 10, src, ModFlag.Attack),
+        tags: [{ type: 'Condition' as const, var: 'EnemyIntimidated', neg: true }],
+      },
+    ],
+  },
+  {
+    pattern: /^(?:\d+% chance to )?gain Onslaught for \d+ seconds on Kill$/i,
+    build: (_, src) => {
+      const tags = [
+        { type: 'Condition' as const, var: 'KilledRecently' },
+        { type: 'Condition' as const, var: 'Onslaught', neg: true },
+      ];
+      return [
+        { ...mkMod('Speed', 'INC', 20, src, ModFlag.Attack | ModFlag.Spell), tags },
+        { ...mkMod('MovementSpeed', 'INC', 20, src), tags },
+      ];
+    },
+  },
+  {
+    pattern: /^Hits have (\d+)% chance to deal (\d+)% more Area Damage$/i,
+    build: (m, src) => [
+      mkMod('Damage', 'MORE', (Number(m[1]) * Number(m[2])) / 100, src, ModFlag.Hit | ModFlag.Area),
+    ],
+  },
+  {
+    pattern: /^(\d+)% less Damage with Triggered Spells$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'MORE', -Number(m[1]), src, ModFlag.Spell),
+        tags: [{ type: 'SkillType' as const, skillType: 'Triggered' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Nearby Chilled Enemies deal (\d+)% reduced Damage with Hits$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('EnemyDamageDealt', 'INC', -Number(m[1]), src, ModFlag.Hit),
+        tags: [{ type: 'Condition' as const, var: 'EnemyChilled' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% reduced Damage taken from Blinded Enemies$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('DamageTaken', 'INC', -Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'EnemyBlinded' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Defences from Equipped Body Armour are doubled if it has no Socketed Gems$/i,
+    build: (_, src) => [mkMod('OathOfTheMajiBodyArmour', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Tinctures applied to you have (\d+)% increased Effect per empty Flask Slot$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('TinctureEffect', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Multiplier' as const, var: 'EmptyFlaskSlot' }],
+      },
+    ],
+  },
+  // Wave 4X: Vaal Skills (Yaomac's Accord / Soul Catcher), Roiling Tempest, Luminary, Critical Ailment DoT Multi
+  {
+    pattern: /^(\d+)% increased Damage with Vaal Skills(?: during effect)?$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'INC', Number(m[1]), src),
+        tags: [{ type: 'SkillType' as const, skillType: 'Vaal' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased Critical Strike Chance with Vaal Skills(?: during effect)?$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritChance', 'INC', Number(m[1]), src),
+        tags: [{ type: 'SkillType' as const, skillType: 'Vaal' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased (Attack and Cast |Attack |Cast )?Speed with Vaal Skills(?: during effect)?$/i,
+    build: (m, src) => {
+      const scope = (m[2] ?? '').trim().toLowerCase();
+      const flags =
+        scope === 'attack'
+          ? ModFlag.Attack
+          : scope === 'cast'
+            ? ModFlag.Spell
+            : ModFlag.Attack | ModFlag.Spell;
+      return [
+        {
+          ...mkMod('Speed', 'INC', Number(m[1]), src, flags),
+          tags: [{ type: 'SkillType' as const, skillType: 'Vaal' }],
+        },
+      ];
+    },
+  },
+  {
+    pattern: /^Cannot deal non-(Physical|Fire|Cold|Lightning|Chaos) Damage$/i,
+    build: (m, src) => {
+      const keep = capFirst(m[1]!);
+      return (['Physical', 'Fire', 'Cold', 'Lightning', 'Chaos'] as const)
+        .filter((dt) => dt !== keep)
+        .map((dt) => mkMod(`DealNo${dt}`, 'FLAG', true, src));
+    },
+  },
+  {
+    pattern: /^Your Mercenary has (\d+)% increased effect of Non-Curse Auras from Skills$/i,
+    build: (m, src) => [mkMod('MercenaryAuraEffect', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Your Mercenary and their Minions deal (\d+)% increased Damage$/i,
+    build: (m, src) => [mkMod('MercenaryDamage', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^\+(\d+)% to Damage over Time Multiplier for Ailments from Critical Strikes$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('DotMultiplier', 'BASE', Number(m[1]), src, ModFlag.Dot, KeywordFlag.Ailment),
+        tags: [{ type: 'Condition' as const, var: 'Crit' }],
+      },
+    ],
+  },
+  // Wave 4Y: Bloodline (Catarina/Farrul), Necromancer Plaguebringer, Assassin Opportunistic, Armour/Evasion 4-slot Masteries
+  {
+    pattern: /^Minions deal (\d+)% more Damage while they are on Low Life$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('MinionDamage', 'MORE', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'MinionLowLife' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Minions deal (\d+)% increased Damage if you have Warcried Recently$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('MinionDamage', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'UsedWarcryRecently' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Maximum number of Raised Spectres is (\d+)$/i,
+    build: (m, src) => [mkMod('ActiveSpectreLimit', 'OVERRIDE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^With at least one corpse within \d+ metres, Enemies within \d+ metres deal (\d+)% reduced Damage$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('EnemyDamageDealt', 'INC', -Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'NearbyCorpse' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% less Damage taken while there are at least two Rare or Unique Enemies within \d+ metres$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('DamageTaken', 'MORE', -Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'TwoRareOrUniqueNearby' }],
+      },
+    ],
+  },
+  {
+    pattern: /^\+(\d+)% to all maximum Elemental Resistances if Equipped Helmet, Body Armour, Gloves, and Boots all have Armour$/i,
+    build: (m, src) => {
+      const val = Number(m[1]);
+      const tags = [{ type: 'Condition' as const, var: 'AllFourArmourSlotsHaveArmour' }];
+      return [
+        { ...mkMod('FireResistMax', 'BASE', val, src), tags },
+        { ...mkMod('ColdResistMax', 'BASE', val, src), tags },
+        { ...mkMod('LightningResistMax', 'BASE', val, src), tags },
+      ];
+    },
+  },
+  {
+    pattern: /^\+(\d+)% chance to Suppress Spell Damage if Equipped Helmet, Body Armour, Gloves, and Boots all have Evasion Rating$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('SpellSuppressionChance', 'BASE', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'AllFourArmourSlotsHaveEvasion' }],
+      },
+    ],
+  },
+  // Wave 5A: Cinderswallow Urn, Doppelganger Guise (Sane/Insane), Per-Aura/Curse Effect, Wilma's Requital, Sandstorm Visage, Coruscating Elixir
+  {
+    pattern: /^Enemies Ignited by you(?: during Effect)? take (\d+)% increased Damage$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('EnemyDamageTaken', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'EnemyIgnited' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% less Physical and Chaos Damage taken while Sane$/i,
+    build: (m, src) => {
+      const val = -Number(m[1]);
+      const tags = [{ type: 'Condition' as const, var: 'Sane' }];
+      return [
+        { ...mkMod('PhysicalDamageTaken', 'MORE', val, src), tags },
+        { ...mkMod('ChaosDamageTaken', 'MORE', val, src), tags },
+      ];
+    },
+  },
+  {
+    pattern: /^(\d+)% increased Attack and Cast Speed while Insane$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Speed', 'INC', Number(m[1]), src, ModFlag.Attack | ModFlag.Spell),
+        tags: [{ type: 'Condition' as const, var: 'Insane' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% more Damage while Insane$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'MORE', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'Insane' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased Damage taken while Insane$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('DamageTaken', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'Insane' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% more Critical Strike Chance while Insane$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritChance', 'MORE', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'Insane' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased ([A-Z][a-zA-Z' ]+?) (Curse|Mark) Effect$/,
+    build: (m, src) => [
+      mkMod(`${m[3] === 'Mark' ? 'MarkEffect' : 'CurseEffect'}:${m[2]!.trim()}`, 'INC', Number(m[1]), src),
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased (Arctic Armour|Tempest Shield|Molten Shell|Steelskin|Immortal Call|Blood Rage|Righteous Fire) Buff Effect$/i,
+    build: (m, src) => [mkMod(`BuffEffect:${m[2]!.trim()}`, 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^(\d+)% more Minion Life$/i,
+    build: (m, src) => [mkMod('MinionLife', 'MORE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Increases and Reductions to Cast Speed apply to Attack Speed$/i,
+    build: (_, src) => [mkMod('CastSpeedAppliesToAttackSpeed', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^(\d+)% increased Armour from Equipped Helmet and Gloves$/i,
+    build: (m, src) => [mkMod('ArmourFromHelmetAndGloves', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Cannot deal Critical Strikes with Attacks$/i,
+    build: (_, src) => [mkMod('NeverCrit', 'FLAG', true, src, ModFlag.Attack)],
+  },
+  {
+    pattern: /^Chaos Damage taken does not bypass Energy Shield(?: during effect)?$/i,
+    build: (_, src) => [mkMod('ChaosDamageDoesNotBypassES', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^(\d+)% of Non-Chaos Damage taken bypasses Energy Shield$/i,
+    build: (m, src) => [mkMod('NonChaosDamageBypassesES', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^You cannot have more than (\d+) Summoned Totems of the same type$/i,
+    build: (m, src) => [mkMod('ActiveTotemLimit', 'MAX', Number(m[1]), src)],
+  },
+  // Wave 5B: Pathfinder Master Distiller (upstream PoB1 ModParser.lua:3017-3028)
+  {
+    pattern: /^If Diamond Flask Charges are consumed, (\d+)% increased Critical Strike Chance$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritChance', 'INC', Number(m[1]), src),
+        tags: [
+          { type: 'SkillType' as const, skillType: 'Triggered', neg: true },
+          { type: 'SkillType' as const, skillType: 'Channel', neg: true },
+          { type: 'Condition' as const, var: 'HaveDiamondFlask' },
+        ],
+      },
+    ],
+  },
+  {
+    pattern: /^If Diamond Flask Charges are consumed, \+(\d+)% to Critical Strike Multiplier$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritMultiplier', 'BASE', Number(m[1]), src),
+        tags: [
+          { type: 'SkillType' as const, skillType: 'Triggered', neg: true },
+          { type: 'SkillType' as const, skillType: 'Channel', neg: true },
+          { type: 'Condition' as const, var: 'HaveDiamondFlask' },
+        ],
+      },
+    ],
+  },
+  {
+    pattern: /^If Bismuth Flask Charges are consumed, Penetrate (\d+)% Elemental Resistances$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('ElementalPenetration', 'BASE', Number(m[1]), src),
+        tags: [
+          { type: 'SkillType' as const, skillType: 'Triggered', neg: true },
+          { type: 'SkillType' as const, skillType: 'Channel', neg: true },
+          { type: 'Condition' as const, var: 'HaveBismuthFlask' },
+        ],
+      },
+    ],
+  },
+  {
+    pattern: /^If Amethyst Flask Charges are consumed, (\d+)% of Physical Damage as Extra Chaos Damage$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('PhysicalDamageGainAsChaos', 'BASE', Number(m[1]), src),
+        tags: [
+          { type: 'SkillType' as const, skillType: 'Triggered', neg: true },
+          { type: 'SkillType' as const, skillType: 'Channel', neg: true },
+          { type: 'Condition' as const, var: 'HaveAmethystFlask' },
+        ],
+      },
+    ],
+  },
+  // Wave 5C: Saboteur Demolitions Specialist (MineAuraEffect — avoids polluting global AuraEffect!), Calculated Risk (DamageIsUnlucky), Pyromaniac, Eternal Struggle
+  {
+    pattern: /^(\d+)% increased Effect of Auras from Mines$/i,
+    build: (m, src) => [mkMod('MineAuraEffect', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Damage with Hits is Unlucky$/i,
+    build: (_, src) => [mkMod('DamageIsUnlucky', 'FLAG', true, src, ModFlag.Hit)],
+  },
+  {
+    pattern: /^Regenerate (\d+(?:\.\d+)?)% of Life per [Ss]econd for each (Mine Detonated|Trap Triggered) Recently, up to (\d+(?:\.\d+)?)% per second$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('LifeRegenPercent', 'BASE', Number(m[1]), src),
+        tags: [
+          {
+            type: 'Multiplier' as const,
+            var: /mine/i.test(m[2]!) ? 'MinesDetonatedRecently' : 'TrapsTriggeredRecently',
+            limit: Math.round(Number(m[3]) / Math.max(0.01, Number(m[1]))),
+          },
+        ],
+      },
+    ],
+  },
+  {
+    pattern: /^Kill Enemies that have (\d+)% or lower Life on Hit if The Searing Exarch is dominant$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CullPercent', 'MAX', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'SearingExarchDominant' }],
+      },
+    ],
   },
 ];
 

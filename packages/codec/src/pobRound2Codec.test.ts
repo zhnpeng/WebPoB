@@ -408,5 +408,71 @@ Implicits: 1
     const harbBuild = xmlToBuild(harbXml);
     expect(harbBuild.config.customMods).toContain('Gain 20% of Maximum Mana as Extra Maximum Energy Shield');
     expect(harbBuild.config.customMods).toContain('55% increased Cooldown Recovery Rate');
+
+    // Wave 4V: PoE 1 3.28+ <Skill imbuedSupport="..."> adds Level 1 Imbued Support gem to the skill group
+    const imbuedXml = `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding>
+  <Build className="Ranger" ascendClassName="Deadeye" level="95" mainSocketGroup="1" />
+  <Tree activeSpec="1"><Spec title="Default" nodes="1" /></Tree>
+  <Skills>
+    <Skill enabled="true" slot="Body Armour" imbuedSupport="Spell Echo">
+      <Gem nameSpec="Arc" level="20" quality="20" enabled="true" />
+    </Skill>
+  </Skills>
+  <Items />
+  <Config />
+</PathOfBuilding>`;
+    const imbuedBuild = xmlToBuild(imbuedXml);
+    expect(imbuedBuild.skills[0]!.gems).toHaveLength(2);
+    expect(imbuedBuild.skills[0]!.gems[1]!.gemId).toBe('poe1_sup_spell_echo');
+    expect(imbuedBuild.skills[0]!.gems[1]!.level).toBe(1);
+    expect(imbuedBuild.skills[0]!.gems[1]!.fromItem).toBe(true);
+
+    // Wave 4W: PoE 1 <Skill groupCount="N"> propagates count to single-gem group & mercenary="true" tags source
+    const groupCountMercXml = `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding>
+  <Build className="Templar" ascendClassName="Guardian" level="95" mainSocketGroup="1" />
+  <Tree activeSpec="1"><Spec title="Default" nodes="1" /></Tree>
+  <Skills>
+    <Skill enabled="true" groupCount="7" includeInFullDPS="true">
+      <Gem nameSpec="Arc" level="20" quality="0" enabled="true" />
+    </Skill>
+    <Skill enabled="true" mercenary="true">
+      <Gem nameSpec="Hatred" level="20" quality="0" enabled="true" />
+    </Skill>
+  </Skills>
+  <Items />
+  <Config />
+</PathOfBuilding>`;
+    const gcBuild = xmlToBuild(groupCountMercXml);
+    expect(gcBuild.skills[0]!.gems[0]!.count).toBe(7);
+    expect(gcBuild.skills[1]!.source).toBe('Mercenary');
+
+    // Wave 5B: Equipped PoE 1 Diamond/Bismuth/Amethyst Flasks populate Master Distiller Have*Flask conditions
+    const distillerXml = `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding>
+  <Build className="Ranger" ascendClassName="Pathfinder" level="95" mainSocketGroup="1" />
+  <Tree activeSpec="1"><Spec title="Default" nodes="1" /></Tree>
+  <Skills><Skill enabled="true"><Gem nameSpec="Arc" level="20" quality="0" enabled="true" /></Skill></Skills>
+  <Items activeItemSet="1">
+    <Item id="1">
+Rarity: MAGIC
+Diamond Flask
+    </Item>
+    <Item id="2">
+Rarity: MAGIC
+Bismuth Flask
+    </Item>
+    <ItemSet id="1">
+      <Slot name="Flask 1" itemId="1" />
+      <Slot name="Flask 2" itemId="2" />
+    </ItemSet>
+  </Items>
+  <Config />
+</PathOfBuilding>`;
+    const distillerBuild = xmlToBuild(distillerXml);
+    expect(distillerBuild.config.rawInputs?.conditionHaveDiamondFlask).toBe(true);
+    expect(distillerBuild.config.rawInputs?.conditionHaveBismuthFlask).toBe(true);
+    expect(distillerBuild.config.rawInputs?.conditionHaveAmethystFlask).toBeUndefined();
   });
 });

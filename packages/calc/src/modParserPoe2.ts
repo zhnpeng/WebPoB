@@ -432,7 +432,7 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     build: (_, src) => [mkMod('HollowPalmTechnique', 'FLAG', true, src)],
   },
   {
-    pattern: /^(\d+(?:\.\d+)?)% more Attack Speed per (\d+) Item Evasion on Equipped Armour Items$/i,
+    pattern: /^(\d+(?:\.\d+)?)% more Attack Speed per (\d+) Item Evasion(?: Rating)? on Equipped Armour Items$/i,
     build: (m, src) => [
       mkMod('HollowPalmTechnique', 'FLAG', true, src),
       mkMod('HollowPalmAttackSpeedPerEvasion', 'BASE', Number(m[1]) / Number(m[2]), src, ModFlag.Attack),
@@ -2564,6 +2564,30 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
       ),
     ],
   },
+  // Wave 4T: Chronomancer Apex of the Moment, Now and Again, Infusion limits
+  {
+    pattern: /^Enemies in your Presence are Slowed by (\d+)%$/i,
+    build: (m, src) => [
+      mkMod('EnemyActionSpeed', 'INC', -Number(m[1]), src),
+      mkMod('Condition:EnemySlowed', 'FLAG', true, src),
+    ],
+  },
+  {
+    pattern: /^(Cascadable|Repeatable) Spells have (\d+)% chance to (Echo|Repeat)$/i,
+    build: (m, src) => [
+      mkMod(
+        m[3]!.toLowerCase() === 'echo' ? 'SpellEchoChance' : 'SpellRepeatChance',
+        'BASE',
+        Number(m[2]),
+        src,
+        ModFlag.Spell,
+      ),
+    ],
+  },
+  {
+    pattern: /^\+(\d+) to maximum (Fire|Cold|Lightning) Infusions?$/i,
+    build: (m, src) => [mkMod(`Max${m[2]}Infusions`, 'BASE', Number(m[1]), src)],
+  },
   // Falcon Dive (PoB 2 ModParser.lua:1620): "1% increased Attack Speed per 400 Accuracy Rating, up to 20%"
   {
     pattern: /^(\d+)% (increased|reduced) (Attack|Cast) Speed per (\d+) Accuracy Rating(?:,\s*up to (\d+)%)?$/i,
@@ -2701,6 +2725,150 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
   {
     pattern: /^Transforms all Cold and Lightning modifiers on (?:this|the) item into equivalent Fire modifiers$/i,
     build: (_, src) => [mkMod('ItemTransformsColdLightToFire', 'FLAG', true, src)],
+  },
+  // Gemling Legionnaire (Gem Studded): "5% increased Maximum Life/Mana/Movement Speed if you have at least 10 Red/Blue/Green Support Gems Socketed"
+  {
+    pattern: /^(\d+)% increased Maximum Life if you have at least (\d+) Red Support Gems Socketed$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Life', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: `MultiplierThreshold:StrengthMoteSkillCount:${m[2]}` }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased Maximum Mana if you have at least (\d+) Blue Support Gems Socketed$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Mana', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: `MultiplierThreshold:IntelligenceMoteSkillCount:${m[2]}` }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased Movement Speed if you have at least (\d+) Green Support Gems Socketed$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('MovementSpeed', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: `MultiplierThreshold:DexterityMoteSkillCount:${m[2]}` }],
+      },
+    ],
+  },
+  // Grand Spectrum Spirit jewel: "2% increased Spirit per socketed Grand Spectrum"
+  {
+    pattern: /^(\d+)% increased Spirit per socketed Grand Spectrum$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Spirit', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Multiplier', var: 'GrandSpectrum' }],
+      },
+    ],
+  },
+  // Warbringer Turtle Charm / Block cap & Shield Base Block overrides
+  {
+    pattern: /^Maximum Block [Cc]hance is (\d+)%$/i,
+    build: (m, src) => [mkMod('BlockChanceMax', 'OVERRIDE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Gain (\d+)% Base Chance to Block from Equipped Shield instead of the Shield's value$/i,
+    build: (m, src) => [mkMod('ShieldBlockChanceOverride', 'OVERRIDE', Number(m[1]), src)],
+  },
+  // PoE 2 ES bypass & Mana regeneration overrides (e.g. Heavy Buffer, Eternal Youth / Lich / Blood Magic)
+  {
+    pattern: /^(\d+)% of Damage taken bypasses Energy Shield$/i,
+    build: (m, src) => [mkMod('DamageTakenBypassesES', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^No inherent Mana Regeneration$/i,
+    build: (_, src) => [mkMod('NoInherentManaRegen', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Regenerate Mana equal to (\d+(?:\.\d+)?)% of maximum Life per second$/i,
+    build: (m, src) => [mkMod('ManaRegenFromLifePct', 'BASE', Number(m[1]), src)],
+  },
+  // Wave 4V: Open Weakness presence speed, Lich Eternal Life, Rage regeneration & Armour defend rules
+  {
+    pattern: /^(\d+)% increased Movement Speed while an enemy with an Open Weakness is in your Presence$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('MovementSpeed', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: 'OpenWeaknessEnemyPresence|EnemyHasOpenWeakness|EnemyOpenWeakness' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Your Life cannot change while you have Energy Shield$/i,
+    build: (_, src) => [mkMod('LifeCannotChangeWhileES', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^No Inherent loss of Rage$/i,
+    build: (_, src) => [mkMod('NoInherentRageLoss', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Regenerate (\d+(?:\.\d+)?)% of your maximum Rage per second$/i,
+    build: (m, src) => [mkMod('RageRegenPct', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Increases and Reductions to Mana Regeneration Rate also apply to Rage Regeneration Rate$/i,
+    build: (_, src) => [mkMod('ManaRegenAppliesToRageRegen', 'FLAG', true, src)],
+  },
+  // Wave 4W: "Gain X% of Maximum Mana/Life/Energy Shield as Armour/Evasion" (e.g. Chronomancer Comet Armour +550)
+  {
+    pattern: /^Gain (\d+(?:\.\d+)?)% of [Mm]aximum (Mana|Life|Energy Shield) as (Armour|Evasion(?: Rating)?)$/i,
+    build: (m, src) => {
+      const fromRaw = m[2]!.toLowerCase();
+      const toRaw = m[3]!.toLowerCase();
+      const fromStat = fromRaw === 'energy shield' ? 'EnergyShield' : fromRaw === 'life' ? 'Life' : 'Mana';
+      const toStat = toRaw.startsWith('evasion') ? 'Evasion' : 'Armour';
+      return [
+        {
+          ...mkMod(toStat, 'BASE', Number(m[1]) / 100, src),
+          tags: [{ type: 'PerStat', stat: fromStat, div: 1 }],
+        },
+      ];
+    },
+  },
+  // Wave 4W: Flat added damage to Unarmed (Melee) Hits / Attacks (e.g. Hollow Palm gloves/rings)
+  {
+    pattern: /^Adds (\d+) to (\d+) (Physical|Fire|Cold|Lightning|Chaos) [Dd]amage to Unarmed(?: Melee)? (?:Hits|Attacks)$/i,
+    build: (m, src) => {
+      const el = `${m[3]!.charAt(0).toUpperCase()}${m[3]!.slice(1).toLowerCase()}`;
+      const flags = /Melee/i.test(m[0]!) ? ModFlag.Attack | ModFlag.Melee : ModFlag.Attack;
+      return [
+        { ...mkMod(`${el}Min`, 'BASE', Number(m[1]), src, flags), tags: [{ type: 'Condition', var: 'Unarmed' }] },
+        { ...mkMod(`${el}Max`, 'BASE', Number(m[2]), src, flags), tags: [{ type: 'Condition', var: 'Unarmed' }] },
+      ];
+    },
+  },
+  // Wave 4X: Chronomancer Now and Again (0_2), Shock reapply, Infinite Curse, Unlimited Totems & Enemy Unlucky mods
+  {
+    pattern: /^Skills have (\d+)% chance to not consume a Cooldown when used$/i,
+    build: (m, src) => [mkMod('ChanceToNotConsumeCooldown', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^(\d+)% chance on Consuming a Shock on an Enemy to reapply it$/i,
+    build: (m, src) => [mkMod('ChanceToReapplyShockOnConsume', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Your Curses have infinite Duration$/i,
+    build: (_, src) => [mkMod('InfiniteCurseDuration', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Unlimited number of Summoned Totems$/i,
+    build: (_, src) => [mkMod('UnlimitedTotems', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Enemy Critical Hit Chance against you is Unlucky$/i,
+    build: (_, src) => [mkMod('EnemyCritChanceUnlucky', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Damage of Enemies Hitting you is Unlucky( while you are on Low Life)?$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('EnemyDamageUnlucky', 'FLAG', true, src),
+        ...(m[1] ? { tags: [{ type: 'Condition' as const, var: 'LowLife' }] } : {}),
+      },
+    ],
   },
 
   // =========================================================================

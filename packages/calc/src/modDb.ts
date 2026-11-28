@@ -453,9 +453,9 @@ export class ModDB {
     return Math.max(0, result);
   }
 
-  flag(name: string, flags = 0, keywordFlags = 0): boolean {
+  flag(names: string | readonly string[], flags = 0, keywordFlags = 0): boolean {
     const ctx = this.getEffectiveEvalContext();
-    for (const mod of this.collect(name, flags, keywordFlags)) {
+    for (const mod of this.collect(names, flags, keywordFlags)) {
       if (mod.type === 'FLAG' && mod.value === true) {
         const evalRes = evaluateModTags(mod, ctx);
         if (evalRes.active) {
@@ -466,17 +466,17 @@ export class ModDB {
     return false;
   }
 
-  override(name: string, flags = 0, keywordFlags = 0): number | null {
+  override(names: string | readonly string[], flags = 0, keywordFlags = 0): number | null {
+    // Matches official PoB ModDB:OverrideInternal — returns the first active OVERRIDE modifier.
     const ctx = this.getEffectiveEvalContext();
-    let value: number | null = null;
-    for (const mod of this.collect(name, flags, keywordFlags)) {
+    for (const mod of this.collect(names, flags, keywordFlags)) {
       if (mod.type === 'OVERRIDE' && typeof mod.value === 'number') {
         const evalRes = evaluateModTags(mod, ctx);
         if (!evalRes.active) continue;
-        value = applyModTagEval(mod.value, evalRes);
+        return applyModTagEval(mod.value, evalRes);
       }
     }
-    return value;
+    return null;
   }
 
   max(
@@ -509,34 +509,47 @@ export class ModDB {
     keywordFlags = 0,
   ): EvaluatedStat {
     const ctx = this.getEffectiveEvalContext();
-    const matched = this.collect(names, flags, keywordFlags);
+    const nameList = typeof names === 'string' ? [names] : names;
     let base = 0;
     let incPct = 0;
     let moreMultiplier = 1;
     let overrideVal: number | null = null;
     const sources: EvaluatedStat['sources'] = [];
 
-    for (const mod of matched) {
-      if (typeof mod.value !== 'number') continue;
-      const evalRes = evaluateModTags(mod, ctx);
-      if (!evalRes.active) continue;
-      const effectiveVal = applyModTagEval(mod.value, evalRes);
-      if (mod.tags && mod.tags.length > 0 && effectiveVal === 0 && mod.type !== 'OVERRIDE') {
-        continue;
-      }
+    for (const name of nameList) {
+      const bucket = this.store.get(name);
+      if (!bucket) continue;
+      let bucketMore = 1;
+      let hasBucketMore = false;
+      for (const mod of bucket) {
+        if (typeof mod.value !== 'number' || !this.matches(mod, flags, keywordFlags)) continue;
+        const evalRes = evaluateModTags(mod, ctx);
+        if (!evalRes.active) continue;
+        const effectiveVal = applyModTagEval(mod.value, evalRes);
+        if (mod.tags && mod.tags.length > 0 && effectiveVal === 0 && mod.type !== 'OVERRIDE') {
+          continue;
+        }
 
-      if (mod.type === 'BASE') {
-        base += effectiveVal;
-        sources.push({ source: mod.source, type: 'BASE', value: effectiveVal });
-      } else if (mod.type === 'INC') {
-        incPct += effectiveVal;
-        sources.push({ source: mod.source, type: 'INC', value: effectiveVal });
-      } else if (mod.type === 'MORE') {
-        moreMultiplier *= 1 + effectiveVal / 100;
-        sources.push({ source: mod.source, type: 'MORE', value: effectiveVal });
-      } else if (mod.type === 'OVERRIDE') {
-        overrideVal = effectiveVal;
-        sources.push({ source: mod.source, type: 'OVERRIDE', value: effectiveVal });
+        if (mod.type === 'BASE') {
+          base += effectiveVal;
+          sources.push({ source: mod.source, type: 'BASE', value: effectiveVal });
+        } else if (mod.type === 'INC') {
+          incPct += effectiveVal;
+          sources.push({ source: mod.source, type: 'INC', value: effectiveVal });
+        } else if (mod.type === 'MORE') {
+          bucketMore *= 1 + effectiveVal / 100;
+          hasBucketMore = true;
+          sources.push({ source: mod.source, type: 'MORE', value: effectiveVal });
+        } else if (mod.type === 'OVERRIDE') {
+          if (overrideVal === null) {
+            overrideVal = effectiveVal;
+          }
+          sources.push({ source: mod.source, type: 'OVERRIDE', value: effectiveVal });
+        }
+      }
+      if (hasBucketMore) {
+        bucketMore = Math.max(0, bucketMore);
+        moreMultiplier *= Math.floor(bucketMore * 100 + 0.5) / 100;
       }
     }
 

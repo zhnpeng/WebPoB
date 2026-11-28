@@ -67,7 +67,45 @@ const KNOWN_GEM_FILTER_TOKENS = new Set([
   'travel',
   'chaining',
   'remnant',
+  'golem',
+  'guard',
+  'link',
+  'blessing',
+  'blink',
+  'stance',
 ]);
+
+const GEM_FILTER_TOKEN_ALIASES: Record<string, string> = {
+  aoe: 'area',
+  hex: 'curse',
+  warcries: 'warcry',
+  totems: 'totem',
+  minions: 'minion',
+  curses: 'curse',
+  auras: 'aura',
+  heralds: 'herald',
+  brands: 'brand',
+  traps: 'trap',
+  mines: 'mine',
+  golems: 'golem',
+  strikes: 'strike',
+  slams: 'slam',
+  grenades: 'grenade',
+  hazards: 'hazard',
+  marks: 'mark',
+  banners: 'banner',
+  companions: 'companion',
+  projectiles: 'projectile',
+  attacks: 'attack',
+  spells: 'spell',
+  bows: 'bow',
+  spears: 'spear',
+  crossbows: 'crossbow',
+  talismans: 'talisman',
+  channeling: 'channelling',
+  channelled: 'channelling',
+  channeled: 'channelling',
+};
 
 /**
  * Normalizes a qualifier string (e.g. "Lightning Spell", "Physical Spell", "AoE", "Fire", "")
@@ -81,7 +119,7 @@ export function normalizeGemFilterTokens(rawFilter?: string): string | null {
     .toLowerCase()
     .split(/\s+/)
     .filter((tok) => tok !== 'all' && tok !== 'skill' && tok !== 'skills' && tok !== 'gem' && tok !== 'gems')
-    .map((tok) => (tok === 'aoe' ? 'area' : tok === 'hex' ? 'curse' : tok));
+    .map((tok) => GEM_FILTER_TOKEN_ALIASES[tok] ?? tok);
   if (tokens.length === 0) return 'all';
   for (const tok of tokens) {
     if (!KNOWN_GEM_FILTER_TOKENS.has(tok)) return null;
@@ -103,7 +141,6 @@ function gemMatchesToken(
   if (token === 'dexterity') return def.color === 'green' || tagSet.has('dexterity');
   if (token === 'intelligence') return def.color === 'blue' || tagSet.has('intelligence');
 
-  if (tagSet.has(token)) return true;
   if (tagSet.has(token)) return true;
   if (def.skillTypes?.some((st) => {
     const low = st.toLowerCase();
@@ -208,6 +245,20 @@ export interface SocketedGemBonusRule {
   value: number;
 }
 
+function interpolateSocketedRange(raw: string): string {
+  const rangeMatch = raw.match(/\{range:([0-9.]+)\}/i);
+  const ratio = rangeMatch ? Math.min(1, Math.max(0, Number(rangeMatch[1]))) : 0.5;
+  return raw.replace(
+    /([+-])\((\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)\)/g,
+    (_, sign: string, minStr: string, maxStr: string) => {
+      const min = Number(minStr);
+      const max = Number(maxStr);
+      const val = Math.round(min + (max - min) * ratio);
+      return `${sign}${val}`;
+    },
+  );
+}
+
 /**
  * Extracts `+N to Level of Socketed [...] Gems` and `+N% to Quality of Socketed [...] Gems`
  * from an item's implicit + explicit mod lines (scoped strictly to gems socketed in that slot).
@@ -215,19 +266,19 @@ export interface SocketedGemBonusRule {
 export function parseSocketedGemBonuses(lines: readonly string[]): SocketedGemBonusRule[] {
   const rules: SocketedGemBonusRule[] = [];
   for (const raw of lines) {
-    const line = normalizeStatLineToEn(raw);
+    const line = normalizeStatLineToEn(interpolateSocketedRange(raw));
     if (!line) continue;
 
-    // +N to Level of Socketed [Filter] [Active Skill | Skill | Support |] Gems
+    // +N / -N to Level of Socketed [Filter] [Active Skill | Skill | Support |] Gems
     let m = line.match(
-      /^\+(\d+) to Level of Socketed (?:([A-Za-z ]+?) )?(Active Skill |Skill |Support )?Gems?$/i,
+      /^([+-]\d+) to Level of Socketed (?:([A-Za-z ]+?) )?(Active Skill |Skill |Support )?Gems?$/i,
     );
     if (m) {
       const val = Number(m[1]);
       const rawFilter = (m[2] ?? '').trim();
       const scopeRaw = (m[3] ?? '').trim().toLowerCase();
       const filterKey = normalizeGemFilterTokens(rawFilter);
-      if (filterKey && val > 0) {
+      if (filterKey && val !== 0) {
         rules.push({
           kind: 'level',
           filterKey,
@@ -239,16 +290,16 @@ export function parseSocketedGemBonuses(lines: readonly string[]): SocketedGemBo
       continue;
     }
 
-    // +N% to Quality of Socketed [Filter] [Active Skill | Skill | Support |] Gems
+    // +N% / -N% to Quality of Socketed [Filter] [Active Skill | Skill | Support |] Gems
     m = line.match(
-      /^\+(\d+)% to Quality of Socketed (?:([A-Za-z ]+?) )?(Active Skill |Skill |Support )?Gems?$/i,
+      /^([+-]\d+)% to Quality of Socketed (?:([A-Za-z ]+?) )?(Active Skill |Skill |Support )?Gems?$/i,
     );
     if (m) {
       const val = Number(m[1]);
       const rawFilter = (m[2] ?? '').trim();
       const scopeRaw = (m[3] ?? '').trim().toLowerCase();
       const filterKey = normalizeGemFilterTokens(rawFilter);
-      if (filterKey && val > 0) {
+      if (filterKey && val !== 0) {
         rules.push({
           kind: 'quality',
           filterKey,

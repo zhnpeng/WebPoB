@@ -6,6 +6,7 @@ import { KeywordFlag, ModFlag, type GemDefinition } from '@webpob/core';
 import {
   gemMatchesFilterKey,
   normalizeGemFilterTokens,
+  parseSocketedGemBonuses,
   resolveSupportGemLevelBonus,
 } from './gemBonus.js';
 import { parseModLine, parseModLines } from './modParser.js';
@@ -1739,6 +1740,218 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
       expect(
         parseModLine('Break 50% of Armour on Heavy Stunning an Enemy', 'Tree: Shattering Blow'),
       ).toEqual([expect.objectContaining({ name: 'ArmourBreakOnHeavyStunPct', type: 'BASE', value: 50 })]);
+    });
+
+    it('parses Wave 4T Chronomancer & Infusion rules (Apex of the Moment, Now and Again, Max Infusions)', () => {
+      expect(
+        parseModLine('Enemies in your Presence are Slowed by 20%', 'Tree: Apex of the Moment'),
+      ).toEqual([
+        expect.objectContaining({ name: 'EnemyActionSpeed', type: 'INC', value: -20 }),
+        expect.objectContaining({ name: 'Condition:EnemySlowed', type: 'FLAG', value: true }),
+      ]);
+      expect(
+        parseModLine('Cascadable Spells have 20% chance to Echo', 'Tree: Now and Again'),
+      ).toEqual([
+        expect.objectContaining({ name: 'SpellEchoChance', type: 'BASE', value: 20, flags: ModFlag.Spell }),
+      ]);
+      expect(
+        parseModLine('Repeatable Spells have 20% chance to Repeat', 'Tree: Now and Again'),
+      ).toEqual([
+        expect.objectContaining({ name: 'SpellRepeatChance', type: 'BASE', value: 20, flags: ModFlag.Spell }),
+      ]);
+      expect(parseModLine('+1 to maximum Lightning Infusions', 'Tree: Shocking Limit')).toEqual([
+        expect.objectContaining({ name: 'MaxLightningInfusions', type: 'BASE', value: 1 }),
+      ]);
+    });
+
+    it('parses Wave 4U PoE 2 Gem Studded thresholds, Grand Spectrum Spirit, Block overrides, ES bypass & gemBonus plural filters', () => {
+      expect(
+        parseModLine(
+          '5% increased Maximum Life if you have at least 10 Red Support Gems Socketed',
+          'Tree: Gem Studded',
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'Life',
+          type: 'INC',
+          value: 5,
+          tags: [{ type: 'Condition', var: 'MultiplierThreshold:StrengthMoteSkillCount:10' }],
+        }),
+      ]);
+      expect(
+        parseModLine(
+          '5% increased Maximum Mana if you have at least 10 Blue Support Gems Socketed',
+          'Tree: Gem Studded',
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'Mana',
+          type: 'INC',
+          value: 5,
+          tags: [{ type: 'Condition', var: 'MultiplierThreshold:IntelligenceMoteSkillCount:10' }],
+        }),
+      ]);
+      expect(
+        parseModLine(
+          '5% increased Movement Speed if you have at least 10 Green Support Gems Socketed',
+          'Tree: Gem Studded',
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'MovementSpeed',
+          type: 'INC',
+          value: 5,
+          tags: [{ type: 'Condition', var: 'MultiplierThreshold:DexterityMoteSkillCount:10' }],
+        }),
+      ]);
+      expect(parseModLine('2% increased Spirit per socketed Grand Spectrum', 'Item: Grand Spectrum')).toEqual([
+        expect.objectContaining({
+          name: 'Spirit',
+          type: 'INC',
+          value: 2,
+          tags: [{ type: 'Multiplier', var: 'GrandSpectrum' }],
+        }),
+      ]);
+      expect(parseModLine('Maximum Block chance is 75%', 'Tree: Turtle Charm')).toEqual([
+        expect.objectContaining({ name: 'BlockChanceMax', type: 'OVERRIDE', value: 75 }),
+      ]);
+      expect(
+        parseModLine(
+          "Gain 35% Base Chance to Block from Equipped Shield instead of the Shield's value",
+          'Tree: Turtle Charm',
+        ),
+      ).toEqual([expect.objectContaining({ name: 'ShieldBlockChanceOverride', type: 'OVERRIDE', value: 35 })]);
+      expect(parseModLine('5% of Damage taken bypasses Energy Shield', 'Tree: Heavy Buffer')).toEqual([
+        expect.objectContaining({ name: 'DamageTakenBypassesES', type: 'BASE', value: 5 }),
+      ]);
+      expect(parseModLine('No inherent Mana Regeneration', 'Tree')).toEqual([
+        expect.objectContaining({ name: 'NoInherentManaRegen', type: 'FLAG', value: true }),
+      ]);
+      expect(parseModLine('Regenerate Mana equal to 6% of maximum Life per second', 'Tree')).toEqual([
+        expect.objectContaining({ name: 'ManaRegenFromLifePct', type: 'BASE', value: 6 }),
+      ]);
+
+      // gemBonus.ts plural & spelling normalization (Warcries/Totems/Minions/Golems/Channelled)
+      expect(normalizeGemFilterTokens('Warcries')).toBe('warcry');
+      expect(normalizeGemFilterTokens('Minions')).toBe('minion');
+      expect(normalizeGemFilterTokens('Totems')).toBe('totem');
+      expect(normalizeGemFilterTokens('Golems')).toBe('golem');
+      expect(normalizeGemFilterTokens('Channelled Fire Skills')).toBe('channelling+fire');
+    });
+
+    it('parses Wave 4V PoE 2 Open Weakness speed, Lich Eternal Life & Rage regeneration rules', () => {
+      expect(
+        parseModLine(
+          '20% increased Movement Speed while an enemy with an Open Weakness is in your Presence',
+          'Tree: Reveal Weakness',
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'MovementSpeed',
+          type: 'INC',
+          value: 20,
+          tags: [{ type: 'Condition', var: 'OpenWeaknessEnemyPresence|EnemyHasOpenWeakness|EnemyOpenWeakness' }],
+        }),
+      ]);
+      expect(parseModLine('Your Life cannot change while you have Energy Shield', 'Tree: Eternal Life')).toEqual([
+        expect.objectContaining({ name: 'LifeCannotChangeWhileES', type: 'FLAG', value: true }),
+      ]);
+      expect(parseModLine('No Inherent loss of Rage', 'Tree: Shaman')).toEqual([
+        expect.objectContaining({ name: 'NoInherentRageLoss', type: 'FLAG', value: true }),
+      ]);
+      expect(parseModLine('Regenerate 6% of your maximum Rage per second', 'Tree: Shaman')).toEqual([
+        expect.objectContaining({ name: 'RageRegenPct', type: 'BASE', value: 6 }),
+      ]);
+      expect(
+        parseModLine(
+          'Increases and Reductions to Mana Regeneration Rate also apply to Rage Regeneration Rate',
+          'Tree: Shaman',
+        ),
+      ).toEqual([expect.objectContaining({ name: 'ManaRegenAppliesToRageRegen', type: 'FLAG', value: true })]);
+    });
+
+    it('parses Wave 4W PoE 2 Hollow Palm Evasion Rating, Mana-as-Armour, and Unarmed Melee added damage rules', () => {
+      expect(
+        parseModLine('1% more Attack Speed per 25 Item Evasion Rating on Equipped Armour Items', 'Tree:64601'),
+      ).toEqual([
+        expect.objectContaining({ name: 'HollowPalmTechnique', type: 'FLAG', value: true }),
+        expect.objectContaining({
+          name: 'HollowPalmAttackSpeedPerEvasion',
+          type: 'BASE',
+          value: 1 / 25,
+          flags: ModFlag.Attack,
+        }),
+      ]);
+      expect(parseModLine('Gain 40% of Maximum Mana as Armour', 'Item:9')).toEqual([
+        expect.objectContaining({
+          name: 'Armour',
+          type: 'BASE',
+          value: 0.4,
+          tags: [{ type: 'PerStat', stat: 'Mana', div: 1 }],
+        }),
+      ]);
+      expect(parseModLine('Adds 1 to 104 Lightning Damage to Unarmed Melee Hits', 'Item:19')).toEqual([
+        expect.objectContaining({
+          name: 'LightningMin',
+          type: 'BASE',
+          value: 1,
+          flags: ModFlag.Attack | ModFlag.Melee,
+          tags: [{ type: 'Condition', var: 'Unarmed' }],
+        }),
+        expect.objectContaining({
+          name: 'LightningMax',
+          type: 'BASE',
+          value: 104,
+          flags: ModFlag.Attack | ModFlag.Melee,
+          tags: [{ type: 'Condition', var: 'Unarmed' }],
+        }),
+      ]);
+    });
+
+    it('parses Wave 4X PoE 2 Cooldown/Shock/Curse/Totem/Unlucky semantic rules', () => {
+      expect(
+        parseModLine('Skills have 33% chance to not consume a Cooldown when used', 'Tree:10987'),
+      ).toEqual([expect.objectContaining({ name: 'ChanceToNotConsumeCooldown', type: 'BASE', value: 33 })]);
+      expect(
+        parseModLine('25% chance on Consuming a Shock on an Enemy to reapply it', 'Tree:8273'),
+      ).toEqual([expect.objectContaining({ name: 'ChanceToReapplyShockOnConsume', type: 'BASE', value: 25 })]);
+      expect(parseModLine('Your Curses have infinite Duration', 'Tree:27667')).toEqual([
+        expect.objectContaining({ name: 'InfiniteCurseDuration', type: 'FLAG', value: true }),
+      ]);
+      expect(parseModLine('Unlimited number of Summoned Totems', 'Tree:45202')).toEqual([
+        expect.objectContaining({ name: 'UnlimitedTotems', type: 'FLAG', value: true }),
+      ]);
+      expect(parseModLine('Enemy Critical Hit Chance against you is Unlucky', 'Tree:34313')).toEqual([
+        expect.objectContaining({ name: 'EnemyCritChanceUnlucky', type: 'FLAG', value: true }),
+      ]);
+      expect(
+        parseModLine('Damage of Enemies Hitting you is Unlucky while you are on Low Life', 'Item:2'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'EnemyDamageUnlucky',
+          type: 'FLAG',
+          value: true,
+          tags: [{ type: 'Condition', var: 'LowLife' }],
+        }),
+      ]);
+    });
+
+    it('parses negative and range-interpolated socketed gem level & quality modifiers in gemBonus (Wave 5A/5B)', () => {
+      expect(
+        parseSocketedGemBonuses([
+          '-2 to Level of Socketed Support Gems',
+          '+2 to Level of Socketed AoE Gems',
+          '-5% to Quality of Socketed Gems',
+          '{range:1}+(5-8) to Level of Socketed Gems',
+          '{range:0.5}+(5-8)% to Quality of Socketed Support Gems',
+        ]),
+      ).toEqual([
+        { kind: 'level', filterKey: 'support', activeOnly: false, supportOnly: true, value: -2 },
+        { kind: 'level', filterKey: 'area', activeOnly: false, supportOnly: false, value: 2 },
+        { kind: 'quality', filterKey: 'all', activeOnly: false, supportOnly: false, value: -5 },
+        { kind: 'level', filterKey: 'all', activeOnly: false, supportOnly: false, value: 8 },
+        { kind: 'quality', filterKey: 'support', activeOnly: false, supportOnly: true, value: 7 },
+      ]);
     });
   });
 });
