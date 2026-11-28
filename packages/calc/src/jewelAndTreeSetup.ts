@@ -224,6 +224,9 @@ function resolveJewelRadiusLabel(jewel: Item, game: GameId): JewelRadiusLabel {
   // 3. Sensible defaults by jewel type
   const lowerName = jewel.name.toLowerCase();
   const lowerBase = jewel.baseName.toLowerCase();
+  if (lowerName === 'unnatural instinct') {
+    return 'Small';
+  }
   if (lowerName === 'undying hate') {
     return 'Very Large';
   }
@@ -1215,6 +1218,48 @@ export function evaluateRadiusAndDistanceJewels(
     }
   }
 
+  // Pre-pass 2 (PoB 1 CalcSetup.lua): collect small passives suppressed or granted by Unnatural Instinct
+  // so overlapping radius jewels (notably `The Light of Meaning` in the Scion center sockets) exclude
+  // suppressed allocated smalls and include unallocated smalls granted by Unnatural Instinct.
+  const unnaturalSuppressedIds = new Set<number>();
+  const unnaturalGrantedUnallocNodes = new Map<number, PassiveNode>();
+  if (tree.game === 'poe1') {
+    for (const { jewel, socketNode, allLines } of preparedJewels) {
+      if (!socketNode) continue;
+      let preDisablesSmalls = false;
+      let preGrantsUnalloc = false;
+      for (const line of allLines) {
+        if (/^Allocated Small Passive Skills in Radius grant nothing$/i.test(line)) {
+          preDisablesSmalls = true;
+        } else if (/^Grants all bonuses of Unallocated Small Passive Skills in Radius$/i.test(line)) {
+          preGrantsUnalloc = true;
+        }
+      }
+      if (!preDisablesSmalls && !preGrantsUnalloc) continue;
+      const rLabel = resolveJewelRadiusLabel(jewel, tree.game);
+      const rPx = getJewelRadiusPx(rLabel, tree.game, tree.version);
+      if (preDisablesSmalls) {
+        for (const n of getAllocatedNodesInRadius(socketNode, tree, activeTreeNodes, rPx)) {
+          if (n.kind === 'small' && !n.ascendancyId) {
+            unnaturalSuppressedIds.add(n.id);
+          }
+        }
+      }
+      if (preGrantsUnalloc) {
+        const rSq = rPx * rPx;
+        for (const n of Object.values(tree.nodes)) {
+          if (n.id === socketNode.id || activeTreeNodes.has(n.id)) continue;
+          if (n.kind !== 'small' || n.ascendancyId) continue;
+          const dx = n.x - socketNode.x;
+          const dy = n.y - socketNode.y;
+          if (dx * dx + dy * dy <= rSq) {
+            unnaturalGrantedUnallocNodes.set(n.id, n);
+          }
+        }
+      }
+    }
+  }
+
   for (const { nodeId, jewel, socketNode, lowerName, allLines } of preparedJewels) {
 
     // --- A. Split Personality (BFS shortest-path distance scaling) ---
@@ -1669,10 +1714,32 @@ export function evaluateRadiusAndDistanceJewels(
     }
 
     // --- C. PoE 1 The Light of Meaning ---
+    // Matches PoB 1 CalcSetup.lua: applies to all active non-jewel passives in radius,
+    // excluding allocated smalls disabled by Unnatural Instinct and including unallocated
+    // smalls granted by an overlapping Unnatural Instinct.
     if (allAlsoGrants.length > 0) {
+      const effectiveCount = (() => {
+        let cnt = 0;
+        for (const n of nonJewelPassives) {
+          if (unnaturalSuppressedIds.has(n.id)) continue;
+          cnt++;
+        }
+        if (unnaturalGrantedUnallocNodes.size > 0) {
+          const rSq = radiusPx * radiusPx;
+          for (const n of unnaturalGrantedUnallocNodes.values()) {
+            if (n.id === socketNode.id) continue;
+            const dx = n.x - socketNode.x;
+            const dy = n.y - socketNode.y;
+            if (dx * dx + dy * dy <= rSq) {
+              cnt++;
+            }
+          }
+        }
+        return cnt;
+      })();
       const lines: string[] = [];
       for (const grantLine of allAlsoGrants) {
-        for (let i = 0; i < nonJewelPassives.length; i++) {
+        for (let i = 0; i < effectiveCount; i++) {
           lines.push(grantLine);
         }
       }
@@ -1688,7 +1755,7 @@ export function evaluateRadiusAndDistanceJewels(
         kind: 'light-of-meaning',
         radiusLabel,
         radiusPx,
-        nodesInRadius: nonJewelPassives.length,
+        nodesInRadius: effectiveCount,
         notablesInRadius: notables.length,
         smallsInRadius: smalls.length,
       });
@@ -1745,18 +1812,44 @@ export function evaluateRadiusAndDistanceJewels(
     if (grantsUnallocatedSmalls) {
       const rSq = radiusPx * radiusPx;
       const unallocLines: string[] = [];
+      const src = `Unnatural Instinct (${nodeId}): ${jewel.name}`;
       for (const n of Object.values(tree.nodes)) {
         if (n.id === socketNode.id || activeTreeNodes.has(n.id)) continue;
         if (n.kind !== 'small' || n.ascendancyId) continue;
         const dx = n.x - socketNode.x;
         const dy = n.y - socketNode.y;
         if (dx * dx + dy * dy <= rSq) {
-          unallocLines.push(...n.stats);
+          const timelessAdj = timelessSmallAttrs.get(n.id);
+          // Do not grant base small stats when replaced by Elegant Hubris or Militant Faith (attribute small)
+          if (!timelessAdj?.replaceBaseAttrs) {
+            unallocLines.push(...n.stats);
+          }
+          // Grant deterministic Lethal Pride (+2/+4 Str) or Brutal Restraint (+2/+4 Dex) on conquered unallocated smalls
+          if (timelessAdj?.addStr) {
+            addedMods.push({
+              name: 'Str',
+              type: 'BASE',
+              value: timelessAdj.addStr,
+              flags: 0,
+              keywordFlags: 0,
+              source: src,
+            });
+          }
+          if (timelessAdj?.addDex) {
+            addedMods.push({
+              name: 'Dex',
+              type: 'BASE',
+              value: timelessAdj.addDex,
+              flags: 0,
+              keywordFlags: 0,
+              source: src,
+            });
+          }
         }
       }
       if (unallocLines.length > 0) {
         addedStatLines.push({
-          source: `Unnatural Instinct (${nodeId}): ${jewel.name}`,
+          source: src,
           lines: unallocLines,
         });
       }

@@ -222,6 +222,264 @@ function normalizeBondedTemplate(line: string): string {
     .toLowerCase();
 }
 
+function extractItemRuneNames(item: Item): string[] {
+  const runeNames: string[] = [];
+  if (Array.isArray(item.runes)) {
+    for (const r of item.runes) {
+      const cleaned = r.trim();
+      if (cleaned && cleaned.toLowerCase() !== 'none') runeNames.push(cleaned);
+    }
+  }
+  if (runeNames.length === 0 && item.rawText) {
+    for (const raw of item.rawText.split(/\r?\n/)) {
+      const m = raw.match(/^\s*Rune\s*:\s*(.+)$/i);
+      if (m) {
+        const cleaned = m[1]!.trim();
+        if (cleaned && cleaned.toLowerCase() !== 'none') runeNames.push(cleaned);
+      }
+    }
+  }
+  return runeNames;
+}
+
+function getItemAugmentSlotTypes(item: Item): { broad: string; specific: string } {
+  const allLines = [...item.implicits, ...item.explicits];
+  for (const raw of allLines) {
+    const clean = normalizeStatLineToEn(raw.replace(/\{[^}]*\}/g, '').trim()).toLowerCase();
+    const m = clean.match(/^this item gains bonuses from socketed items as though it was a? ?(.+)$/);
+    if (m) {
+      return { broad: 'armour', specific: m[1]!.trim() };
+    }
+  }
+  const slot = (item.slotType ?? '').toLowerCase();
+  const base = item.baseName.toLowerCase();
+  if (item.weaponStats) {
+    const wt = (item.weaponStats.weaponType ?? '').toLowerCase();
+    if (wt.includes('wand') || /\bwand\b/.test(base)) return { broad: 'weapon', specific: 'wand' };
+    if (wt.includes('staff') || /\bstaff\b|quarterstaff|fork/.test(base)) {
+      return { broad: 'weapon', specific: wt.includes('quarterstaff') || base.includes('quarterstaff') ? 'quarterstaff' : 'staff' };
+    }
+    if (wt.includes('bow') || /\bbow\b/.test(base)) return { broad: 'weapon', specific: 'bow' };
+    if (wt.includes('crossbow') || /\bcrossbow\b/.test(base)) return { broad: 'weapon', specific: 'crossbow' };
+    if (wt.includes('sceptre') || /\bsceptre\b/.test(base)) return { broad: 'weapon', specific: 'sceptre' };
+    return { broad: 'weapon', specific: wt || 'weapon' };
+  }
+  if (slot === 'body armour' || /\b(?:regalia|robe|cuirass|plate|garb|vestment|jacket|doublet|brigandine|coat|tunic|mail|raiment|mantle|garment)\b/.test(base)) {
+    return { broad: 'armour', specific: 'body armour' };
+  }
+  if (slot === 'helmet' || /\b(?:helmet|helm|crown|tiara|circlet|cap|hood|mask|burgonet|bascinet|greathelm)\b/.test(base)) {
+    return { broad: 'armour', specific: 'helmet' };
+  }
+  if (slot === 'gloves' || /\b(?:gloves|gauntlets|mitts|bracers|wraps|cuffs)\b/.test(base)) {
+    return { broad: 'armour', specific: 'gloves' };
+  }
+  if (slot === 'boots' || /\b(?:boots|greaves|sandals|shoes|slippers|sabatons|leggings)\b/.test(base)) {
+    return { broad: 'armour', specific: 'boots' };
+  }
+  if (/\b(?:focus)\b/.test(base)) return { broad: 'armour', specific: 'focus' };
+  if (/\b(?:buckler)\b/.test(base)) return { broad: 'armour', specific: 'buckler' };
+  if (/\b(?:shield|targe)\b/.test(base)) return { broad: 'armour', specific: 'shield' };
+  if (/\bquiver\b/.test(base)) return { broad: 'quiver', specific: 'quiver' };
+  return { broad: 'armour', specific: slot || 'armour' };
+}
+
+function extractNumericSignature(line: string): number[] {
+  const nums: number[] = [];
+  for (const m of line.matchAll(/[+-]?(\d+(?:\.\d+)?)/g)) {
+    nums.push(Number(m[1]));
+  }
+  return nums;
+}
+
+function scaleRuneLineByEffect(line: string, mult: number): string {
+  if (mult === 1 || !Number.isFinite(mult)) return line;
+  return line.replace(/([+-]?)(\d+(?:\.\d+)?)/g, (_full, sign: string, numStr: string) => {
+    const val = Number(numStr);
+    const dotIdx = numStr.indexOf('.');
+    if (dotIdx === -1) {
+      return `${sign}${Math.trunc(val * mult + 1e-9)}`;
+    }
+    const decimals = numStr.length - dotIdx - 1;
+    const factor = Math.pow(10, decimals);
+    return `${sign}${Math.trunc(val * mult * factor + 1e-9) / factor}`;
+  });
+}
+
+/**
+ * Upstream PoB 2 `Classes/Item.lua:1280, 1499-1615, 2179-2228, 2825-2840`:
+ * 1. `"This item gains bonuses from Socketed Soul Cores as though it was also a <SlotType>"`
+ *    (e.g. `Atziri's Splendour` -> `Helmet`): injects Soul Core lines for that additional slot type
+ *    when they are absent from the item's exported `{rune}` implicits.
+ * 2. `"X% increased effect of Socketed (Augment Items|Items|Runes|Soul Cores)"`:
+ *    scales `{rune}` lines whose numeric values match the raw unscaled sum of socketed runes
+ *    (leaving already-scaled in-game item copies untouched so there is zero double-scaling).
+ */
+function applyPoe2SocketedAugmentBonuses(
+  item: Item,
+  game: GameId,
+  implicits: readonly string[],
+  explicits: readonly string[],
+): { implicits: string[]; explicits: string[] } {
+  if (game !== 'poe2') return { implicits: [...implicits], explicits: [...explicits] };
+
+  const runeNames = extractItemRuneNames(item);
+  if (runeNames.length === 0) return { implicits: [...implicits], explicits: [...explicits] };
+
+  const allClean = [...implicits, ...explicits].map((l) =>
+    normalizeStatLineToEn(l.replace(/\{[^}]*\}/g, '').trim()),
+  );
+
+  const extraSoulCoreTypes = new Set<string>();
+  let augmentEffectPct = 0;
+  let runeEffectPct = 0;
+  let soulCoreEffectPct = 0;
+
+  for (const clean of allClean) {
+    const mSc = clean.match(
+      /^This item gains bonuses from Socketed Soul Cores as though it was also a? ?(.+)$/i,
+    );
+    if (mSc) {
+      extraSoulCoreTypes.add(mSc[1]!.trim().toLowerCase());
+      continue;
+    }
+    let mEff = clean.match(/^(\d+)% increased effect of Socketed (?:Augment )?Items$/i);
+    if (mEff) {
+      augmentEffectPct += Number(mEff[1]);
+      continue;
+    }
+    mEff = clean.match(/^(\d+)% increased effect of Socketed Runes$/i);
+    if (mEff) {
+      runeEffectPct += Number(mEff[1]);
+      continue;
+    }
+    mEff = clean.match(/^(\d+)% increased effect of Socketed Soul Cores$/i);
+    if (mEff) {
+      soulCoreEffectPct += Number(mEff[1]);
+      continue;
+    }
+  }
+
+  if (
+    extraSoulCoreTypes.size === 0 &&
+    augmentEffectPct === 0 &&
+    runeEffectPct === 0 &&
+    soulCoreEffectPct === 0
+  ) {
+    return { implicits: [...implicits], explicits: [...explicits] };
+  }
+
+  const ds = getPoe2RunesData();
+  if (!ds?.runes) {
+    return { implicits: [...implicits], explicits: [...explicits] };
+  }
+
+  const byLower = new Map<
+    string,
+    Record<string, { type?: string; lines?: string[]; bonded?: string[] }>
+  >();
+  for (const [k, v] of Object.entries(ds.runes)) {
+    if (v && typeof v === 'object') {
+      byLower.set(
+        k.trim().toLowerCase(),
+        v as Record<string, { type?: string; lines?: string[]; bonded?: string[] }>,
+      );
+    }
+  }
+
+  const outImplicits = [...implicits];
+  const outExplicits = [...explicits];
+
+  // 1. Inject extra Soul Core slot bonuses (e.g. Atziri's Splendour "as though it was also a Helmet")
+  if (extraSoulCoreTypes.size > 0) {
+    const existingTemplates = new Set(outImplicits.map((l) => normalizeBondedTemplate(l)));
+    const scMult = 1 + (augmentEffectPct + soulCoreEffectPct) / 100;
+    for (const rn of runeNames) {
+      const entry = byLower.get(rn.toLowerCase());
+      if (!entry) continue;
+      for (const scType of extraSoulCoreTypes) {
+        const sub = entry[scType];
+        if (!sub || sub.type !== 'SoulCore' || !Array.isArray(sub.lines)) continue;
+        for (const scLine of sub.lines) {
+          const tpl = normalizeBondedTemplate(scLine);
+          if (existingTemplates.has(tpl)) continue;
+          outImplicits.push(scMult !== 1 ? scaleRuneLineByEffect(scLine, scMult) : scLine);
+        }
+      }
+    }
+  }
+
+  // 2. Scale unscaled {rune} lines when item has Socketed Augment/Rune/SoulCore effect
+  if (augmentEffectPct > 0 || runeEffectPct > 0 || soulCoreEffectPct > 0) {
+    const { broad, specific } = getItemAugmentSlotTypes(item);
+    // Aggregate raw unscaled numeric sums per (template, isBonded) across all socketed runes
+    const rawSums = new Map<string, { nums: number[]; augType: string }>();
+    for (const rn of runeNames) {
+      const entry = byLower.get(rn.toLowerCase());
+      if (!entry) continue;
+      const slotEntries: Array<{ type?: string; lines?: string[]; bonded?: string[] }> = [];
+      if (entry[broad]) slotEntries.push(entry[broad]!);
+      if (specific !== broad && entry[specific]) slotEntries.push(entry[specific]!);
+      for (const scType of extraSoulCoreTypes) {
+        if (scType !== broad && scType !== specific && entry[scType]?.type === 'SoulCore') {
+          slotEntries.push(entry[scType]!);
+        }
+      }
+      for (const sub of slotEntries) {
+        const augType = sub.type ?? 'Rune';
+        for (const rl of sub.lines ?? []) {
+          const key = `0:${normalizeBondedTemplate(rl)}`;
+          const nums = extractNumericSignature(rl);
+          if (nums.length === 0) continue;
+          const prev = rawSums.get(key);
+          if (prev && prev.nums.length === nums.length) {
+            for (let i = 0; i < nums.length; i++) prev.nums[i] = (prev.nums[i] ?? 0) + nums[i]!;
+          } else if (!prev) {
+            rawSums.set(key, { nums: [...nums], augType });
+          }
+        }
+        for (const bl of sub.bonded ?? []) {
+          const key = `1:${normalizeBondedTemplate(bl)}`;
+          const nums = extractNumericSignature(bl);
+          if (nums.length === 0) continue;
+          const prev = rawSums.get(key);
+          if (prev && prev.nums.length === nums.length) {
+            for (let i = 0; i < nums.length; i++) prev.nums[i] = (prev.nums[i] ?? 0) + nums[i]!;
+          } else if (!prev) {
+            rawSums.set(key, { nums: [...nums], augType });
+          }
+        }
+      }
+    }
+
+    const scaleIfUnscaled = (rawLine: string): string => {
+      const clean = normalizeStatLineToEn(rawLine.replace(/\{[^}]*\}/g, '').trim());
+      const isBonded = /^Bonded\s*:/i.test(clean);
+      const key = `${isBonded ? '1' : '0'}:${normalizeBondedTemplate(clean)}`;
+      const expected = rawSums.get(key);
+      if (!expected) return rawLine;
+      const actualNums = extractNumericSignature(clean);
+      if (actualNums.length !== expected.nums.length) return rawLine;
+      const matchesRaw = actualNums.every((v, idx) => Math.abs(v - expected.nums[idx]!) < 1e-6);
+      if (!matchesRaw) return rawLine;
+
+      let effPct = augmentEffectPct;
+      if (expected.augType === 'Rune') effPct += runeEffectPct;
+      else if (expected.augType === 'SoulCore') effPct += soulCoreEffectPct;
+      if (effPct <= 0) return rawLine;
+
+      const body = isBonded ? clean.replace(/^Bonded\s*:\s*/i, '').trim() : clean;
+      const scaled = scaleRuneLineByEffect(body, 1 + effPct / 100);
+      return isBonded ? `Bonded: ${scaled}` : scaled;
+    };
+
+    for (let i = 0; i < outImplicits.length; i++) {
+      outImplicits[i] = scaleIfUnscaled(outImplicits[i]!);
+    }
+  }
+
+  return { implicits: outImplicits, explicits: outExplicits };
+}
+
 /**
  * Upstream PoB 2 `Classes/Item.lua:2232-2240, 2824`:
  * When an item carries `"Idols socketed in this item gain the benefits of their Bonded modifiers"`
@@ -243,22 +501,7 @@ function unlockSocketedIdolBondedLines(
   );
   if (!hasIdolBondedEnabler) return [...lines];
 
-  const runeNames: string[] = [];
-  if (Array.isArray(item.runes)) {
-    for (const r of item.runes) {
-      const cleaned = r.trim();
-      if (cleaned && cleaned.toLowerCase() !== 'none') runeNames.push(cleaned);
-    }
-  }
-  if (runeNames.length === 0 && item.rawText) {
-    for (const raw of item.rawText.split(/\r?\n/)) {
-      const m = raw.match(/^\s*Rune\s*:\s*(.+)$/i);
-      if (m) {
-        const cleaned = m[1]!.trim();
-        if (cleaned && cleaned.toLowerCase() !== 'none') runeNames.push(cleaned);
-      }
-    }
-  }
+  const runeNames = extractItemRuneNames(item);
   if (runeNames.length === 0) return [...lines];
 
   const ds = getPoe2RunesData();
@@ -325,8 +568,9 @@ export function resolveItemEffectiveStats(
     };
   }
 
-  const effectiveImplicits = unlockSocketedIdolBondedLines(item, game, item.implicits, opts?.allowBonded);
-  const effectiveExplicits = unlockSocketedIdolBondedLines(item, game, item.explicits, opts?.allowBonded);
+  const augResolved = applyPoe2SocketedAugmentBonuses(item, game, item.implicits, item.explicits);
+  const effectiveImplicits = unlockSocketedIdolBondedLines(item, game, augResolved.implicits, opts?.allowBonded);
+  const effectiveExplicits = unlockSocketedIdolBondedLines(item, game, augResolved.explicits, opts?.allowBonded);
 
   const hasPrecomputedSpiritHeader = Boolean(
     item.rawText && /^(?:Spirit|精魂)\s*[:：]\s*\+?\d+/im.test(item.rawText),

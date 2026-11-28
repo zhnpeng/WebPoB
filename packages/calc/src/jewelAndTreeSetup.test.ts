@@ -1136,4 +1136,87 @@ describe('PoE 2 The Adorned Sinister Sockets & Undying Hate Conquered Passives',
     expect(res.addedMods.some((m) => m.name === 'Life')).toBe(false);
     expect(res.addedMods.some((m) => Math.abs(Number(m.value)) === 30)).toBe(false);
   });
+
+  it('evaluates PoE 1 Unnatural Instinct (Small 960px default) overlapping The Light of Meaning and Timeless Jewels (Elegant Hubris / Lethal Pride)', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe1',
+      version: '3_30',
+      classStartNodeIds: { Scion: 1 },
+      nodes: {
+        1: mkNode(1, 'Scion', 'start', 0, 0),
+        10: mkNode(10, 'UI Socket', 'jewel', 0, 0),
+        20: mkNode(20, 'LoM Socket', 'jewel', 400, 0),
+        30: mkNode(30, 'LP Socket', 'jewel', -400, 0),
+        // Allocated small inside UI Small radius (500px <= 960px): suppressed by UI and excluded from LoM
+        101: mkNode(101, 'Dexterity', 'small', 500, 0, ['+10 to Dexterity']),
+        // Unallocated small inside UI (600px <= 960px), LoM (200px <= 1800px), AND LP (1000px <= 1800px):
+        // granted by UI + receives LoM bonus + receives LP +4 Str!
+        102: mkNode(102, 'Life Small', 'small', 600, 0, ['5% increased maximum Life']),
+        // Unallocated small at 1100px from UI (> 960px Small radius, <= 1440px Medium): must NOT be granted!
+        103: mkNode(103, 'Outside Small Radius', 'small', 1100, 0, ['+10 to Dexterity']),
+        // Allocated notable inside LoM radius (800px from LoM): included in LoM
+        104: mkNode(104, 'Constitution', 'notable', 1200, 0, ['10% increased maximum Life']),
+      },
+    };
+    const unnatural = mkItem({
+      id: 'ui-1',
+      name: 'Unnatural Instinct',
+      baseName: 'Viridian Jewel',
+      rarity: 'UNIQUE',
+      explicits: [
+        'Allocated Small Passive Skills in Radius grant nothing',
+        'Grants all bonuses of Unallocated Small Passive Skills in Radius',
+      ],
+      // Intentionally omit `Radius: Small` header to verify default Small (960px) radius
+      rawText: 'Rarity: UNIQUE\nUnnatural Instinct\nViridian Jewel',
+    });
+    const lightOfMeaning = mkItem({
+      id: 'lom-1',
+      name: 'The Light of Meaning',
+      baseName: 'Prismatic Jewel',
+      rarity: 'UNIQUE',
+      explicits: ['Passive Skills in Radius also grant 3% increased maximum Energy Shield'],
+    });
+    const lethalPride = mkItem({
+      id: 'lp-1',
+      name: 'Lethal Pride',
+      baseName: 'Timeless Jewel',
+      rarity: 'UNIQUE',
+      explicits: [
+        'Commanded leadership over 12000 warriors under Kaom',
+        'Passives in radius are Conquered by the Karui',
+      ],
+    });
+
+    const res = evaluateRadiusAndDistanceJewels(
+      [
+        { nodeId: 10, jewel: unnatural },
+        { nodeId: 20, jewel: lightOfMeaning },
+        { nodeId: 30, jewel: lethalPride },
+      ],
+      tree,
+      new Set([1, 10, 20, 30, 101, 104]),
+      1,
+    );
+
+    // 1. Node 101 suppressed; node 103 (1100px > 960px) NOT granted
+    expect(res.suppressedNodeIds.has(101)).toBe(true);
+    const uiEntry = res.addedStatLines.find((e) => e.source.includes('Unnatural Instinct'));
+    expect(uiEntry?.lines).toEqual(['5% increased maximum Life']);
+
+    // 2. Lethal Pride +4 Str granted on unallocated small 102 via Unnatural Instinct
+    expect(res.addedMods).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'Str', type: 'BASE', value: 4 }),
+      ]),
+    );
+
+    // 3. The Light of Meaning counts 2 passives: allocated notable 104 + UI-granted unallocated small 102
+    //    (excludes UI-suppressed allocated small 101!)
+    const lomEntry = res.addedStatLines.find((e) => e.source.includes('The Light of Meaning'));
+    expect(lomEntry?.lines).toEqual([
+      '3% increased maximum Energy Shield',
+      '3% increased maximum Energy Shield',
+    ]);
+  });
 });

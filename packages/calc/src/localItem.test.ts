@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Item } from '@webpob/core';
+import { registerPoe2RunesData } from '@webpob/data';
 import { resolveItemEffectiveStats } from './localItem.js';
 
 function mkWeapon(partial: Partial<Item> & Pick<Item, 'name' | 'baseName'>): Item {
@@ -255,5 +256,74 @@ describe('localItem — resolveItemEffectiveStats', () => {
     const res = resolveItemEffectiveStats(darkness, 'poe2', { allowBonded: false });
     expect(res.globalImplicits).toContain('+9% to Quality of all Skills');
     expect(res.globalImplicits).toContain('{enchant}{rune}Bonded: 9% increased Spirit Reservation Efficiency');
+  });
+
+  it('injects PoE 2 Soul Core slot overrides (Atziri\'s Splendour) and scales unscaled Socketed Augment/Rune lines without double-scaling', () => {
+    registerPoe2RunesData({
+      version: '0_5',
+      runes: {
+        'Soul Core of Zalatl': {
+          helmet: { type: 'SoulCore', lines: ['5% increased maximum Mana'] },
+        },
+        'Perfect Mind Rune': {
+          armour: { type: 'Rune', lines: ['+50 to maximum Mana'], bonded: ['+20 to maximum Mana'] },
+          staff: { type: 'Rune', lines: ['+90 to maximum Mana'], bonded: ['5% increased maximum Mana'] },
+        },
+      },
+    });
+
+    // 1. Atziri's Splendour: 6x Soul Core of Zalatl gains Helmet bonus (6 * 5% = 30% increased maximum Mana)
+    const atziri: Item = {
+      id: 'atziri-1',
+      name: "Atziri's Splendour",
+      baseName: 'Sacrificial Regalia',
+      rarity: 'UNIQUE',
+      slotType: 'Body Armour',
+      quality: 20,
+      localStatsPrecomputed: true,
+      armourStats: { energyShield: 800 },
+      runes: Array(6).fill('Soul Core of Zalatl'),
+      implicits: ['+1 to Level of all Corrupted Skill Gems'],
+      explicits: [
+        'Only Soul Cores can be Socketed in this item',
+        'This item gains bonuses from Socketed Soul Cores as though it was also a Helmet',
+      ],
+    };
+    const resAtziri = resolveItemEffectiveStats(atziri, 'poe2');
+    expect(resAtziri.globalImplicits.filter((l) => l === '5% increased maximum Mana')).toHaveLength(6);
+
+    // 2. Boots with 60% increased effect of Socketed Augment Items and UNSCALED 3x Perfect Mind Rune (+150 -> +240)
+    const boots: Item = {
+      id: 'boots-1',
+      name: 'Anarchy Pace',
+      baseName: 'Luxurious Slippers',
+      rarity: 'RARE',
+      slotType: 'Boots',
+      quality: 20,
+      localStatsPrecomputed: true,
+      armourStats: { energyShield: 250 },
+      runes: ['Perfect Mind Rune', 'Perfect Mind Rune', 'Perfect Mind Rune'],
+      implicits: ['+150 to maximum Mana'],
+      explicits: ['60% increased effect of Socketed Augment Items'],
+    };
+    const resBoots = resolveItemEffectiveStats(boots, 'poe2');
+    expect(resBoots.globalImplicits).toContain('+240 to maximum Mana');
+
+    // 3. Staff with 200% increased effect of Socketed Runes and ALREADY-SCALED 3x Perfect Mind Rune (+810 stays +810)
+    const staff: Item = {
+      id: 'staff-1',
+      name: "Runeseeker's Call",
+      baseName: 'Runemastered Runic Fork',
+      rarity: 'UNIQUE',
+      slotType: 'Weapon 1',
+      quality: 20,
+      localStatsPrecomputed: true,
+      weaponStats: { weaponType: 'Staff', twoHanded: true, physicalMin: 10, physicalMax: 20, attacksPerSecond: 1.2, critChance: 5 },
+      runes: ['Perfect Mind Rune', 'Perfect Mind Rune', 'Perfect Mind Rune'],
+      implicits: ['+810 to maximum Mana'],
+      explicits: ['200% increased effect of Socketed Runes'],
+    };
+    const resStaff = resolveItemEffectiveStats(staff, 'poe2');
+    expect(resStaff.globalImplicits).toContain('+810 to maximum Mana');
   });
 });
