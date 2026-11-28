@@ -1648,4 +1648,30 @@ describe('uniqueMechanicsRuntime — 5. Pool-Conversion Keystones & Faithguard',
     expect(db.sum('INC', 'Speed', ModFlag.Attack)).toBe(20);
     expect(db.sum('INC', 'Speed', ModFlag.Spell)).toBe(20);
   });
+
+  it('evaluates Whispers of Infinity Added Attack Chaos Damage per Maximum Mana', () => {
+    const db = new ModDB();
+    const whispers = makeItem({
+      id: 'am-whispers',
+      name: 'Whispers of Infinity',
+      baseName: 'Seaglass Amulet',
+      slotType: 'Amulet',
+      explicits: ['13 to 33 Added Attack Chaos Damage per 100 Maximum Mana'],
+    });
+    evaluatePostPoolBuildEnablingUniques({
+      db,
+      equippedItems: [{ slot: 'Amulet', item: whispers }],
+      str: 100,
+      dex: 100,
+      int: 100,
+      life: 3000,
+      mana: 1250,
+      energyShield: 2000,
+      armour: 0,
+      evasion: 0,
+    });
+    // floor(1250 / 100) = 12 steps -> 12 * 13 = 156 min, 12 * 33 = 396 max Attack Chaos
+    expect(db.sum('BASE', 'ChaosMin', ModFlag.Attack)).toBe(156);
+    expect(db.sum('BASE', 'ChaosMax', ModFlag.Attack)).toBe(396);
+  });
 });

@@ -2120,6 +2120,32 @@ export function evaluatePostPoolBuildEnablingUniques(
         continue;
       }
 
+      // 7b. Whispers of Infinity ("X to Y Added Attack Chaos Damage per Z Maximum Mana")
+      const mWhispersChaos = line.match(
+        /^(\d+) to (\d+) Added Attack Chaos Damage per (\d+) Maximum Mana$/i,
+      );
+      if (mWhispersChaos) {
+        const steps = Math.floor(mana / Math.max(1, Number(mWhispersChaos[3])));
+        const minVal = steps * Number(mWhispersChaos[1]);
+        const maxVal = steps * Number(mWhispersChaos[2]);
+        if (
+          minVal > 0 &&
+          !hasPerAttrOrPerStatFromItem(['ChaosMin']) &&
+          !hasStatSource(db, 'ChaosMin', 'BASE', item.name, minVal)
+        ) {
+          db.addMod(mkMod('ChaosMin', 'BASE', minVal, src, ModFlag.Attack));
+        }
+        if (
+          maxVal > 0 &&
+          !hasPerAttrOrPerStatFromItem(['ChaosMax']) &&
+          !hasStatSource(db, 'ChaosMax', 'BASE', item.name, maxVal)
+        ) {
+          db.addMod(mkMod('ChaosMax', 'BASE', maxVal, src, ModFlag.Attack));
+        }
+        appliedSources.push(src);
+        continue;
+      }
+
       // 8. Perseverance
       const mPersev = line.match(
         /^(\d+)% increased Attack Damage per (\d+) of the lowest of Armour and Evasion Rating$/i,
