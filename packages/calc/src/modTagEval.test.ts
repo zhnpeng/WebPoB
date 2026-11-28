@@ -1289,4 +1289,25 @@ describe('parseConditionalSuffix', () => {
       evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'StatThreshold:Strength:400' }] }), ctx).active,
     ).toBe(true);
   });
+
+  it('aliases EnergyShieldRechargePastTwoSec <-> EnergyShieldRechargeStartedRecently and HaveEnergyShield <- FullEnergyShield (Wave 4Z)', () => {
+    const ctx = createEmptyEvalContext();
+    ctx.conditions.EnergyShieldRechargePastTwoSec = true;
+    ctx.conditions.FullEnergyShield = true;
+
+    expect(
+      evaluateModTags(
+        makeMod({ tags: [{ type: 'Condition', var: 'EnergyShieldRechargeStartedRecently' }] }),
+        ctx,
+      ).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'HaveEnergyShield' }] }), ctx).active,
+    ).toBe(true);
+
+    const ctxNoEsCond = createEmptyEvalContext();
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'HaveEnergyShield' }] }), ctxNoEsCond).active,
+    ).toBe(false);
+  });
 });

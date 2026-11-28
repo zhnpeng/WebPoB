@@ -359,6 +359,15 @@ function evalSingleConditionVar(varExpr: string, ctx?: ModEvalContext): boolean 
   if (varExpr === 'ConsecratedGround') {
     return Boolean(ctx.conditions.OnConsecratedGround);
   }
+  if (varExpr === 'EnergyShieldRechargeStartedRecently') {
+    return Boolean(ctx.conditions.EnergyShieldRechargePastTwoSec);
+  }
+  if (varExpr === 'EnergyShieldRechargePastTwoSec') {
+    return Boolean(ctx.conditions.EnergyShieldRechargeStartedRecently);
+  }
+  if (varExpr === 'HaveEnergyShield') {
+    return Boolean(ctx.conditions.FullEnergyShield);
+  }
   return false;
 }
 
