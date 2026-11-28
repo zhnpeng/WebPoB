@@ -2571,6 +2571,10 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
             db.setCondition('OnlyOneNearbyEnemy', true);
             db.setCondition('AtMostOneNearbyRareOrUniqueEnemy', true);
           }
+        } else if (rawKey === 'enemyMultiplierEnemyPresenceSeconds') {
+          db.setMultiplier('PresenceSeconds', rawVal);
+          db.setStat('PresenceSeconds', rawVal);
+          auraEnemyDb.setMultiplier('EnemyPresenceSeconds', rawVal);
         } else if (rawKey === 'conditionEnemyChilledEffect') {
           db.setMultiplier('EnemyChillEffect', rawVal);
         } else if (rawKey === 'aspectOfTheSpiderWebStacks') {
@@ -8564,6 +8568,41 @@ function computeGroupOffence(
     }
   }
 
+  // PoE 1 General's Cry linked Mirage Warrior damage penalty (`CalcMirages.lua` / `act_str.lua`: -(70 - lv)% MORE, e.g. -52% at Lv18, -50% at Lv20)
+  // Must be applied to `skillDb` BEFORE Hit & Bleed calculations so AverageDamage and Ailments match Mirage Warrior damage.
+  // Note: General's Cry cannot exert/support Channelling skills (e.g. Cyclone).
+  const linkedGeneralsCryGem =
+    build.game === 'poe1' &&
+    isAttack &&
+    (flags & ModFlag.Melee) !== 0 &&
+    !effectiveSkillTypeSet.has('channel') &&
+    !activeDef.tags.some((t) => t.toLowerCase() === 'channelling')
+      ? mainGroup.gems.find((g) => {
+          if (!g.enabled) return false;
+          const d = getGemById('poe1', g.gemId);
+          return Boolean(d && d.name.en.trim().toLowerCase() === "general's cry");
+        })
+      : undefined;
+  if (linkedGeneralsCryGem) {
+    const gcDef = getGemById('poe1', linkedGeneralsCryGem.gemId)!;
+    const gcLv = Math.min(40, Math.max(1, linkedGeneralsCryGem.level));
+    const gcEntry = resolveGemLevelEntry(gcDef, gcLv);
+    const gcCmods = gcEntry?.compiledMods ?? gcDef.compiledMods ?? [];
+    const gcLessDmg =
+      (gcCmods.find((m) => m.name === 'Damage' && m.type === 'MORE' && typeof m.value === 'number')?.value as number | undefined) ??
+      Math.min(-10, gcLv - 70);
+    if (gcLessDmg !== 0) {
+      skillDb.addMod({
+        name: 'Damage',
+        type: 'MORE',
+        value: gcLessDmg,
+        flags: ModFlag.Attack,
+        keywordFlags: 0,
+        source: `General's Cry (Lv.${gcLv})`,
+      });
+    }
+  }
+
   // Crown of Eyes / Kinetic Blast (200%) / Kinetic Fusillade (150%) / Battlemage's Cry / Wandslinger (CalcOffence.lua:655-669)
   const hasCrownOfEyes = Boolean(postUniqueRes && postUniqueRes.crownOfEyesAttackInc !== 0);
   const hasSpellDmgToAtk =
@@ -11615,29 +11654,19 @@ function computeGroupOffence(
       const swMult = swCount * swCastChance * Math.max(0, 1 + swLessDmg / 100);
       mirageAndWispsDps += mirageableDps * swMult;
     }
-    const gcGem = mainGroup.gems.find((g) => {
-      if (!g.enabled) return false;
-      const d = getGemById('poe1', g.gemId);
-      return Boolean(d && d.name.en.trim().toLowerCase() === "general's cry");
-    });
-    if (gcGem && isAttack && (flags & ModFlag.Melee) !== 0 && avgHitWithCrit > 0) {
-      const gcDef = getGemById('poe1', gcGem.gemId)!;
-      const gcLv = Math.min(40, Math.max(1, gcGem.level));
-      const gcEntry = resolveGemLevelEntry(gcDef, gcLv);
-      const gcCmods = gcEntry?.compiledMods ?? gcDef.compiledMods ?? [];
-      const gcLessDmg =
-        (gcCmods.find((m) => m.name === 'Damage' && m.type === 'MORE' && typeof m.value === 'number')?.value as number | undefined) ??
-        -30;
+    if (linkedGeneralsCryGem && avgHitWithCrit > 0) {
+      const gcDef = getGemById('poe1', linkedGeneralsCryGem.gemId)!;
+      const gcQualBonus = Math.floor(Math.max(0, linkedGeneralsCryGem.quality ?? 0) * 0.05);
       const maxWarriors = Math.max(
         1,
-        Math.round(5 + skillDb.sum('BASE', 'GeneralsCryDoubleMaxCount', flags, kwFlags)),
+        Math.round(5 + gcQualBonus + skillDb.sum('BASE', 'GeneralsCryDoubleMaxCount', flags, kwFlags)),
       );
-      const gcBaseCd = typeof gcDef.skillData?.cooldown === 'number' ? gcDef.skillData.cooldown : 4;
+      const gcBaseCd = typeof gcDef.skillData?.cooldown === 'number' ? gcDef.skillData.cooldown : 3;
       const gcCdr = skillDb.sum('INC', ['CooldownRecovery', 'WarcryCooldownRecovery']);
       const effGcCd = gcBaseCd / Math.max(0.1, 1 + gcCdr / 100);
       const warriorRate = maxWarriors / Math.max(0.35, effGcCd);
-      const gcDmgMult = Math.max(0, 1 + gcLessDmg / 100);
-      const gcHitDps = avgHitWithCrit * warriorRate * dpsMult * (hitChance / 100) * gcDmgMult;
+      // General's Cry LESS damage is already baked into `skillDb` (and therefore `avgHitWithCrit` & `hitDps`).
+      const gcHitDps = avgHitWithCrit * warriorRate * dpsMult * (hitChance / 100);
       const gcImpaleDps =
         impaleDps > 0 && hitDps > 0 ? impaleDps * (gcHitDps / hitDps) : 0;
       if (gcHitDps + gcImpaleDps > hitDps + impaleDps) {

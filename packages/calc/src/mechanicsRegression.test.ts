@@ -2006,4 +2006,135 @@ describe('Mechanism-Layer Regression Suite (PoE 1 & PoE 2)', () => {
       expect(outEff.offence.averageHit).toBeCloseTo(outPlain.offence.averageHit, 1);
     });
   });
+
+  describe('Wave 5D: Gladiator War of Attrition (PresenceSeconds) & General\'s Cry Mirage Warrior LESS Damage', () => {
+    it('binds enemyMultiplierEnemyPresenceSeconds to PresenceSeconds for Gladiator War of Attrition', () => {
+      const base = createSamplePoe1Build();
+      const sword = makeWeapon({
+        id: 'woa_sword',
+        name: 'Test Sword',
+        baseName: 'Jewelled Foil',
+        slotType: 'Weapon 1',
+        weaponStats: {
+          weaponType: 'Sword',
+          twoHanded: false,
+          physicalMin: 100,
+          physicalMax: 200,
+          attacksPerSecond: 1.6,
+          critChance: 5,
+        },
+      });
+      const common: Build = {
+        ...base,
+        items: { ...base.items, [sword.id]: sword },
+        equipped: { ...base.equipped, 'Weapon 1': sword.id },
+        skills: [
+          {
+            id: 'sg_woa',
+            label: 'Attack',
+            enabled: true,
+            gems: [{ instanceId: 'g1', gemId: 'poe1_cyclone', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_woa',
+        config: {
+          ...base.config,
+          enemyArmour: 0,
+          customMods:
+            "Deal 1% more Damage with Hits and Ailments to Rare and Unique Enemies for each second they've ever been in your Presence, up to a maximum of 100%",
+          rawInputs: {},
+        },
+      };
+      const out0 = calculateBuild(common);
+      const out10 = calculateBuild({
+        ...common,
+        config: {
+          ...common.config,
+          rawInputs: { enemyMultiplierEnemyPresenceSeconds: 10 },
+        },
+      });
+      expect(out10.offence.averageHit / out0.offence.averageHit).toBeCloseTo(1.1, 2);
+    });
+
+    it('applies General\'s Cry LESS damage to linked melee attack hits while skipping Channelling skills', () => {
+      const base = createSamplePoe1Build();
+      const axe = makeWeapon({
+        id: 'gc_axe',
+        name: 'Test Axe',
+        baseName: 'Siege Axe',
+        slotType: 'Weapon 1',
+        weaponStats: {
+          weaponType: 'Axe',
+          twoHanded: false,
+          physicalMin: 100,
+          physicalMax: 200,
+          attacksPerSecond: 1.5,
+          critChance: 5,
+        },
+      });
+      const laceratePlain: Build = {
+        ...base,
+        items: { ...base.items, [axe.id]: axe },
+        equipped: { ...base.equipped, 'Weapon 1': axe.id },
+        skills: [
+          {
+            id: 'sg_gc',
+            label: 'GC Lacerate',
+            enabled: true,
+            gems: [{ instanceId: 'g_lac', gemId: 'poe1_lacerate', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_gc',
+        config: {
+          ...base.config,
+          enemyArmour: 0,
+        },
+      };
+      const lacerateWithGc: Build = {
+        ...laceratePlain,
+        skills: [
+          {
+            ...laceratePlain.skills[0]!,
+            gems: [
+              ...laceratePlain.skills[0]!.gems,
+              { instanceId: 'g_gc', gemId: 'poe1_generalscry', level: 18, quality: 30, enabled: true },
+            ],
+          },
+        ],
+      };
+      const outLacPlain = calculateBuild(laceratePlain);
+      const outLacGc = calculateBuild(lacerateWithGc);
+      // Lv 18 General's Cry applies -52% MORE Damage (0.48x) to Mirage Warrior hits
+      expect(outLacGc.offence.averageHit / outLacPlain.offence.averageHit).toBeCloseTo(0.48, 2);
+
+      // Channelling skills (Cyclone) cannot be exerted/supported by General's Cry
+      const cyclonePlain: Build = {
+        ...laceratePlain,
+        skills: [
+          {
+            id: 'sg_cyc',
+            label: 'Cyclone',
+            enabled: true,
+            gems: [{ instanceId: 'g_cyc', gemId: 'poe1_cyclone', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_cyc',
+      };
+      const cycloneWithGc: Build = {
+        ...cyclonePlain,
+        skills: [
+          {
+            ...cyclonePlain.skills[0]!,
+            gems: [
+              ...cyclonePlain.skills[0]!.gems,
+              { instanceId: 'g_gc2', gemId: 'poe1_generalscry', level: 18, quality: 30, enabled: true },
+            ],
+          },
+        ],
+      };
+      const outCycPlain = calculateBuild(cyclonePlain);
+      const outCycGc = calculateBuild(cycloneWithGc);
+      expect(outCycGc.offence.averageHit).toBeCloseTo(outCycPlain.offence.averageHit, 1);
+    });
+  });
 });
