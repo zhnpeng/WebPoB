@@ -432,7 +432,7 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     build: (_, src) => [mkMod('HollowPalmTechnique', 'FLAG', true, src)],
   },
   {
-    pattern: /^(\d+(?:\.\d+)?)% more Attack Speed per (\d+) Item Evasion on Equipped Armour Items$/i,
+    pattern: /^(\d+(?:\.\d+)?)% more Attack Speed per (\d+) Item Evasion(?: Rating)? on Equipped Armour Items$/i,
     build: (m, src) => [
       mkMod('HollowPalmTechnique', 'FLAG', true, src),
       mkMod('HollowPalmAttackSpeedPerEvasion', 'BASE', Number(m[1]) / Number(m[2]), src, ModFlag.Attack),
@@ -2811,6 +2811,34 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
   {
     pattern: /^Increases and Reductions to Mana Regeneration Rate also apply to Rage Regeneration Rate$/i,
     build: (_, src) => [mkMod('ManaRegenAppliesToRageRegen', 'FLAG', true, src)],
+  },
+  // Wave 4W: "Gain X% of Maximum Mana/Life/Energy Shield as Armour/Evasion" (e.g. Chronomancer Comet Armour +550)
+  {
+    pattern: /^Gain (\d+(?:\.\d+)?)% of [Mm]aximum (Mana|Life|Energy Shield) as (Armour|Evasion(?: Rating)?)$/i,
+    build: (m, src) => {
+      const fromRaw = m[2]!.toLowerCase();
+      const toRaw = m[3]!.toLowerCase();
+      const fromStat = fromRaw === 'energy shield' ? 'EnergyShield' : fromRaw === 'life' ? 'Life' : 'Mana';
+      const toStat = toRaw.startsWith('evasion') ? 'Evasion' : 'Armour';
+      return [
+        {
+          ...mkMod(toStat, 'BASE', Number(m[1]) / 100, src),
+          tags: [{ type: 'PerStat', stat: fromStat, div: 1 }],
+        },
+      ];
+    },
+  },
+  // Wave 4W: Flat added damage to Unarmed (Melee) Hits / Attacks (e.g. Hollow Palm gloves/rings)
+  {
+    pattern: /^Adds (\d+) to (\d+) (Physical|Fire|Cold|Lightning|Chaos) [Dd]amage to Unarmed(?: Melee)? (?:Hits|Attacks)$/i,
+    build: (m, src) => {
+      const el = `${m[3]!.charAt(0).toUpperCase()}${m[3]!.slice(1).toLowerCase()}`;
+      const flags = /Melee/i.test(m[0]!) ? ModFlag.Attack | ModFlag.Melee : ModFlag.Attack;
+      return [
+        { ...mkMod(`${el}Min`, 'BASE', Number(m[1]), src, flags), tags: [{ type: 'Condition', var: 'Unarmed' }] },
+        { ...mkMod(`${el}Max`, 'BASE', Number(m[2]), src, flags), tags: [{ type: 'Condition', var: 'Unarmed' }] },
+      ];
+    },
   },
 
   // =========================================================================

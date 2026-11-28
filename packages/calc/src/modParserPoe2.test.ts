@@ -1868,5 +1868,43 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
         ),
       ).toEqual([expect.objectContaining({ name: 'ManaRegenAppliesToRageRegen', type: 'FLAG', value: true })]);
     });
+
+    it('parses Wave 4W PoE 2 Hollow Palm Evasion Rating, Mana-as-Armour, and Unarmed Melee added damage rules', () => {
+      expect(
+        parseModLine('1% more Attack Speed per 25 Item Evasion Rating on Equipped Armour Items', 'Tree:64601'),
+      ).toEqual([
+        expect.objectContaining({ name: 'HollowPalmTechnique', type: 'FLAG', value: true }),
+        expect.objectContaining({
+          name: 'HollowPalmAttackSpeedPerEvasion',
+          type: 'BASE',
+          value: 1 / 25,
+          flags: ModFlag.Attack,
+        }),
+      ]);
+      expect(parseModLine('Gain 40% of Maximum Mana as Armour', 'Item:9')).toEqual([
+        expect.objectContaining({
+          name: 'Armour',
+          type: 'BASE',
+          value: 0.4,
+          tags: [{ type: 'PerStat', stat: 'Mana', div: 1 }],
+        }),
+      ]);
+      expect(parseModLine('Adds 1 to 104 Lightning Damage to Unarmed Melee Hits', 'Item:19')).toEqual([
+        expect.objectContaining({
+          name: 'LightningMin',
+          type: 'BASE',
+          value: 1,
+          flags: ModFlag.Attack | ModFlag.Melee,
+          tags: [{ type: 'Condition', var: 'Unarmed' }],
+        }),
+        expect.objectContaining({
+          name: 'LightningMax',
+          type: 'BASE',
+          value: 104,
+          flags: ModFlag.Attack | ModFlag.Melee,
+          tags: [{ type: 'Condition', var: 'Unarmed' }],
+        }),
+      ]);
+    });
   });
 });
