@@ -1084,4 +1084,91 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       expect.objectContaining({ name: 'MeleeHitsFortify', type: 'FLAG', value: true }),
     ]);
   });
+
+  it('Wave 4T: PoE 1 Bloodline notables (Unseen Hand, Toad\'s Price, Conjoined Spire, Vivid Cat, Umbral Army, Starlight, etc.)', () => {
+    expect(parseModLine('+1 Ring Slot', 'Tree: The Unseen Hand')).toEqual([
+      expect.objectContaining({ name: 'AdditionalRingSlot', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Utility Flasks are Disabled', "Tree: Toad's Price")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'UtilityFlasksDoNotApplyToPlayer', type: 'FLAG', value: true }),
+        expect.objectContaining({ name: 'DisableUtilityFlasks', type: 'FLAG', value: true }),
+      ]),
+    );
+    expect(
+      parseModLine('Skills used by Totems deal 10% more Damage per maximum number of Summoned Totems', 'Tree: Conjoined Spire'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'Damage',
+        type: 'MORE',
+        value: 10,
+        tags: [
+          { type: 'PerStat', stat: 'ActiveTotemLimit', div: 1 },
+          { type: 'SkillType', skillType: 'Totem' },
+        ],
+      }),
+    ]);
+    expect(parseModLine('50% increased Effect of your Marks while Elusive', 'Tree: The Vivid Cat')).toEqual([
+      expect.objectContaining({
+        name: 'MarkEffect',
+        type: 'INC',
+        value: 50,
+        tags: [{ type: 'Condition', var: 'Elusive' }],
+      }),
+    ]);
+    expect(
+      parseModLine('2% increased Attack and Cast Speed per Summoned Raging Spirit', 'Tree: Umbral Army'),
+    ).toEqual([
+      expect.objectContaining({ name: 'Speed', type: 'INC', value: 2, flags: ModFlag.Attack }),
+      expect.objectContaining({ name: 'Speed', type: 'INC', value: 2, flags: ModFlag.Spell }),
+    ]);
+    expect(parseModLine('15% increased Attack Damage per Raised Zombie', 'Tree: Umbral Army')).toEqual([
+      expect.objectContaining({
+        name: 'Damage',
+        type: 'INC',
+        value: 15,
+        flags: ModFlag.Attack,
+        tags: [{ type: 'PerStat', stat: 'ActiveZombieLimit', div: 1 }],
+      }),
+    ]);
+    expect(parseModLine('70% increased Ward from Equipped Armour Items', 'Tree: Enhanced Starlight')).toEqual([
+      expect.objectContaining({ name: 'Ward', type: 'INC', value: 70 }),
+    ]);
+    expect(
+      parseModLine(
+        'Spells you cast yourself gain Added Physical Damage equal to 75% of Life Cost, if Life Cost is not higher than the maximum you could spend',
+        'Tree: Cannibalised Faith',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'AddedPhysicalDamageFromLifeCostPct',
+        type: 'BASE',
+        value: 75,
+        flags: ModFlag.Spell,
+      }),
+    ]);
+    expect(
+      parseModLine('Hatred has 50% increased Aura Effect while at maximum Frenzy Charges', "Tree: The King's Might"),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'AuraEffect:Hatred',
+        type: 'INC',
+        value: 50,
+        tags: [{ type: 'Condition', var: 'AtMaximumFrenzyCharges' }],
+      }),
+    ]);
+    expect(
+      parseModLine('Unsealed Spells gain 5% more Damage each time their effects Reoccur', 'Tree: The Primal Owl'),
+    ).toEqual([expect.objectContaining({ name: 'MaxSealDamage', type: 'MORE', value: 5 })]);
+    expect(
+      parseModLine('You have Everlasting Sacrifice if at least 6 Corrupted Items are Equipped', "Tree: Corruption's Embrace"),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'CorruptionsEmbrace:EverlastingSacrifice',
+        type: 'FLAG',
+        value: true,
+        tags: [{ type: 'Condition', var: 'MultiplierThreshold:CorruptedItem:6' }],
+      }),
+    ]);
+  });
 });
