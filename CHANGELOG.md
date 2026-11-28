@@ -1,3 +1,7 @@
+## v0.3.1 - 2026-11-28
+
+- PoE 1 & PoE 2 calculation accuracy overhaul (185 upstream LuaJIT golden snapshots, 904 tests), main-thread calc bundle code-split (0 KB duplicate), historical passive tree support, and bilingual EN/ZH-CN/ZH-TW parity
+
 ## v0.3.0 - 2026-11-27
 
 - 深度对齐 PoB1/PoB2 计算引擎（SkillStatMap 编译宝石、组合式 ModParser、多 Actor/星团运行时）；新增国服 WeGame PoE 2 与 Maxroll 链接直导及国际服繁中（zh-TW）支持
