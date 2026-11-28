@@ -2813,8 +2813,9 @@ export function evaluateAurasAndWatchersEye(
       } else if (lower === 'enhance' || lower === 'awakened enhance') {
         groupEnhanceQualityBonus += Math.max(0, effLevel - 1) * 8;
       } else if (lower === 'mark on hit') {
-        // Official PoB1 Mark On Hit Support: -(40 - effLevel) INC CurseEffect at Lv1..20 (Lv20 = -16% + 0.25% per quality)
-        const basePenalty = -(36 - effLevel);
+        // Official PoB1 Mark On Hit Support (`Data/Skills/sup_dex.lua`):
+        // Lv1 = -30%, Lv10 = -26%, Lv20 = -21%, Lv21 = -20% INC CurseEffect + 0.25% per quality
+        const basePenalty = -(31 - Math.ceil(effLevel / 2));
         const qualBonus = Math.trunc(Math.max(0, effQuality) * 0.25);
         groupCurseEffectInc += basePenalty + qualBonus;
       } else if (lower === 'hextouch' || lower === 'awakened hextouch') {

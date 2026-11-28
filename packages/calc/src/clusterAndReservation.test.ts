@@ -2628,4 +2628,57 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     // Herald of Ash: +40% (Ring 1, counted once) + 60% (ModDB) = +100% -> 15 * 2.0 = 30% Phys as Extra Fire
     expect(db.sum('BASE', 'PhysicalDamageGainAsFire')).toBe(30);
   });
+
+  it('applies authentic PoB1 Mark On Hit Curse Effect penalty (-21% at Lv20, +0.25%/Q)', () => {
+    const snipersDef: GemDefinition = {
+      id: 'poe1_snipersmark',
+      name: { en: "Sniper's Mark", zh: '狙击印记' },
+      category: 'active',
+      game: 'poe1',
+      color: 'green',
+      tags: ['spell', 'curse', 'mark'],
+      modFlags: 0,
+      keywordFlags: KeywordFlag.Curse,
+      stats: [],
+      compiledMods: [
+        { name: 'DamageTaken', type: 'INC', value: 40, flags: ModFlag.Projectile, keywordFlags: 0, target: 'enemy' },
+      ],
+    };
+    const mohDef: GemDefinition = {
+      id: 'poe1_supportmarkonhit',
+      name: { en: 'Mark On Hit', zh: '击中印记' },
+      category: 'support',
+      game: 'poe1',
+      color: 'green',
+      tags: ['mark', 'support', 'trigger'],
+      modFlags: 0,
+      keywordFlags: 0,
+      stats: [],
+    };
+    const res = evaluateAurasAndWatchersEye({
+      build: mkBuild({
+        game: 'poe1',
+        skills: [
+          {
+            id: 'sg-moh',
+            label: 'Mark On Hit',
+            enabled: true,
+            gems: [
+              { instanceId: 'm1', gemId: 'poe1_supportmarkonhit', level: 20, quality: 20, enabled: true },
+              { instanceId: 'm2', gemId: 'poe1_snipersmark', level: 20, quality: 0, enabled: true },
+            ],
+          },
+        ],
+      }),
+      playerDb: new ModDB(),
+      getGemByIdFn: (_game, id) => {
+        if (id === 'poe1_snipersmark') return snipersDef;
+        if (id === 'poe1_supportmarkonhit') return mohDef;
+        return undefined;
+      },
+      maxMana: 1000,
+    });
+    // Mark On Hit Lv20 Q20 = -21% + 5% = -16% Mark Effect -> trunc(40 * 0.84) = 33% INC Projectile Damage Taken
+    expect(res.enemyDb.sum('INC', 'DamageTaken', ModFlag.Projectile)).toBe(33);
+  });
 });
