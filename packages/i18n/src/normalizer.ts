@@ -316,7 +316,7 @@ const ZH_TO_EN_RULES: StatRewriteRule[] = [
     toEn: (_, v) => `Minions have ${v}% increased Critical Damage Bonus`,
   },
   {
-    zhPattern: /^具有\s*(\d+)\s*个咒符位$/,
+    zhPattern: /^具有\s*(\d+)\s*个(?:咒|护)符位$/,
     toEn: (_, v) => `Has ${v} Charm Slots`,
   },
   {
@@ -851,6 +851,161 @@ const ZH_TO_EN_RULES: StatRewriteRule[] = [
     zhPattern: /^(?:\+(\d+)\s*晕眩阈值|晕眩阈值\s*\+(\d+))$/,
     toEn: (_, a, b) => `+${a || b} to Stun Threshold`,
   },
+  // Wave 6H: High-frequency poe2-wegame-cn combat, defence, minion, presence, flask & unique lines
+  { zhPattern: /^你不具有精魂$/, toEn: () => 'You have no Spirit' },
+  { zhPattern: /^你不具有元素抗性$/, toEn: () => 'You have no Elemental Resistances' },
+  {
+    zhPattern: /^(\d+)%\s*的伤害优先从魔力扣除$/,
+    toEn: (_, v) => `${v}% of Damage is taken from Mana before Life`,
+  },
+  {
+    zhPattern: /^(?:最大生命|生命上限)的\s*(\d+)%\s*转化为能量护盾$/,
+    toEn: (_, v) => `${v}% of Maximum Life Converted to Energy Shield`,
+  },
+  {
+    zhPattern: /^你的暴击伤害加成为\s*(\d+)%$/,
+    toEn: (_, v) => `Your Critical Damage Bonus is ${v}%`,
+  },
+  {
+    zhPattern: /^攻击伤害的暴击伤害加成\s*\+?(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Critical Damage Bonus for Attacks`,
+  },
+  {
+    zhPattern: /^法术伤害的暴击伤害加成\s*\+?(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Critical Damage Bonus for Spells`,
+  },
+  {
+    zhPattern: /^战矛暴击伤害加成\s*\+?(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Critical Damage Bonus with Spears`,
+  },
+  {
+    zhPattern: /^每\s*(\d+)\s*点?(?:最大生命|生命上限)使非吟唱(?:法术|技能)的(?:法术)?暴击(?:率|几率)(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, per, v) => `Non-Channelling Spells have ${v}% increased Critical Hit Chance per ${per} maximum Life`,
+  },
+  {
+    zhPattern: /^每\s*(\d+)\s*点?(?:最大生命|生命上限)使非吟唱(?:法术|技能)的伤害(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, per, v) => `Non-Channelling Spells deal ${v}% increased Damage per ${per} maximum Life`,
+  },
+  {
+    zhPattern: /^每\s*(\d+)\s*点?(?:最大魔力|魔力上限)使非吟唱(?:法术|技能)的(?:法术)?暴击(?:率|几率)(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, per, v) => `Non-Channelling Spells have ${v}% increased Critical Hit Chance per ${per} maximum Mana`,
+  },
+  {
+    zhPattern: /^消耗生命的法术造成的法术伤害(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Spell Damage with Spells that Cost Life`,
+  },
+  {
+    zhPattern: /^召唤生物的攻击[和与]施法速度(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `Minions have ${v}% increased Attack and Cast Speed`,
+  },
+  {
+    zhPattern: /^召唤生物的暴击(?:率|几率)(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `Minions have ${v}% increased Critical Hit Chance`,
+  },
+  {
+    zhPattern: /^召唤生物的(?:生命上限|最大生命)(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `Minions have ${v}% increased maximum Life`,
+  },
+  {
+    zhPattern: /^召唤生物有\s*\+?(\d+)%\s*(?:所有|全)?元素抗性$/,
+    toEn: (_, v) => `Minions have +${v}% to all Elemental Resistances`,
+  },
+  {
+    zhPattern: /^召唤生物技能的保留效能(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `Minion Skills have ${v}% increased Reservation Efficiency`,
+  },
+  {
+    zhPattern: /^技能的精魂保留效能(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Spirit Reservation Efficiency of Skills`,
+  },
+  {
+    zhPattern: /^在场的友军造成的伤害(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `Allies in your Presence deal ${v}% increased Damage`,
+  },
+  {
+    zhPattern: /^在场的友军的暴击(?:率|几率)(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `Allies in your Presence have ${v}% increased Critical Hit Chance`,
+  },
+  {
+    zhPattern: /^在场的友军附加\s*(\d+)\s*(?:-|–|~|到|至)\s*(\d+)\s*点?攻击(物理|火焰|冰霜|冰冷|闪电|混沌)伤害$/,
+    toEn: (_, min, max, el) =>
+      `Allies in your Presence deal ${min} to ${max} additional Attack ${ZH_DAMAGE_TYPE_TO_EN[el] ?? el} Damage`,
+  },
+  {
+    zhPattern: /^在场的友军每秒再生\s*(\d+(?:\.\d+)?)\s*点?生命$/,
+    toEn: (_, v) => `Allies in your Presence Regenerate ${v} Life per second`,
+  },
+  {
+    zhPattern: /^在场的友军每秒再生(?:生命上限|最大生命)\s*(\d+(?:\.\d+)?)%\s*的生命$/,
+    toEn: (_, v) => `Allies in your Presence Regenerate ${v}% of maximum Life per second`,
+  },
+  {
+    zhPattern: /^在场范围(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Presence Area of Effect`,
+  },
+  {
+    zhPattern: /^物理攻击伤害的\s*(\d+(?:\.\d+)?)%\s*转化为(生命|魔力|能量护盾)偷取$/,
+    toEn: (_, v, pool) => {
+      const map: Record<string, string> = { 生命: 'Life', 魔力: 'Mana', 能量护盾: 'Energy Shield' };
+      return `${v}% of Physical Attack Damage Leeched as ${map[pool] ?? pool}`;
+    },
+  },
+  {
+    zhPattern: /^格挡(?:几率|率)(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Block chance`,
+  },
+  {
+    zhPattern: /^物品稀有度(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Rarity of Items found`,
+  },
+  {
+    zhPattern: /^持续时间(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Duration`,
+  },
+  {
+    zhPattern: /^此药剂无法使用[，,]\s*但效果持续生效$/,
+    toEn: () => 'This Flask cannot be used, but its Effect is always active',
+  },
+  {
+    zhPattern: /^装备的戒指加成效果(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased bonuses gained from Equipped Rings`,
+  },
+  {
+    zhPattern: /^击败敌人时有\s*(\d+)%\s*的几率获得一个能量球$/,
+    toEn: (_, v) => `${v}% chance to gain a Charge on Kill`,
+  },
+  {
+    zhPattern: /^(生命|魔力|能量护盾)在击败敌人时恢复\s*(\d+(?:\.\d+)?)%$/,
+    toEn: (_, pool, v) => {
+      const map: Record<string, string> = { 生命: 'Life', 魔力: 'Mana', 能量护盾: 'Energy Shield' };
+      return `Recover ${v}% of ${map[pool] ?? pool} on Kill`;
+    },
+  },
+  {
+    zhPattern: /^你身上的执政官增益效果(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Effect of Archon Buffs on you`,
+  },
+  {
+    zhPattern: /^(?:你施加的)?诅咒强度(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Curse Magnitudes`,
+  },
+  {
+    zhPattern: /^变形时伤害(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Damage while Shapeshifted`,
+  },
+  { zhPattern: /^效果期间获得猛攻$/, toEn: () => 'Gain Onslaught during Effect' },
+  {
+    zhPattern: /^未保留的生命全满时不移除效果$/,
+    toEn: () => 'Effects are not removed when Unreserved Life is Filled',
+  },
+  {
+    zhPattern: /^法术的魔力消耗效能(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Mana Cost Efficiency of Spells`,
+  },
+  {
+    zhPattern: /^生命回复总降\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% less Life Recovery`,
+  },
 ];
 
 const EN_TO_ZH_RULES: EnToZhRule[] = [
@@ -1337,11 +1492,20 @@ export function normalizeStatLineToEn(rawLine: string): string {
   const normalized = toSimplifiedZh(cleaned);
 
   // PoE 2 Time-Lost / Against the Darkness / Controlled Metamorphosis radius jewel modifiers
-  const mNotableGrant = normalized.match(/^范围内的核心天赋同时提供\s+(.+)$/);
+  // Also handle pre-normalized mixed-language lines like "Notable Passive Skills in Radius also grant <ZH>"
+  const mEnNotableGrant = normalized.match(/^Notable Passive Skills in Radius also grant\s+(.+)$/i);
+  if (mEnNotableGrant) {
+    return wrapBonded(`Notable Passive Skills in Radius also grant ${normalizeStatLineToEn(mEnNotableGrant[1]!)}`);
+  }
+  const mEnSmallGrant = normalized.match(/^Small Passive Skills in Radius also grant\s+(.+)$/i);
+  if (mEnSmallGrant) {
+    return wrapBonded(`Small Passive Skills in Radius also grant ${normalizeStatLineToEn(mEnSmallGrant[1]!)}`);
+  }
+  const mNotableGrant = normalized.match(/^范围内的?(?:核心|显赫)天赋同时提供\s*(.+)$/);
   if (mNotableGrant) {
     return wrapBonded(`Notable Passive Skills in Radius also grant ${normalizeStatLineToEn(mNotableGrant[1]!)}`);
   }
-  const mSmallGrant = normalized.match(/^范围内的小型?天赋同时提供\s+(.+)$/);
+  const mSmallGrant = normalized.match(/^范围内的?小型?天赋同时提供\s*(.+)$/);
   if (mSmallGrant) {
     return wrapBonded(`Small Passive Skills in Radius also grant ${normalizeStatLineToEn(mSmallGrant[1]!)}`);
   }

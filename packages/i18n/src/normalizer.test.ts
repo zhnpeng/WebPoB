@@ -124,4 +124,45 @@ describe('normalizer bilingual parity (PoE 1 & PoE 2)', () => {
       expect(normalizeStatLineToEn(zhCn)).toBe(en);
     }
   });
+
+  it('normalizes Wave 6H poe2-wegame-cn combat, minion, presence, unique & Time-Lost lines', () => {
+    const cases: Array<[string, string]> = [
+      ['你不具有精魂', 'You have no Spirit'],
+      ['你不具有元素抗性', 'You have no Elemental Resistances'],
+      ['50% 的伤害优先从魔力扣除', '50% of Damage is taken from Mana before Life'],
+      ['Bonded: 生命上限的 8% 转化为能量护盾', 'Bonded: 8% of Maximum Life Converted to Energy Shield'],
+      ['你的暴击伤害加成为 250%', 'Your Critical Damage Bonus is 250%'],
+      ['攻击伤害的暴击伤害加成 20%', '20% increased Critical Damage Bonus for Attacks'],
+      ['Notable Passive Skills in Radius also grant 攻击伤害的暴击伤害加成 9%', 'Notable Passive Skills in Radius also grant 9% increased Critical Damage Bonus for Attacks'],
+      ['范围内显赫天赋同时提供 战矛暴击伤害加成 12%', 'Notable Passive Skills in Radius also grant 12% increased Critical Damage Bonus with Spears'],
+      ['每 100 生命上限使非吟唱法术的暴击率提高 5%', 'Non-Channelling Spells have 5% increased Critical Hit Chance per 100 maximum Life'],
+      ['每 100 生命上限使非吟唱法术的伤害提高 10%', 'Non-Channelling Spells deal 10% increased Damage per 100 maximum Life'],
+      ['召唤生物的攻击和施法速度提高 3%', 'Minions have 3% increased Attack and Cast Speed'],
+      ['召唤生物的暴击率提高 12%', 'Minions have 12% increased Critical Hit Chance'],
+      ['召唤生物的生命上限提高 43%', 'Minions have 43% increased maximum Life'],
+      ['召唤生物有 +3% 元素抗性', 'Minions have +3% to all Elemental Resistances'],
+      ['召唤生物技能的保留效能提高 8%', 'Minion Skills have 8% increased Reservation Efficiency'],
+      ['技能的精魂保留效能提高 7%', '7% increased Spirit Reservation Efficiency of Skills'],
+      ['在场的友军造成的伤害提高 40%', 'Allies in your Presence deal 40% increased Damage'],
+      ['在场的友军的暴击几率提高 36%', 'Allies in your Presence have 36% increased Critical Hit Chance'],
+      ['在场的友军附加 8 - 12 攻击冰霜伤害', 'Allies in your Presence deal 8 to 12 additional Attack Cold Damage'],
+      ['在场范围提高 50%', '50% increased Presence Area of Effect'],
+      ['物理攻击伤害的 8.71% 转化为生命偷取', '8.71% of Physical Attack Damage Leeched as Life'],
+      ['格挡几率提高 15%', '15% increased Block chance'],
+      ['物品稀有度提高 15%', '15% increased Rarity of Items found'],
+      ['此药剂无法使用，但效果持续生效', 'This Flask cannot be used, but its Effect is always active'],
+      ['装备的戒指加成效果提高 50%', '50% increased bonuses gained from Equipped Rings'],
+      ['击败敌人时有 25% 的几率获得一个能量球', '25% chance to gain a Charge on Kill'],
+      ['魔力在击败敌人时恢复 3%', 'Recover 3% of Mana on Kill'],
+      ['Bonded: 你身上的执政官增益效果提高 40%', 'Bonded: 40% increased Effect of Archon Buffs on you'],
+      ['Bonded: 诅咒强度提高 8%', 'Bonded: 8% increased Curse Magnitudes'],
+      ['Bonded: 变形时伤害提高 40%', 'Bonded: 40% increased Damage while Shapeshifted'],
+      ['效果期间获得猛攻', 'Gain Onslaught during Effect'],
+      ['具有 2 个咒符位', 'Has 2 Charm Slots'],
+    ];
+
+    for (const [zh, en] of cases) {
+      expect(normalizeStatLineToEn(zh)).toBe(en);
+    }
+  });
 });
