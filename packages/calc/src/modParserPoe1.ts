@@ -2367,6 +2367,91 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
     pattern: /^([A-Z][a-zA-Z' ]+?) has (\d+)% increased Mana Reservation Efficiency$/,
     build: (m, src) => [mkMod(`ManaReservationEfficiency:${m[1]!.trim()}`, 'INC', Number(m[2]), src)],
   },
+  // Wave 6C: Block Unlucky, DoT Taken, Whispers of Infinity, Warcry/Echoes, Alchemist's Mark, Ailment Can-Inflict & Luminary Mercenary
+  {
+    pattern: /^Chance to Block (Attack |Spell )?Damage is Unlucky$/i,
+    build: (m, src) => {
+      const scope = (m[1] ?? '').trim().toLowerCase();
+      if (scope === 'attack') return [mkMod('BlockChanceIsUnlucky', 'FLAG', true, src)];
+      if (scope === 'spell') return [mkMod('SpellBlockChanceIsUnlucky', 'FLAG', true, src)];
+      return [
+        mkMod('BlockChanceIsUnlucky', 'FLAG', true, src),
+        mkMod('SpellBlockChanceIsUnlucky', 'FLAG', true, src),
+      ];
+    },
+  },
+  {
+    pattern: /^(\d+)% (increased|reduced) (Physical|Fire|Cold|Lightning|Chaos|Elemental) Damage taken over time$/i,
+    build: (m, src) => {
+      const val = m[2]!.toLowerCase() === 'reduced' ? -Number(m[1]) : Number(m[1]);
+      const elem = m[3]![0]!.toUpperCase() + m[3]!.slice(1).toLowerCase();
+      return [mkMod(`${elem}DamageTakenOverTime`, 'INC', val, src)];
+    },
+  },
+  {
+    pattern: /^Skills Cost Energy Shield instead of Mana(?: or Life)?$/i,
+    build: (_, src) => [mkMod('SkillsCostEnergyShield', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Warcries have (\d+)% (increased|reduced) Cooldown Recovery Rate$/i,
+    build: (m, src) => {
+      const val = m[2]!.toLowerCase() === 'reduced' ? -Number(m[1]) : Number(m[1]);
+      return [
+        {
+          ...mkMod('CooldownRecovery', 'INC', val, src),
+          tags: [{ type: 'SkillType' as const, skillType: 'Warcry' }],
+        },
+      ];
+    },
+  },
+  {
+    pattern: /^Warcries cannot Exert Travel Skills$/i,
+    build: (_, src) => [mkMod('WarcriesCannotExertTravelSkills', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^When you Attack, take (\d+)% of Life as Physical Damage for each Warcry Exerting the Attack$/i,
+    build: (m, src) => [mkMod('EchoesSelfDamagePerExert', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Marked Enemy takes (\d+)% increased Damage from (Poison|Bleeding|Ignite|Ailments)$/i,
+    build: (m, src) => {
+      const kwMap: Record<string, number> = {
+        poison: KeywordFlag.Poison,
+        bleeding: KeywordFlag.Bleed,
+        ignite: KeywordFlag.Ignite,
+        ailments: 0,
+      };
+      const kw = kwMap[m[2]!.toLowerCase()] ?? 0;
+      return [
+        {
+          ...mkMod('EnemyDamageTaken', 'INC', Number(m[1]), src, ModFlag.Ailment | ModFlag.Dot, kw),
+          target: 'enemy' as const,
+        },
+      ];
+    },
+  },
+  {
+    pattern: /^All Damage with Hits can (Chill|Freeze|Shock|Ignite|Poison|Bleed)$/i,
+    build: (m, src) => {
+      const kind = m[1]![0]!.toUpperCase() + m[1]!.slice(1).toLowerCase();
+      return [mkMod(`AllDamageCan${kind}`, 'FLAG', true, src)];
+    },
+  },
+  {
+    pattern: /^All Damage from Critical Strikes can apply (Lightning|Cold|Fire|Elemental) Ailments(?: during effect)?$/i,
+    build: (m, src) => {
+      const elem = m[1]![0]!.toUpperCase() + m[1]!.slice(1).toLowerCase();
+      return [mkMod(`CritDamageCanApply${elem}Ailments`, 'FLAG', true, src)];
+    },
+  },
+  {
+    pattern: /^Your Mercenary and their Minions have (\d+)% increased maximum Life$/i,
+    build: (m, src) => [mkMod('MercenaryLife', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Your Mercenary and their Minions deal (\d+)% more Damage for each Unique item they have equipped$/i,
+    build: (m, src) => [mkMod('MercenaryDamagePerUnique', 'BASE', Number(m[1]), src)],
+  },
 ];
 
 /**

@@ -955,9 +955,9 @@ describe('ascendancyMods', () => {
     it('exports complete metadata registry covering all 62 PoE 1 & PoE 2 ascendancy notables', () => {
       const poe1Count = SUPPORTED_ASCENDANCY_NOTABLES.filter((n) => n.game === 'poe1').length;
       const poe2Count = SUPPORTED_ASCENDANCY_NOTABLES.filter((n) => n.game === 'poe2').length;
-      expect(poe1Count).toBe(35);
+      expect(poe1Count).toBe(36);
       expect(poe2Count).toBe(27);
-      expect(SUPPORTED_ASCENDANCY_NOTABLES.length).toBe(62);
+      expect(SUPPORTED_ASCENDANCY_NOTABLES.length).toBe(63);
     });
 
     it('deduplicates Juggernaut Undeniable IAS, Inquisitor Augury of Penitence, and Assassin Deadly Infusion when node stats are parsed', () => {
@@ -1353,6 +1353,38 @@ describe('ascendancyMods', () => {
       // floor(3250 / 100) = 32 -> 128 to 256 added Fire
       expect(dbRel.sum('BASE', 'FireMin')).toBe(128);
       expect(dbRel.sum('BASE', 'FireMax')).toBe(256);
+    });
+
+    it('Wave 6C: Gladiator War of Attrition wires enemyMultiplierEnemyPresenceSeconds to PresenceSeconds multiplier', () => {
+      const dbGlad = new ModDB();
+      dbGlad.setCondition('EnemyRareOrUnique', true);
+      dbGlad.addMod({
+        name: 'Damage',
+        type: 'MORE',
+        value: 1,
+        flags: 4, // ModFlag.Hit
+        keywordFlags: 0,
+        source: 'Tree: War of Attrition',
+        tags: [
+          { type: 'Condition', var: 'EnemyRareOrUnique' },
+          { type: 'Multiplier', var: 'PresenceSeconds', limit: 100 },
+        ],
+      });
+      applyPreStatAscendancyMechanics({
+        game: 'poe1',
+        db: dbGlad,
+        allocatedNodes: [
+          mkNode(
+            'War of Attrition',
+            ["Deal 1% more Damage with Hits and Ailments to Rare and Unique Enemies for each second they've ever been in your Presence, up to a maximum of 100%"],
+            'Gladiator',
+            758,
+          ),
+        ],
+        config: { rawInputs: { enemyMultiplierEnemyPresenceSeconds: 10 } } as never,
+      });
+      expect(dbGlad.getEvalContext().multipliers.PresenceSeconds).toBe(10);
+      expect(dbGlad.more('Damage', 4)).toBeCloseTo(1.1, 4);
     });
   });
 });

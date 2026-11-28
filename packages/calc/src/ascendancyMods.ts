@@ -144,6 +144,7 @@ export const SUPPORTED_ASCENDANCY_NOTABLES: readonly AscendancyNotableDescriptor
   { game: 'poe1', ascendancy: 'Trickster', name: 'Spellbreaker', phase: 'pre' },
   { game: 'poe1', ascendancy: 'Gladiator', name: 'More Than Skill', phase: 'pre' },
   { game: 'poe1', ascendancy: 'Gladiator', name: 'Jagged Technique', phase: 'pre' },
+  { game: 'poe1', ascendancy: 'Gladiator', name: 'War of Attrition', phase: 'pre' },
   { game: 'poe1', ascendancy: 'Pathfinder', name: "Nature's Boon", phase: 'pre' },
   { game: 'poe1', ascendancy: 'Pathfinder', name: 'Master Toxicist', phase: 'pre' },
 ] as const;
@@ -1129,6 +1130,14 @@ function applyPoe1PreStatAscendancies(
       addMod(db, 'ShieldBlockOverride', 'OVERRIDE', 50, src);
     }
     addMod(db, 'DualWieldBonusesDoubled', 'FLAG', true, src);
+  }
+
+  if (nodes.has('war of attrition')) {
+    const rawPresence = config?.rawInputs?.enemyMultiplierEnemyPresenceSeconds;
+    const presenceSeconds = typeof rawPresence === 'number' ? rawPresence : Number(rawPresence);
+    if (Number.isFinite(presenceSeconds) && presenceSeconds > 0) {
+      db.setMultiplier('PresenceSeconds', presenceSeconds);
+    }
   }
 
   // --- PoE 1 Pathfinder ---

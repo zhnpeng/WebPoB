@@ -1550,4 +1550,54 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       expect.objectContaining({ name: 'ManaReservationEfficiency:Malevolence', type: 'INC', value: 31 }),
     ]);
   });
+
+  it('Wave 6C: Block Unlucky, DoT Taken, Whispers of Infinity, Warcry/Echoes, Alchemist Mark & Luminary', () => {
+    expect(parseModLine('Chance to Block Spell Damage is Unlucky', 'Item: The Iron Fortress')).toEqual([
+      expect.objectContaining({ name: 'SpellBlockChanceIsUnlucky', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('7% reduced Chaos Damage taken over time', 'Tree')).toEqual([
+      expect.objectContaining({ name: 'ChaosDamageTakenOverTime', type: 'INC', value: -7 }),
+    ]);
+    expect(parseModLine('Skills Cost Energy Shield instead of Mana or Life', 'Item: Whispers of Infinity')).toEqual([
+      expect.objectContaining({ name: 'SkillsCostEnergyShield', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Warcries have 20% increased Cooldown Recovery Rate', 'Tree')).toEqual([
+      expect.objectContaining({
+        name: 'CooldownRecovery',
+        type: 'INC',
+        value: 20,
+        tags: [{ type: 'SkillType', skillType: 'Warcry' }],
+      }),
+    ]);
+    expect(parseModLine('Warcries cannot Exert Travel Skills', 'Item')).toEqual([
+      expect.objectContaining({ name: 'WarcriesCannotExertTravelSkills', type: 'FLAG', value: true }),
+    ]);
+    expect(
+      parseModLine('When you Attack, take 16% of Life as Physical Damage for each Warcry Exerting the Attack', 'Item: Echoes of Creation'),
+    ).toEqual([
+      expect.objectContaining({ name: 'EchoesSelfDamagePerExert', type: 'BASE', value: 16 }),
+    ]);
+    expect(parseModLine('Marked Enemy takes 15% increased Damage from Poison', "Gem: Alchemist's Mark")).toEqual([
+      expect.objectContaining({
+        name: 'EnemyDamageTaken',
+        type: 'INC',
+        value: 15,
+        target: 'enemy',
+      }),
+    ]);
+    expect(parseModLine('All Damage with Hits can Chill', 'Item')).toEqual([
+      expect.objectContaining({ name: 'AllDamageCanChill', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('All Damage from Critical Strikes can apply Lightning Ailments during effect', 'Flask')).toEqual([
+      expect.objectContaining({ name: 'CritDamageCanApplyLightningAilments', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Your Mercenary and their Minions have 15% increased maximum Life', 'Tree: Luminary')).toEqual([
+      expect.objectContaining({ name: 'MercenaryLife', type: 'INC', value: 15 }),
+    ]);
+    expect(
+      parseModLine('Your Mercenary and their Minions deal 8% more Damage for each Unique item they have equipped', 'Tree: Luminary'),
+    ).toEqual([
+      expect.objectContaining({ name: 'MercenaryDamagePerUnique', type: 'BASE', value: 8 }),
+    ]);
+  });
 });
