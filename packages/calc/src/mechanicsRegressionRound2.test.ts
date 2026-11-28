@@ -2283,7 +2283,8 @@ Implicits: 1
         }
         expect(attDb.more('Damage')).toBeCloseTo(1.05, 4);
 
-        // 3. PoE 2 Trinity preserves div: 30 on Multiplier tag without double-dividing engine.ts pre-divided ResonanceCount
+        // 3. PoE 2 Trinity strips div: 30 on hydrated Multiplier tag so modTagEval does not
+        // double-divide engine.ts pre-divided ResonanceCount
         const trinity = hydrated.find((g) => g.id === 'poe2_trinity')!;
         const triTag = trinity.compiledMods?.[0]?.tags?.[0] as unknown as {
           type: string;
@@ -2293,8 +2294,8 @@ Implicits: 1
         expect(triTag).toMatchObject({
           type: 'Multiplier',
           var: 'ResonanceCount',
-          div: 30,
         });
+        expect(triTag.div).toBeUndefined();
         const triDb = new ModDB();
         triDb.setMultiplier('ResonanceCount', 3); // engine.ts pre-divided 90 / 30 = 3
         for (const cm of trinity.compiledMods ?? []) {
