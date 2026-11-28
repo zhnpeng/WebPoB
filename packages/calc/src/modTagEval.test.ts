@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { GemDefinition, Mod, ModTag } from '@webpob/core';
 import { ModDB } from './modDb.js';
-import { resolveSupportGemLevelBonus } from './gemBonus.js';
+import { resolveGemBonuses, resolveSupportGemLevelBonus } from './gemBonus.js';
 import {
   applyModTagEval,
   createEmptyEvalContext,
@@ -1454,5 +1454,24 @@ describe('parseConditionalSuffix', () => {
     expect(resolveSupportGemLevelBonus(awkEnhance, activeGem, 5)).toEqual({ levelBonus: 0, qualityBonus: 32 });
     expect(resolveSupportGemLevelBonus(empower, supportTarget, 4)).toEqual({ levelBonus: 0, qualityBonus: 0 });
     expect(resolveSupportGemLevelBonus(enhance, supportTarget, 4)).toEqual({ levelBonus: 0, qualityBonus: 0 });
+
+    // Wave 6K: explicit isCorrupted=false must NEVER receive +N to Level of all Corrupted Skill Gems
+    const corruptDb = new ModDB();
+    corruptDb.addMod({
+      name: 'GemLevel:corrupted',
+      type: 'BASE',
+      value: 1,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Item:Body Armour',
+    });
+    expect(resolveGemBonuses(activeGem, corruptDb, [], { isCorrupted: false })).toEqual({
+      levelBonus: 0,
+      qualityBonus: 0,
+    });
+    expect(resolveGemBonuses(activeGem, corruptDb, [], { isCorrupted: true })).toEqual({
+      levelBonus: 1,
+      qualityBonus: 0,
+    });
   });
 });
