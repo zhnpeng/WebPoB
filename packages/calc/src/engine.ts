@@ -6485,7 +6485,21 @@ function computeGroupOffence(
       Math.min(effectiveActiveCandidates.length - 1, (mainGroup.mainActiveSkillIndex ?? 1) - 1),
     );
     const chosen = effectiveActiveCandidates[pickIdx]!;
-    activeDef = chosen.def;
+    // Generic wrapper -> secondary payload skill delegation (e.g. PoE 1 Frozen Legion -> Frozen Sweep)
+    const SECONDARY_PAYLOAD_SKILL_ID: Record<string, string> = {
+      poe1_frozenlegion: 'poe1_frozensweep',
+    };
+    const delegatedId = SECONDARY_PAYLOAD_SKILL_ID[chosen.def.id];
+    const delegatedDef = delegatedId ? getGemById(build.game, delegatedId) : undefined;
+    activeDef = delegatedDef
+      ? {
+          ...delegatedDef,
+          skillData: {
+            ...(chosen.def.skillData ?? {}),
+            ...(delegatedDef.skillData ?? {}),
+          },
+        }
+      : chosen.def;
     chosenActiveInst = chosen.inst;
     activeBaseLevel = chosen.inst.level;
 
@@ -7069,7 +7083,7 @@ function computeGroupOffence(
       chosen.inst.quality + effActiveQualityBonus + enhanceQualityBonus + activeSock.diallaQualBonus + activeSock.qualBonus;
     const prePartIsTotem =
       effectiveSkillTypeSet.has('totem') || effectiveSkillTypeSet.has('summonsattacktotem');
-    resolvedPartStats = resolveActiveSkillPartAndStats(chosen.def, chosen.inst, mainGroup, activeLevel, {
+    resolvedPartStats = resolveActiveSkillPartAndStats(activeDef, chosen.inst, mainGroup, activeLevel, {
       enemyLevel: build.config.enemyLevel,
       game: build.game,
       playerMaxLife: _defence.life,
@@ -7088,23 +7102,23 @@ function computeGroupOffence(
       mainGroup,
       resolvedPartStats.skillData,
     );
-    const chosenLevelEntry = resolveGemLevelEntry(chosen.def, activeLevel);
+    const chosenLevelEntry = resolveGemLevelEntry(activeDef, activeLevel);
     const hasPartOverride = Boolean(
       resolvedPartStats.selectedPart || resolvedPartStats.corpseExplosionDamageType,
     );
     const activeCmods =
       hasPartOverride && resolvedPartStats.compiledMods.length > 0
         ? resolvedPartStats.compiledMods
-        : (chosenLevelEntry?.compiledMods ?? chosen.def.compiledMods);
-    const chosenEffectiveStats = chosenLevelEntry?.stats ?? chosen.def.stats;
+        : (chosenLevelEntry?.compiledMods ?? activeDef.compiledMods);
+    const chosenEffectiveStats = chosenLevelEntry?.stats ?? activeDef.stats;
     activeQuality = applyGemQualityStats(
-      chosen.def,
+      activeDef,
       chosen.inst.quality + effActiveQualityBonus + enhanceQualityBonus + activeSock.diallaQualBonus,
       'Skill',
       activeSock.qualBonus,
       activeCmods,
     );
-    const skillSrc = `Skill: ${chosen.def.name.en}`;
+    const skillSrc = `Skill: ${activeDef.name.en}`;
     if (activeCmods && activeCmods.length > 0) {
       injectCompiledGemMods(skillDb, groupEnemyDb, groupMinionDb, activeCmods, skillSrc, {
         game: build.game,

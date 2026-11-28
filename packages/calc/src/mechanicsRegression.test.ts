@@ -2351,4 +2351,41 @@ describe('Mechanism-Layer Regression Suite (PoE 1 & PoE 2)', () => {
       expect(outInst.offence.speed).toBeGreaterThan(outPlain.offence.speed * 1.05);
     });
   });
+
+  describe('Wave 5G: Secondary Payload Skill Delegation (Frozen Legion -> Frozen Sweep)', () => {
+    it('delegates PoE 1 Frozen Legion to Frozen Sweep weapon-scaled Cold attack with 100% Phys->Cold conversion', () => {
+      const base = createSamplePoe1Build();
+      const staff = makeWeapon({
+        id: 'fl_staff',
+        name: 'Cold Staff',
+        baseName: 'Judgement Staff',
+        slotType: 'Weapon 1',
+        weaponStats: {
+          weaponType: 'Staff',
+          twoHanded: true,
+          physicalMin: 200,
+          physicalMax: 400,
+          attacksPerSecond: 1.3,
+          critChance: 7,
+        },
+      });
+      const flBuild: Build = {
+        ...base,
+        items: { ...base.items, [staff.id]: staff },
+        equipped: { ...base.equipped, 'Weapon 1': staff.id, 'Weapon 2': undefined },
+        skills: [
+          {
+            id: 'sg_fl',
+            label: 'Frozen Legion',
+            enabled: true,
+            gems: [{ instanceId: 'g_fl', gemId: 'poe1_frozenlegion', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_fl',
+      };
+      const out = calculateBuild(flBuild);
+      expect(out.offence.damageByType.Cold.average).toBeGreaterThan(500);
+      expect(out.offence.damageByType.Physical.average).toBe(0);
+    });
+  });
 });
