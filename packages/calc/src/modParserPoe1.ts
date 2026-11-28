@@ -1341,6 +1341,75 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
     pattern: /^Count as having maximum number of (Frenzy|Power|Endurance) Charges$/i,
     build: (m, src) => [mkMod(`CountAsMax${capFirst(m[1]!)}Charges`, 'FLAG', true, src)],
   },
+  // Wave 4S: High-yield PoE 1 Mastery rules (wired directly into engine.ts)
+  {
+    pattern: /^Impale Damage dealt to Enemies Impaled by you ignores Enemy Physical Damage Reduction$/i,
+    build: (_, src) => [mkMod('IgnoreEnemyImpalePhysicalDamageReduction', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^(\d+)% chance on Hitting an Enemy for all Impales on that Enemy to last for an additional Hit$/i,
+    build: (m, src) => [mkMod('ImpaleAdditionalHitChance', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Enemies permanently take (\d+)% increased Damage for each second they've ever been (Frozen|Chilled) by you, up to a maximum of (\d+)%$/i,
+    build: (m, src) => {
+      const perSec = Number(m[1]);
+      const maxPct = Number(m[3]);
+      const varName = m[2]!.toLowerCase() === 'frozen' ? 'FrozenByYouSeconds' : 'ChilledByYouSeconds';
+      return [
+        {
+          ...mkMod('EnemyDamageTaken', 'INC', perSec, src),
+          tags: [{ type: 'Multiplier' as const, var: varName, limit: Math.floor(maxPct / Math.max(1, perSec)) }],
+        },
+      ];
+    },
+  },
+  {
+    pattern: /^(\d+)% chance for Hits to deal (\d+)% of Physical Damage as Extra Damage of a random Element$/i,
+    build: (m, src) => {
+      const total = (Number(m[1]) * Number(m[2])) / 100;
+      const each = total / 3;
+      return [
+        mkMod('PhysicalDamageGainAsFire', 'BASE', each, src, ModFlag.Hit),
+        mkMod('PhysicalDamageGainAsCold', 'BASE', each, src, ModFlag.Hit),
+        mkMod('PhysicalDamageGainAsLightning', 'BASE', each, src, ModFlag.Hit),
+      ];
+    },
+  },
+  {
+    pattern: /^Each Mine applies (\d+)% increased Damage taken to Enemies (?:within \d+ metres|near it), up to (\d+)%$/i,
+    build: (m, src) => {
+      const perMine = Number(m[1]);
+      const maxPct = Number(m[2]);
+      return [
+        {
+          ...mkMod('EnemyDamageTaken', 'INC', perMine, src),
+          tags: [{ type: 'Multiplier' as const, var: 'ActiveMines', limit: Math.floor(maxPct / Math.max(1, perMine)) }],
+        },
+      ];
+    },
+  },
+  {
+    pattern: /^Each Mine applies (\d+)% reduced Damage dealt to Enemies (?:within \d+ metres|near it), up to (\d+)%$/i,
+    build: (m, src) => {
+      const perMine = Number(m[1]);
+      const maxPct = Number(m[2]);
+      return [
+        {
+          ...mkMod('EnemyDamageDealt', 'INC', -perMine, src),
+          tags: [{ type: 'Multiplier' as const, var: 'ActiveMines', limit: Math.floor(maxPct / Math.max(1, perMine)) }],
+        },
+      ];
+    },
+  },
+  {
+    pattern: /^(?:Modifiers to )?Chance to Avoid being Shocked (?:apply|applies) to all Elemental Ailments$/i,
+    build: (_, src) => [mkMod('ShockAvoidAppliesToElementalAilments', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Melee Hits Fortify$/i,
+    build: (_, src) => [mkMod('MeleeHitsFortify', 'FLAG', true, src)],
+  },
 ];
 
 /**

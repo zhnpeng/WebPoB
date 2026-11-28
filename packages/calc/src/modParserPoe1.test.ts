@@ -1038,4 +1038,50 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       expect.objectContaining({ name: 'CountAsMaxFrenzyCharges', type: 'FLAG', value: true }),
     ]);
   });
+
+  it('Wave 4S: Impale PDR ignore, FrozenByYouSeconds mastery, Physical extra random element, Mine aura & Stormshroud', () => {
+    expect(
+      parseModLine('Impale Damage dealt to Enemies Impaled by you ignores Enemy Physical Damage Reduction', 'Mastery'),
+    ).toEqual([
+      expect.objectContaining({ name: 'IgnoreEnemyImpalePhysicalDamageReduction', type: 'FLAG', value: true }),
+    ]);
+    expect(
+      parseModLine(
+        "Enemies permanently take 5% increased Damage for each second they've ever been Frozen by you, up to a maximum of 50%",
+        'Mastery',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'EnemyDamageTaken',
+        type: 'INC',
+        value: 5,
+        tags: [{ type: 'Multiplier', var: 'FrozenByYouSeconds', limit: 10 }],
+      }),
+    ]);
+    expect(
+      parseModLine('3% chance for Hits to deal 300% of Physical Damage as Extra Damage of a random Element', 'Mastery'),
+    ).toEqual([
+      expect.objectContaining({ name: 'PhysicalDamageGainAsFire', type: 'BASE', value: 3, flags: ModFlag.Hit }),
+      expect.objectContaining({ name: 'PhysicalDamageGainAsCold', type: 'BASE', value: 3, flags: ModFlag.Hit }),
+      expect.objectContaining({ name: 'PhysicalDamageGainAsLightning', type: 'BASE', value: 3, flags: ModFlag.Hit }),
+    ]);
+    expect(
+      parseModLine('Each Mine applies 2% increased Damage taken to Enemies within 6 metres, up to 10%', 'Mastery'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'EnemyDamageTaken',
+        type: 'INC',
+        value: 2,
+        tags: [{ type: 'Multiplier', var: 'ActiveMines', limit: 5 }],
+      }),
+    ]);
+    expect(
+      parseModLine('Modifiers to Chance to Avoid being Shocked apply to all Elemental Ailments', 'item'),
+    ).toEqual([
+      expect.objectContaining({ name: 'ShockAvoidAppliesToElementalAilments', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Melee Hits Fortify', 'Mastery')).toEqual([
+      expect.objectContaining({ name: 'MeleeHitsFortify', type: 'FLAG', value: true }),
+    ]);
+  });
 });
