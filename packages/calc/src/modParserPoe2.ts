@@ -1848,8 +1848,12 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
   {
     pattern: /^(\d+)% chance to Gain Arcane Surge when you deal a Critical Hit$/i,
     build: (m, src) => [
+      // Official PoB 2 ModParser.lua: chance-to-gain Arcane Surge on Critical Hit is gated by Condition:CritRecently
       mkMod('ArcaneSurgeOnCritChance', 'BASE', Number(m[1]), src),
-      mkMod('Condition:ArcaneSurge', 'FLAG', true, src),
+      {
+        ...mkMod('Condition:ArcaneSurge', 'FLAG', true, src),
+        tags: [{ type: 'Condition', var: 'CritRecently' }],
+      },
     ],
   },
   {

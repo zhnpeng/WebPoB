@@ -853,13 +853,18 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
         expect.objectContaining({ name: 'Damage', type: 'INC', value: 10, flags: ModFlag.Projectile }),
       ]);
 
-      // S10.2: Arcane Surge on Critical Hit / Always
+      // S10.2: Arcane Surge on Critical Hit (gated by CritRecently per PoB 2) / Always
       expect(
         parseModLine('5% chance to Gain Arcane Surge when you deal a Critical Hit', 'Tree:2244'),
       ).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ name: 'ArcaneSurgeOnCritChance', type: 'BASE', value: 5 }),
-          expect.objectContaining({ name: 'Condition:ArcaneSurge', type: 'FLAG', value: true }),
+          expect.objectContaining({
+            name: 'Condition:ArcaneSurge',
+            type: 'FLAG',
+            value: true,
+            tags: [{ type: 'Condition', var: 'CritRecently' }],
+          }),
         ]),
       );
       expect(parseModLine('You have Arcane Surge', 'Tree: Constant Gale')).toEqual([
