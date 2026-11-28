@@ -2742,6 +2742,57 @@ describe('Mechanism-Layer Regression Suite (PoE 1 & PoE 2)', () => {
       // 30s presence => floor(30 / 2) = +15% MORE Hit Damage
       expect(out30.offence.averageHit / out0.offence.averageHit).toBeCloseTo(1.15, 2);
     });
+
+    it('routes skill-targeted support MORE damage (e.g. Controlled Destruction) into groupMinionDb for minion skills', () => {
+      const base = createSamplePoe1Build();
+      const mkMinionBuild = (withSup: boolean): Build => ({
+        ...base,
+        skills: [
+          {
+            id: 'sg_minion_sup',
+            label: 'Summon Holy Relic',
+            enabled: true,
+            gems: [
+              { instanceId: 'g1', gemId: 'poe1_summonholyrelic', level: 20, quality: 0, enabled: true },
+              ...(withSup
+                ? [{ instanceId: 'g2', gemId: 'poe1_supportcontrolleddestruction', level: 20, quality: 0, enabled: true }]
+                : []),
+            ],
+          },
+        ],
+        mainSkillGroupId: 'sg_minion_sup',
+      });
+      const outPlain = calculateBuild(mkMinionBuild(false));
+      const outSup = calculateBuild(mkMinionBuild(true));
+      // Controlled Destruction grants ~39% MORE Spell Damage to Holy Relic Nova
+      expect(outSup.offence.averageHit).toBeGreaterThan(outPlain.offence.averageHit * 1.25);
+    });
+
+    it('hydrates Raise Spectre minionBase via getPoe1SpectreProfile so it computes non-zero minion DPS', () => {
+      const base = createSamplePoe1Build();
+      const out = calculateBuild({
+        ...base,
+        skills: [
+          {
+            id: 'sg_spectre',
+            label: 'Raise Spectre',
+            enabled: true,
+            gems: [
+              {
+                instanceId: 'g1',
+                gemId: 'poe1_raisespectre',
+                level: 20,
+                quality: 0,
+                enabled: true,
+                skillMinion: 'Perfect Pain Artist',
+              } as Build['skills'][number]['gems'][number],
+            ],
+          },
+        ],
+        mainSkillGroupId: 'sg_spectre',
+      });
+      expect(out.offence.totalDps).toBeGreaterThan(0);
+    });
   });
 
   describe('Layer-2 Oracle Expansion Regression Coverage (PoE 1 & PoE 2)', () => {

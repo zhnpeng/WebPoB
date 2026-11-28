@@ -23,6 +23,7 @@ import {
   getClassDef,
   getClusterNotable,
   getGemById,
+  getPoe1SpectreProfile,
   getPoe2RunesData,
   getRuleset,
   getTimelessJewelData,
@@ -7030,6 +7031,33 @@ function computeGroupOffence(
         injectCompiledGemMods(skillDb, groupEnemyDb, groupMinionDb, adjustedSupCmods, supSrc, {
           game: build.game,
         });
+        // Route skill-targeted support combat mods into groupMinionDb for minion active skills
+        // (e.g. Controlled Destruction, Awakened Vicious Projectiles, Awakened Void Manipulation, Elemental Focus)
+        const activeIsMinionForSup =
+          Boolean(
+            chosen.def.minionBase ||
+              (build.game === 'poe1' && chosen.def.id === 'poe1_raisespectre'),
+          ) && (chosen.def.modFlags & ModFlag.Attack) === 0;
+        if (activeIsMinionForSup) {
+          const explicitMinionStatNames = new Set(
+            adjustedSupCmods.filter((cm) => cm.target === 'minion').map((cm) => cm.name),
+          );
+          const minionMirroredSupCmods = adjustedSupCmods
+            .filter(
+              (cm) =>
+                (!cm.target || cm.target === 'skill') &&
+                !explicitMinionStatNames.has(cm.name) &&
+                /^(?:Damage|PhysicalDamage|FireDamage|ColdDamage|LightningDamage|ChaosDamage|ElementalDamage|Speed|CritChance|CritMultiplier|.*Penetration|.*DotMultiplier|DotMultiplier|.*Ailment.*|PoisonChance|BleedChance|IgniteChance|DamageGainAs.*|Skill.*Convert.*|(?:Physical|Fire|Cold|Lightning|Chaos)(?:Min|Max)|RepeatCount|Multistrike.*|ProjectileCount|ChainCount.*|PierceChance|Cannot(?:Crit|Ignite|Freeze|Shock|Poison|Bleed)|DealNo(?:Physical|Fire|Cold|Lightning|Chaos|Elemental|Non.*))$/i.test(
+                  cm.name,
+                ),
+            )
+            .map((cm) => ({ ...cm, target: 'minion' as const }));
+          if (minionMirroredSupCmods.length > 0) {
+            injectCompiledGemMods(skillDb, groupEnemyDb, groupMinionDb, minionMirroredSupCmods, supSrc, {
+              game: build.game,
+            });
+          }
+        }
       } else if (cocOnlyHasTriggerPart && (chosen.def.modFlags & ModFlag.Attack) === 0) {
         const isAwakenedCoc = lower === 'awakened cast on critical strike';
         const cocSpellMore = isAwakenedCoc
@@ -7270,10 +7298,30 @@ function computeGroupOffence(
   const activeSkillData: Record<string, number | boolean | string> | undefined =
     Object.keys(mergedActiveSkillData).length > 0 ? mergedActiveSkillData : undefined;
   // Hybrid Attack+Minion skills (e.g. Dominating Blow / of Inspiring) default to Player Melee Attack in PoB1 (`CalcOffence.lua`)
-  const isMinion = Boolean(activeDef.minionBase) && (activeDef.modFlags & ModFlag.Attack) === 0;
+  const resolvedMinionBase =
+    activeDef.minionBase ??
+    (build.game === 'poe1' && activeDef.id === 'poe1_raisespectre'
+      ? (() => {
+          const sp = getPoe1SpectreProfile((chosenActiveInst as { skillMinion?: string })?.skillMinion);
+          const atkTime = sp?.attackTime ?? 1.5;
+          const dmgMult = sp?.damageMult ?? 1.0;
+          const baseDmg = Math.round(550 * dmgMult);
+          return {
+            physicalMin: Math.round(baseDmg * 0.8),
+            physicalMax: Math.round(baseDmg * 1.2),
+            attacksPerSecond: 1 / Math.max(0.2, atkTime),
+            critChance: 5,
+            critMultiplier: 130,
+            defaultCount: 2,
+            limitStat: 'ActiveSpectreLimit',
+            baseLevel: 20,
+          };
+        })()
+      : undefined);
+  const isMinion = Boolean(resolvedMinionBase) && (activeDef.modFlags & ModFlag.Attack) === 0;
 
   // Full PoE 1 & PoE 2 Minion Offence Delegation (`minionDb` + `enemyDb` + `Data/Minions.lua`)
-  if (isMinion && activeDef.minionBase) {
+  if (isMinion && resolvedMinionBase) {
     const unitSpirit = chosenActiveInst?.spiritReservationOverride ?? activeDef.spiritReservation ?? 0;
     const totalGroupSpirit =
       unitSpirit > 0
@@ -7281,7 +7329,7 @@ function computeGroupOffence(
         : undefined;
     const minionRes = computeMinionGroupOffence({
       game: build.game,
-      minionBase: activeDef.minionBase,
+      minionBase: resolvedMinionBase,
       minionDb: groupMinionDb,
       enemyDb: groupEnemyDb,
       playerDb: skillDb,
