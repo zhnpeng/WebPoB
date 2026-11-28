@@ -6,6 +6,7 @@ import { KeywordFlag, ModFlag, type GemDefinition } from '@webpob/core';
 import {
   gemMatchesFilterKey,
   normalizeGemFilterTokens,
+  parseSocketedGemBonuses,
   resolveSupportGemLevelBonus,
 } from './gemBonus.js';
 import { parseModLine, parseModLines } from './modParser.js';
@@ -1932,6 +1933,20 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
           value: true,
           tags: [{ type: 'Condition', var: 'LowLife' }],
         }),
+      ]);
+    });
+
+    it('parses negative socketed gem level & quality modifiers in gemBonus (Wave 5A)', () => {
+      expect(
+        parseSocketedGemBonuses([
+          '-2 to Level of Socketed Support Gems',
+          '+2 to Level of Socketed AoE Gems',
+          '-5% to Quality of Socketed Gems',
+        ]),
+      ).toEqual([
+        { kind: 'level', filterKey: 'support', activeOnly: false, supportOnly: true, value: -2 },
+        { kind: 'level', filterKey: 'area', activeOnly: false, supportOnly: false, value: 2 },
+        { kind: 'quality', filterKey: 'all', activeOnly: false, supportOnly: false, value: -5 },
       ]);
     });
   });

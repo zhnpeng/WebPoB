@@ -255,16 +255,16 @@ export function parseSocketedGemBonuses(lines: readonly string[]): SocketedGemBo
     const line = normalizeStatLineToEn(raw);
     if (!line) continue;
 
-    // +N to Level of Socketed [Filter] [Active Skill | Skill | Support |] Gems
+    // +N / -N to Level of Socketed [Filter] [Active Skill | Skill | Support |] Gems
     let m = line.match(
-      /^\+(\d+) to Level of Socketed (?:([A-Za-z ]+?) )?(Active Skill |Skill |Support )?Gems?$/i,
+      /^([+-]\d+) to Level of Socketed (?:([A-Za-z ]+?) )?(Active Skill |Skill |Support )?Gems?$/i,
     );
     if (m) {
       const val = Number(m[1]);
       const rawFilter = (m[2] ?? '').trim();
       const scopeRaw = (m[3] ?? '').trim().toLowerCase();
       const filterKey = normalizeGemFilterTokens(rawFilter);
-      if (filterKey && val > 0) {
+      if (filterKey && val !== 0) {
         rules.push({
           kind: 'level',
           filterKey,
@@ -276,16 +276,16 @@ export function parseSocketedGemBonuses(lines: readonly string[]): SocketedGemBo
       continue;
     }
 
-    // +N% to Quality of Socketed [Filter] [Active Skill | Skill | Support |] Gems
+    // +N% / -N% to Quality of Socketed [Filter] [Active Skill | Skill | Support |] Gems
     m = line.match(
-      /^\+(\d+)% to Quality of Socketed (?:([A-Za-z ]+?) )?(Active Skill |Skill |Support )?Gems?$/i,
+      /^([+-]\d+)% to Quality of Socketed (?:([A-Za-z ]+?) )?(Active Skill |Skill |Support )?Gems?$/i,
     );
     if (m) {
       const val = Number(m[1]);
       const rawFilter = (m[2] ?? '').trim();
       const scopeRaw = (m[3] ?? '').trim().toLowerCase();
       const filterKey = normalizeGemFilterTokens(rawFilter);
-      if (filterKey && val > 0) {
+      if (filterKey && val !== 0) {
         rules.push({
           kind: 'quality',
           filterKey,
