@@ -858,22 +858,6 @@ function calculateBuildSingleWeaponSet(build: Build): CalcOutput {
           db.addMod({ name: 'MarkedEnemyDamageTaken', type: 'BASE', value: Number(mMarkPrey[1]), flags: 0, keywordFlags: 0, source: nodeSrc });
           continue;
         }
-        // Pathfinder: Master Distiller legacy 3.25/3.26 Diamond Flask crit chance wording
-        const mMdDiamondCrit = cleanSt.match(
-          /^If Diamond Flask Charges are consumed,\s*(\d+)% increased Critical Strike Chance$/i,
-        );
-        if (mMdDiamondCrit && !parsedNodeMods.some((m) => m.name === 'CritChance')) {
-          db.addMod({
-            name: 'CritChance',
-            type: 'INC',
-            value: Number(mMdDiamondCrit[1]),
-            flags: 0,
-            keywordFlags: 0,
-            source: nodeSrc,
-            tags: [{ type: 'Condition', var: 'UsedDiamondFlaskRecently' }],
-          });
-          continue;
-        }
         // PoE 1 Dual Wield Mastery & Consecrated Ground Accuracy (`CalcSetup.lua:648`, `CalcPerform.lua:823`)
         if (/^Inherent Attack Speed bonus from Dual Wielding is Doubled/i.test(cleanSt)) {
           db.addMod({ name: 'DoubledInherentDualWieldingSpeed', type: 'FLAG', value: true, flags: 0, keywordFlags: 0, source: nodeSrc });
@@ -1376,14 +1360,15 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
 }
 
   // 3. Equipped Items & Active Utility Flasks (with PoB-authentic Local Armour/Weapon resolution)
-  // PoE 2 Shaman ascendancy ("Shaman" / 萨满) unlocks Bonded ("Bonded:" / "羁绊：") modifiers on items.
+  const equippedItems = getActiveEquippedItems(build);
+  // PoE 2 Shaman ascendancy ("Shaman" / 萨满) unlocks Bonded ("Bonded:" / "羁绊：") modifiers on all items.
+  // Items with "gain the benefits of their Bonded modifiers" unlock Bonded modifiers locally on that item only.
   const allowBonded = build.game === 'poe2' && build.ascendancyId.trim().toLowerCase() === 'shaman';
   const itemModOpts = allowBonded ? { allowBonded: true } : undefined;
   const hasNecromanticAegis =
     build.game === 'poe1' &&
     allAllocatedNodeDefs.some((n) => n.name.en.trim().toLowerCase() === 'necromantic aegis');
   const necromanticAegisMods: Mod[] = [];
-  const equippedItems = getActiveEquippedItems(build);
   const nonFlaskEquippedForUniques: Array<{ slot: string; item: Item }> = [];
   let bodyLocalArmour = 0;
   let bodyLocalEvasion = 0;
@@ -1677,8 +1662,15 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     if (resolved.armourStats?.blockChance) {
       db.addMod({ name: 'BlockChance', type: 'BASE', value: resolved.armourStats.blockChance, flags: 0, keywordFlags: 0, source: src });
     }
-    const parsedImpMods = parseModLines(effectiveImplicits, `${src} [Implicit]`, itemModOpts);
-    const parsedExpMods = parseModLines(effectiveExplicits, src, itemModOpts);
+    const thisItemAllowBonded =
+      allowBonded ||
+      (build.game === 'poe2' &&
+        [...item.implicits, ...item.explicits].some((l) =>
+          /gain the benefits of their Bonded modifiers/i.test(l),
+        ));
+    const thisItemModOpts = thisItemAllowBonded ? { allowBonded: true } : undefined;
+    const parsedImpMods = parseModLines(effectiveImplicits, `${src} [Implicit]`, thisItemModOpts);
+    const parsedExpMods = parseModLines(effectiveExplicits, src, thisItemModOpts);
     const isPoe2QuiverOffensiveStat = (name: string): boolean =>
       /^(?:CritChance|CritDamageBonusInc|CritDamageBonusFlat|CritMultiplier|Speed|Damage|PhysicalDamage|FireDamage|ColdDamage|LightningDamage|ChaosDamage|ElementalDamage|BowDamage|AttackDamage|ProjectileDamage|ProjectileSpeed|Accuracy|PierceChance|(?:Physical|Fire|Cold|Lightning|Chaos)(?:Min|Max))$/.test(
         name,
@@ -1826,13 +1818,13 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
         }
         // PoE 1 Weapon Harvest Quality Enchants (global ones only; Attack Speed / Crit Chance per Quality are local and handled in localItem.ts)
         if (itemQual > 0 && /per\s+\d+%\s+Quality/i.test(cleanLine)) {
-          const mQEle = cleanLine.match(/^(\d+)% increased Elemental Damage per (\d+)% Quality$/i);
+          const mQEle = cleanLine.match(/^(?:Grants )?(\d+)% increased Elemental Damage per (\d+)% Quality$/i);
           if (mQEle) {
             const v = Math.floor(itemQual / Number(mQEle[2])) * Number(mQEle[1]);
             if (v > 0) db.addMod({ name: 'ElementalDamage', type: 'INC', value: v, flags: 0, keywordFlags: 0, source: `${src} (Quality Enchant)` });
             continue;
           }
-          const mQAoe = cleanLine.match(/^(\d+)% increased Area of Effect per (\d+)% Quality$/i);
+          const mQAoe = cleanLine.match(/^(?:Grants )?(\d+)% increased Area of Effect per (\d+)% Quality$/i);
           if (mQAoe) {
             const v = Math.floor(itemQual / Number(mQAoe[2])) * Number(mQAoe[1]);
             if (v > 0) db.addMod({ name: 'AreaOfEffect', type: 'INC', value: v, flags: 0, keywordFlags: 0, source: `${src} (Quality Enchant)` });
@@ -2005,6 +1997,15 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
       db,
       itemModOpts,
     );
+  }
+  // PoE 1 4-Slot Armour / Evasion Mastery conditions (Helmet, Body Armour, Gloves, and Boots)
+  if (build.game === 'poe1') {
+    if (helmetLocalArmour > 0 && bodyLocalArmour > 0 && glovesLocalArmour > 0 && bootsLocalArmour > 0) {
+      db.setCondition('AllFourArmourSlotsHaveArmour', true);
+    }
+    if (helmetLocalEvasion > 0 && bodyLocalEvasion > 0 && glovesLocalEvasion > 0 && bootsLocalEvasion > 0) {
+      db.setCondition('AllFourArmourSlotsHaveEvasion', true);
+    }
   }
   // Amulet +25% from Mystic Attunement is already applied via `AmuletEffect INC 25` (ascendancyMods.ts -> equipmentAndFlasks.ts).
   if (yndasStandWardPct > 0 && bodyLocalArmour + bodyLocalEvasion > 0) {
@@ -4603,7 +4604,15 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
   const prelimMana = Math.round(db.calcStat('Mana').total);
   const prelimEs = Math.round(db.calcStat('EnergyShield').total);
   const prelimAcc = Math.round(db.calcStat('Accuracy').total);
-  if (prelimEs > 0 && !db.flag('BlackScytheTraining')) {
+  if (
+    !db.flag('BlackScytheTraining') &&
+    (build.game === 'poe2'
+      ? Boolean(
+          build.config.rawInputs?.conditionHaveEnergyShield ||
+            build.config.rawInputs?.conditionFullEnergyShield,
+        )
+      : prelimEs > 0)
+  ) {
     db.setCondition('HaveEnergyShield', true);
   }
 
@@ -5182,15 +5191,20 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
       source: 'Transfiguration of Mind',
     });
   }
-  if (db.flag('TransfigurationOfSoul') && esEval.incPct !== 0) {
-    db.addMod({
-      name: 'Damage',
-      type: 'INC',
-      value: Math.floor(esEval.incPct * 0.3),
-      flags: ModFlag.Spell,
-      keywordFlags: 0,
-      source: 'Transfiguration of Soul',
-    });
+  if (db.flag('TransfigurationOfSoul')) {
+    // Upstream PoB1 CalcOffence.lua:553 excludes Intelligence's inherent +2% ES per 10 Int (`floor(Int / 5)`).
+    const intInherentEsInc = build.game === 'poe1' ? Math.floor(int / 5) : 0;
+    const transfigEsInc = esEval.incPct - intInherentEsInc;
+    if (transfigEsInc !== 0) {
+      db.addMod({
+        name: 'Damage',
+        type: 'INC',
+        value: Math.floor(transfigEsInc * 0.3),
+        flags: ModFlag.Spell,
+        keywordFlags: 0,
+        source: 'Transfiguration of Soul',
+      });
+    }
   }
   if (db.flag('TransfigurationOfBody') && rawLifeEval.incPct !== 0) {
     db.addMod({
@@ -6197,18 +6211,19 @@ function computeGroupOffence(
     rawQuality: number,
     sourcePrefix: string,
     extraSocketBonus = 0,
+    overrideBaseCmods?: GemDefinition['compiledMods'],
   ) => {
     const effectiveQuality = rawQuality + extraSocketBonus;
     if (effectiveQuality <= 0) return effectiveQuality;
     if (def.qualityCompiledMods && def.qualityCompiledMods.length > 0) {
-      const baseCmods = def.compiledMods ?? [];
+      const baseCmods = overrideBaseCmods ?? def.compiledMods ?? [];
       const scaledQMods = def.qualityCompiledMods
         .map((qm) => {
           if (typeof qm.value === 'number') {
             const v = Math.trunc(qm.value * effectiveQuality + Math.sign(qm.value) * 1e-9);
             if (v === 0) return null;
             // Upstream PoB sums qualityStats into matching same-gem constantStats/levelStats before converting to MORE
-            // (e.g. Viper Strike of the Mamba: 200% + 60% = 260% MORE = 3.60x, NOT 3.00 * 1.60 = 4.80x!)
+            // (e.g. Viper Strike of the Mamba: 200% + 60% = 260% MORE = 3.60x; Molten Strike: -60% + 10% = -50% MORE = 0.50x!)
             if (
               build.game === 'poe1' &&
               sourcePrefix === 'Skill' &&
@@ -6221,9 +6236,10 @@ function computeGroupOffence(
                   bm.name === qm.name &&
                   bm.type === 'MORE' &&
                   typeof bm.value === 'number' &&
-                  bm.value > 0 &&
-                  (bm.flags ?? 0) === (qm.flags ?? 0) &&
-                  (bm.keywordFlags ?? 0) === (qm.keywordFlags ?? 0) &&
+                  bm.value !== 0 &&
+                  100 + bm.value > 0 &&
+                  ((bm.flags ?? 0) === (qm.flags ?? 0) || def.id === 'poe1_moltenstrike') &&
+                  ((bm.keywordFlags ?? 0) === (qm.keywordFlags ?? 0) || def.id === 'poe1_moltenstrike') &&
                   (!bm.tags || bm.tags.length === 0),
               );
               if (matchingBase && typeof matchingBase.value === 'number') {
@@ -6693,9 +6709,9 @@ function computeGroupOffence(
         continue;
       }
       if (build.game === 'poe1' && lower === 'unholy trinity') {
-        // PoB1 `sup_dex.lua:4307`: 6/7/8% MORE Damage per 10 lowest Unholy Resonance (`div: 10`)
+        // PoB1 `sup_dex.lua:4307`: 6/6/7/7/8/8% MORE Damage per 10 lowest Unholy Resonance (`div: 10`)
         // plus 90/95/100% Chance to Ignore Chaos/Lightning Res & Enemy PDR while >=25 Unholy Resonance.
-        const morePer10 = Math.min(12, Math.max(6, 5 + effSupLevel));
+        const morePer10 = Math.min(12, Math.max(6, Math.floor((effSupLevel + 1) / 2) + 5));
         const ignorePct = Math.min(100, Math.max(90, 85 + effSupLevel * 5));
         const utSrc = `Support: Unholy Trinity (Lv.${effSupLevel})`;
         skillDb.addMod({
@@ -6941,27 +6957,37 @@ function computeGroupOffence(
       !chosen.def.tags.some((t) => t.toLowerCase() === 'vaal')
         ? { ...chosen.def, tags: [...chosen.def.tags, 'vaal'] }
         : chosen.def;
-    const activeIsCorrupted = Boolean(
-      (chosen as { fromVaalGem?: boolean }).fromVaalGem ||
-        chosen.inst.level >= 21 ||
-        chosen.inst.quality >= 21 ||
-        defForBonus.tags.some((t) => t.toLowerCase() === 'vaal') ||
-        (build.game === 'poe1' &&
-          socketedRules.some((r) => r.filterKey.split('+').includes('corrupted'))),
-    );
+    const explicitCorrupted = (chosen.inst as { corrupted?: boolean }).corrupted;
+    const activeIsCorrupted =
+      explicitCorrupted !== undefined
+        ? explicitCorrupted
+        : Boolean(
+            (chosen as { fromVaalGem?: boolean }).fromVaalGem ||
+              chosen.inst.level >= 21 ||
+              chosen.inst.quality >= 21 ||
+              defForBonus.tags.some((t) => t.toLowerCase() === 'vaal') ||
+              (build.game === 'poe1' &&
+                socketedRules.some((r) => r.filterKey.split('+').includes('corrupted'))),
+          );
     const activeBonus = resolveGemBonuses(defForBonus, baseBuses.playerDb, socketedRules, {
       isCorrupted: activeIsCorrupted,
     });
     const prismBonus =
       uniqueGearResult?.skillSpecificGemLevels[chosen.def.name.en.trim().toLowerCase()] ?? 0;
-    const effGemLevelBonus =
-      build.game === 'poe1' && chosen.inst.fromItem ? 0 : activeBonus.levelBonus + activeSock.diallaLevelBonus;
+    const isFixedLevelItemSkill = Boolean(chosen.inst.fromItem) && build.game === 'poe1';
+    const effGemLevelBonus = isFixedLevelItemSkill
+      ? 0
+      : activeBonus.levelBonus + activeSock.diallaLevelBonus;
+    const effExtraActiveLevels = isFixedLevelItemSkill
+      ? 0
+      : empowerLevelBonus + awakenedSupActiveLevelBonus + prismBonus;
     activeLevel = Math.min(
       40,
-      Math.max(1, chosen.inst.level + effGemLevelBonus + empowerLevelBonus + awakenedSupActiveLevelBonus + prismBonus),
+      Math.max(1, chosen.inst.level + effGemLevelBonus + effExtraActiveLevels),
     );
+    const effActiveQualityBonus = isFixedLevelItemSkill ? 0 : activeBonus.qualityBonus;
     const prePartQuality =
-      chosen.inst.quality + activeBonus.qualityBonus + enhanceQualityBonus + activeSock.diallaQualBonus + activeSock.qualBonus;
+      chosen.inst.quality + effActiveQualityBonus + enhanceQualityBonus + activeSock.diallaQualBonus + activeSock.qualBonus;
     const prePartIsTotem =
       effectiveSkillTypeSet.has('totem') || effectiveSkillTypeSet.has('summonsattacktotem');
     resolvedPartStats = resolveActiveSkillPartAndStats(chosen.def, chosen.inst, mainGroup, activeLevel, {
@@ -6994,9 +7020,10 @@ function computeGroupOffence(
     const chosenEffectiveStats = chosenLevelEntry?.stats ?? chosen.def.stats;
     activeQuality = applyGemQualityStats(
       chosen.def,
-      chosen.inst.quality + activeBonus.qualityBonus + enhanceQualityBonus + activeSock.diallaQualBonus,
+      chosen.inst.quality + effActiveQualityBonus + enhanceQualityBonus + activeSock.diallaQualBonus,
       'Skill',
       activeSock.qualBonus,
+      activeCmods,
     );
     const skillSrc = `Skill: ${chosen.def.name.en}`;
     if (activeCmods && activeCmods.length > 0) {
@@ -7802,10 +7829,81 @@ function computeGroupOffence(
       skillDb.sum('BASE', `ProjectileCount:${activeNameLower}`, flags, kwFlags),
   );
   const addProjAsChains = skillDb.flag('AdditionalProjectilesAddChainsInstead', flags, kwFlags);
+  // PoE 1 3.28+ Pact Uptime (CalcOffence.lua:2923-2985: Pact of Beidat / Ghorr / K'Tash / Lycia)
+  let pactBeidatExtraChains = 0;
+  if (build.game === 'poe1' && !isAttack) {
+    let activePactGem: { gem: GemInstance; def: GemDefinition } | undefined;
+    for (const grp of build.skills) {
+      if (!grp.enabled) continue;
+      for (const gm of grp.gems) {
+        if (!gm.enabled) continue;
+        const gd = getGemById('poe1', gm.gemId);
+        if (
+          gd &&
+          (gd.id === 'poe1_pactofbeidat' ||
+            gd.id === 'poe1_pactofghorr' ||
+            gd.id === 'poe1_pactofktash' ||
+            gd.id === 'poe1_pactoflycia')
+        ) {
+          activePactGem = { gem: gm, def: gd };
+          break;
+        }
+      }
+      if (activePactGem) break;
+    }
+    if (activePactGem) {
+      const { gem: pactGem, def: pactDef } = activePactGem;
+      const spellSpdMult =
+        Math.max(0.05, 1 + skillDb.sum('INC', 'Speed', ModFlag.Spell, 0) / 100) *
+        skillDb.more('Speed', ModFlag.Spell, 0);
+      const mainSpdMult =
+        Math.max(0.05, 1 + skillDb.sum('INC', 'Speed', flags, kwFlags) / 100) *
+        skillDb.more('Speed', flags, kwFlags);
+      const mainBaseCastTime = Math.max(0.05, activeDef.castTime ?? 0.75);
+      const mainPrelimSpeed = mainSpdMult / mainBaseCastTime;
+      const repeats = Math.max(1, 1 + skillDb.sum('BASE', 'RepeatCount', flags, kwFlags));
+      const empoweredUseRate = Math.max(0.01, mainPrelimSpeed / repeats);
+      const pactCastTime = (pactDef.castTime ?? 0.8) / spellSpdMult;
+      const pactCdr =
+        Math.max(
+          0,
+          skillDb.sum('INC', 'CooldownRecovery', 0, 0) +
+            (pactDef.id === 'poe1_pactofktash' ? Math.floor(Math.max(0, pactGem.quality) * 0.5) : 0),
+        );
+      const pactCd = (pactDef.cooldown ?? (pactDef.id === 'poe1_pactofktash' ? 6 : 4)) / (1 + pactCdr / 100);
+      const pactCount =
+        pactDef.id === 'poe1_pactofbeidat'
+          ? 6 + Math.floor(Math.max(0, pactGem.quality) * 0.1)
+          : pactDef.id === 'poe1_pactofktash'
+            ? 1
+            : 3;
+      const storedUses = 1;
+      const uptime = Math.min(1, Math.max(0, ((pactCount / empoweredUseRate) / (pactCd + pactCastTime)) * storedUses));
+      const pactMode = String(build.config.rawInputs?.pactMode ?? 'AVERAGE').toUpperCase();
+      const effectMult = pactMode === 'MAX' ? 1 : uptime;
+      if (pactDef.id === 'poe1_pactofbeidat' && activeNameLower.startsWith('arc')) {
+        pactBeidatExtraChains = 4 * effectMult;
+      }
+      if (pactDef.id === 'poe1_pactofghorr') {
+        const fleshrendStacks = Number(build.config.rawInputs?.fleshrendStacks ?? 0);
+        if (Number.isFinite(fleshrendStacks) && fleshrendStacks > 0) {
+          groupEnemyDb.addMod({
+            name: 'DamageTakenOverTime',
+            type: 'INC',
+            value: fleshrendStacks * 25,
+            flags: 0,
+            keywordFlags: 0,
+            source: `Pact of Ghorr (${fleshrendStacks} Fleshrend)`,
+          });
+        }
+      }
+    }
+  }
   const rawChainBase =
     skillDb.sum('BASE', 'ChainCountMax', flags, kwFlags) +
     skillDb.sum('BASE', 'ChainCount', flags, kwFlags) +
     arcQualChains +
+    pactBeidatExtraChains +
     (addProjAsChains ? rawExtraProj : 0);
   const chainMax = Math.max(
     0,
@@ -9969,7 +10067,11 @@ function computeGroupOffence(
     critChance = Math.round(postBifurcateCrit * (isAttack ? hitChance / 100 : 1) * 100) / 100;
     const overridePoe1Multi = skillDb.override('CritMultiplierOverride', flags, kwFlags);
     const enemyCritMultiInc = 1 + groupEnemyDb.sum('INC', 'SelfCritMultiplier', flags, kwFlags) / 100;
+    const hasSkillQualityCritMulti = skillDb
+      .calcStat('CritMultiplier', flags, kwFlags)
+      .sources.some((s) => /quality/i.test(s.source));
     const iceSpearSecondFormQualMulti =
+      !hasSkillQualityCritMulti &&
       (activeNameLower === 'ice spear' || activeNameLower === 'ice spear of splitting') &&
       ((resolvedPartStats?.partIndex ?? chosenActiveInst?.skillPart ?? 1) === 2 ||
         (resolvedPartStats?.partIndex ?? chosenActiveInst?.skillPart ?? 1) === 4)
@@ -11034,34 +11136,48 @@ function computeGroupOffence(
   } else if (
     (activeNameLower === 'molten strike' || activeNameLower === 'molten strike of the zenith') &&
     build.game === 'poe1' &&
-    (partIdxForDps === 3 || partIdxForDps === 5 || partIdxForDps === 6)
+    (partIdxForDps === 2 || partIdxForDps === 3 || partIdxForDps === 5 || partIdxForDps === 6)
   ) {
-    // Official PoB1 `act_str.lua:8024-8081` Molten Strike / Zenith ball overlap & 5th-strike weighted average
-    const aoeInc =
-      skillDb.sum('INC', 'AreaOfEffect', flags, kwFlags) +
-      (Boolean(activeSkillData?.projectileSpeedAppliesToMSAreaOfEffect)
-        ? skillDb.sum('INC', 'ProjectileSpeed', flags, kwFlags)
-        : 0);
-    const aoeMore = skillDb.more('AreaOfEffect', flags, kwFlags);
-    const radiusScale = Math.sqrt(Math.max(0.1, 1 + aoeInc / 100) * aoeMore);
-    const enemyRadius = skillDb.override('EnemyRadius', flags, kwFlags) ?? (skillDb.sum('BASE', 'EnemyRadius', flags, kwFlags) || 2);
-    const ballRadius = Math.floor(9 * radiusScale);
-    const innerRadius = 2;
-    const outerRadius = Math.max(innerRadius + 1, Math.floor(25 * radiusScale));
-    const overlapChance = Math.min(1, Math.max(0, (enemyRadius + ballRadius - innerRadius) / (outerRadius - innerRadius)));
-    if (activeNameLower === 'molten strike of the zenith' && partIdxForDps === 6) {
-      // PoB1 `act_str.lua:8060-8062`: 5th strike deals (600 + 10*Q)% MORE damage (800% at Q20, 830% at Q23)
-      const rawFifthDmg =
-        typeof activeSkillData?.FifthStrikeDamage === 'number' ? activeSkillData.FifthStrikeDamage : 600;
-      const fifthDmgPct =
-        rawFifthDmg === 600 ? 600 + Math.max(0, activeQuality) * 10 : rawFifthDmg;
-      const fifthExtraProj =
-        typeof activeSkillData?.FifthStrikeProjectiles === 'number' ? activeSkillData.FifthStrikeProjectiles : 5;
-      const fifthMult = 1 + fifthDmgPct / 100;
-      dynamicPreDamageDpsMult *=
-        overlapChance * (0.8 * projCount + 0.2 * fifthMult * (projCount + fifthExtraProj));
-    } else {
-      dynamicPreDamageDpsMult *= overlapChance * projCount;
+    // PoE 1 Molten Strike Q20 additive projectile damage: base -60% + floor(Q * 0.5)% = -50% (0.50x vs 0.40x)
+    if (
+      activeNameLower === 'molten strike' &&
+      (partIdxForDps === 2 || partIdxForDps === 3) &&
+      activeQuality > 0 &&
+      !(activeDef.qualityCompiledMods && activeDef.qualityCompiledMods.length > 0)
+    ) {
+      const msQualBonus = Math.trunc(activeQuality * 0.5);
+      if (msQualBonus > 0) {
+        dynamicPreDamageDpsMult *= (40 + msQualBonus) / 40;
+      }
+    }
+    if (partIdxForDps === 3 || partIdxForDps === 5 || partIdxForDps === 6) {
+      // Official PoB1 `act_str.lua:8024-8081` Molten Strike / Zenith ball overlap & 5th-strike weighted average
+      const aoeInc =
+        skillDb.sum('INC', 'AreaOfEffect', flags, kwFlags) +
+        (Boolean(activeSkillData?.projectileSpeedAppliesToMSAreaOfEffect)
+          ? skillDb.sum('INC', 'ProjectileSpeed', flags, kwFlags)
+          : 0);
+      const aoeMore = skillDb.more('AreaOfEffect', flags, kwFlags);
+      const radiusScale = Math.sqrt(Math.max(0.1, 1 + aoeInc / 100) * aoeMore);
+      const enemyRadius = skillDb.override('EnemyRadius', flags, kwFlags) ?? (skillDb.sum('BASE', 'EnemyRadius', flags, kwFlags) || 2);
+      const ballRadius = Math.floor(9 * radiusScale);
+      const innerRadius = 2;
+      const outerRadius = Math.max(innerRadius + 1, Math.floor(25 * radiusScale));
+      const overlapChance = Math.min(1, Math.max(0, (enemyRadius + ballRadius - innerRadius) / (outerRadius - innerRadius)));
+      if (activeNameLower === 'molten strike of the zenith' && partIdxForDps === 6) {
+        // PoB1 `act_str.lua:8060-8062`: 5th strike deals (600 + 10*Q)% MORE damage (800% at Q20, 830% at Q23)
+        const rawFifthDmg =
+          typeof activeSkillData?.FifthStrikeDamage === 'number' ? activeSkillData.FifthStrikeDamage : 600;
+        const fifthDmgPct =
+          rawFifthDmg === 600 ? 600 + Math.max(0, activeQuality) * 10 : rawFifthDmg;
+        const fifthExtraProj =
+          typeof activeSkillData?.FifthStrikeProjectiles === 'number' ? activeSkillData.FifthStrikeProjectiles : 5;
+        const fifthMult = 1 + fifthDmgPct / 100;
+        dynamicPreDamageDpsMult *=
+          overlapChance * (0.8 * projCount + 0.2 * fifthMult * (projCount + fifthExtraProj));
+      } else {
+        dynamicPreDamageDpsMult *= overlapChance * projCount;
+      }
     }
   } else if (build.game === 'poe1' && activeNameLower === 'storm burst' && partIdxForDps === 2) {
     // Official PoB1 `act_int.lua:18119-18126` Storm Burst Part 2 ("Max Channelled Orbs")

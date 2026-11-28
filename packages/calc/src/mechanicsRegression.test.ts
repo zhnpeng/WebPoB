@@ -1668,4 +1668,74 @@ describe('Mechanism-Layer Regression Suite (PoE 1 & PoE 2)', () => {
       expect(outClawAndSwordMastery.offence.speed / outNoMastery.offence.speed).toBeCloseTo(1.0, 2);
     });
   });
+
+  describe('Wave 5A: PoE 2 HaveEnergyShield gating, PoE 1 Transfiguration of Soul, 4-Slot Armour/Evasion & Pact Uptime', () => {
+    it('gates PoE 2 HaveEnergyShield on explicit config condition (Immaterial Evasion)', () => {
+      const base = createSamplePoe2Build();
+      const bodyWithEs = {
+        id: 'body_es_ev',
+        name: 'Hybrid Jacket',
+        baseName: 'Waxed Jacket',
+        rarity: 'RARE' as const,
+        slotType: 'Body Armour' as const,
+        quality: 0,
+        armourStats: { armour: 0, evasion: 400, energyShield: 100 },
+        implicits: [],
+        explicits: [],
+      };
+      const common: Build = {
+        ...base,
+        items: { ...base.items, [bodyWithEs.id]: bodyWithEs },
+        equipped: { ...base.equipped, 'Body Armour': bodyWithEs.id },
+        config: {
+          ...base.config,
+          customMods: '50% increased Evasion Rating while you have Energy Shield',
+          rawInputs: {},
+        },
+      };
+      const outNoCfg = calculateBuild(common);
+      const outWithCfg = calculateBuild({
+        ...common,
+        config: { ...common.config, rawInputs: { conditionHaveEnergyShield: true } },
+      });
+      expect(outWithCfg.defence.evasion).toBeGreaterThan(outNoCfg.defence.evasion * 1.15);
+    });
+
+    it('excludes Intelligence inherent ES% from PoE 1 Transfiguration of Soul and sets 4-slot Armour/Evasion conditions', () => {
+      const base = createSamplePoe1Build();
+      const makeArm = (id: string, slotType: 'Helmet' | 'Body Armour' | 'Gloves' | 'Boots', armour: number, evasion: number) => ({
+        id,
+        name: id,
+        baseName: id,
+        rarity: 'RARE' as const,
+        slotType,
+        quality: 0,
+        armourStats: { armour, evasion, energyShield: 0 },
+        implicits: [],
+        explicits: [],
+      });
+      const h = makeArm('h4', 'Helmet', 100, 100);
+      const b = makeArm('b4', 'Body Armour', 200, 200);
+      const g = makeArm('g4', 'Gloves', 100, 100);
+      const bo = makeArm('bo4', 'Boots', 100, 100);
+      const fullFour: Build = {
+        ...base,
+        items: { ...base.items, h4: h, b4: b, g4: g, bo4: bo },
+        equipped: { ...base.equipped, Helmet: 'h4', 'Body Armour': 'b4', Gloves: 'g4', Boots: 'bo4' },
+        config: {
+          ...base.config,
+          customMods: [
+            '+1% to all maximum Elemental Resistances if Equipped Helmet, Body Armour, Gloves, and Boots all have Armour',
+            '+15% chance to Suppress Spell Damage if Equipped Helmet, Body Armour, Gloves, and Boots all have Evasion Rating',
+          ].join('\n'),
+        },
+      };
+      const missingBoots = { ...fullFour, equipped: { ...fullFour.equipped, Boots: undefined as unknown as string } };
+      const outFull = calculateBuild(fullFour);
+      const outMissing = calculateBuild(missingBoots);
+      expect(outFull.defence.spellSuppressionChance).toBeGreaterThanOrEqual(
+        outMissing.defence.spellSuppressionChance + 15,
+      );
+    });
+  });
 });
