@@ -2486,4 +2486,58 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     // Rapid Infusion fallback (+50% InfusionEffect)
     expect(db.sum('INC', 'InfusionEffect')).toBe(50);
   });
+
+  it('does not apply pre-3.20 reduced Curse Effect penalty to PoE 1 Hextouch or Awakened Hextouch', () => {
+    const flamDef: GemDefinition = {
+      id: 'poe1_flammability',
+      name: { en: 'Flammability', zh: '易燃' },
+      category: 'active',
+      game: 'poe1',
+      color: 'blue',
+      tags: ['spell', 'aoe', 'duration', 'curse', 'hex', 'fire'],
+      modFlags: 0,
+      keywordFlags: KeywordFlag.Curse,
+      stats: [],
+      compiledMods: [
+        { name: 'FireResist', type: 'BASE', value: -36, flags: 0, keywordFlags: 0, target: 'enemy' },
+      ],
+    };
+    const awkHextouchDef: GemDefinition = {
+      id: 'poe1_supportawakenedhextouch',
+      name: { en: 'Awakened Hextouch', zh: '蛊咒【强辅】' },
+      category: 'support',
+      game: 'poe1',
+      color: 'blue',
+      tags: ['awakened', 'hex', 'intelligence', 'support', 'trigger'],
+      modFlags: 0,
+      keywordFlags: 0,
+      stats: [],
+    };
+    const db = new ModDB();
+    const res = evaluateAurasAndWatchersEye({
+      build: mkBuild({
+        game: 'poe1',
+        skills: [
+          {
+            id: 'sg-hextouch',
+            label: 'Hextouch Flammability',
+            enabled: true,
+            gems: [
+              { instanceId: 'h1', gemId: 'poe1_supportawakenedhextouch', level: 5, quality: 20, enabled: true },
+              { instanceId: 'h2', gemId: 'poe1_flammability', level: 20, quality: 20, enabled: true },
+            ],
+          },
+        ],
+      }),
+      playerDb: db,
+      getGemByIdFn: (_game, id) => {
+        if (id === 'poe1_flammability') return flamDef;
+        if (id === 'poe1_supportawakenedhextouch') return awkHextouchDef;
+        return undefined;
+      },
+      maxMana: 1000,
+    });
+    // PoE 1 3.20+: Awakened Hextouch applies 0% reduced Curse Effect -> Flammability keeps full -36% FireResist
+    expect(res.enemyDb.sum('BASE', 'FireResist')).toBe(-36);
+  });
 });

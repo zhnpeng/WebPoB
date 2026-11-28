@@ -2818,10 +2818,8 @@ export function evaluateAurasAndWatchersEye(
         const qualBonus = Math.trunc(Math.max(0, effQuality) * 0.25);
         groupCurseEffectInc += basePenalty + qualBonus;
       } else if (lower === 'hextouch' || lower === 'awakened hextouch') {
-        const isAwk = lower === 'awakened hextouch';
-        const basePenalty = isAwk ? -(25 - effLevel) : -(35 - Math.floor(effLevel / 2));
-        const qualBonus = Math.trunc(Math.max(0, effQuality) * 0.25);
-        groupCurseEffectInc += basePenalty + qualBonus;
+        // PoE 1 3.20+: Hextouch & Awakened Hextouch no longer apply a reduced Curse Effect penalty
+        // (only reduced Curse Duration; Awakened Hextouch Lv5+ grants +1 Curse Limit).
       } else if (lower === 'blasphemy' || lower === 'awakened blasphemy') {
         const isAwk = lower === 'awakened blasphemy';
         const basePenalty = isAwk ? -(22 - Math.floor(effLevel / 2)) : -(25 - Math.floor(effLevel / 4));
