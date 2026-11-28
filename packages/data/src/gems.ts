@@ -958,6 +958,18 @@ const POE2_LEGACY_GEM_ALIASES: Readonly<Record<string, string>> = {
   ripwireballistaplayer: 'poe2_artilleryballista',
   ripwireballista: 'poe2_artilleryballista',
   skillgemripwireballista: 'poe2_artilleryballista',
+  'cast on ignite': 'poe2_castonelementalailment',
+  metacastonigniteplayer: 'poe2_castonelementalailment',
+  castonignite: 'poe2_castonelementalailment',
+  skillgemcastonignite: 'poe2_castonelementalailment',
+  'cast on freeze': 'poe2_castonelementalailment',
+  metacastonfreezeplayer: 'poe2_castonelementalailment',
+  castonfreeze: 'poe2_castonelementalailment',
+  skillgemcastonfreeze: 'poe2_castonelementalailment',
+  'cast on shock': 'poe2_castonelementalailment',
+  metacastonshockplayer: 'poe2_castonelementalailment',
+  castonshock: 'poe2_castonelementalailment',
+  skillgemcastonshock: 'poe2_castonelementalailment',
 };
 
 interface GemLookupIndex {

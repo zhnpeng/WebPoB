@@ -1,4 +1,4 @@
-import { KeywordFlag, type Mod, type ModType } from '@webpob/core';
+import { KeywordFlag, ModFlag, type Mod, type ModType } from '@webpob/core';
 import {
   applyModTagEval,
   createEmptyEvalContext,
@@ -326,8 +326,21 @@ export class ModDB {
   }
 
   private matches(mod: Mod, flags: number, keywordFlags: number): boolean {
-    if (mod.flags !== 0 && (mod.flags & flags) !== mod.flags) {
-      return false;
+    let reqFlags = mod.flags;
+    if (reqFlags !== 0) {
+      const hitOrAilmentFlag = ModFlag.Hit | ModFlag.Ailment;
+      if ((reqFlags & hitOrAilmentFlag) === hitOrAilmentFlag) {
+        if ((flags & hitOrAilmentFlag) === 0) return false;
+        reqFlags &= ~hitOrAilmentFlag;
+      }
+      const atkOrSpellFlag = ModFlag.Attack | ModFlag.Spell;
+      if ((reqFlags & atkOrSpellFlag) === atkOrSpellFlag) {
+        if ((flags & atkOrSpellFlag) === 0) return false;
+        reqFlags &= ~atkOrSpellFlag;
+      }
+      if (reqFlags !== 0 && (reqFlags & flags) !== reqFlags) {
+        return false;
+      }
     }
     let reqKw = mod.keywordFlags;
     if (reqKw !== 0) {

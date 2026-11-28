@@ -1070,5 +1070,137 @@ describe('Mechanism-Layer Regression Suite — Round 2 (Upstream PoB spec/System
         setRegisteredGems('poe2', prevPoe2);
       }
     });
+
+    it('matches ModDB ModFlag.Hit | ModFlag.Ailment and ModFlag.Attack | ModFlag.Spell OR-groups (Wave 4P)', () => {
+      const db = new ModDB();
+      // Mirrors PoE 1 gem cmods with flags = Melee | Hit | Ailment (0x124 = 292)
+      // and "with Hits and Ailments" item mods (flags = Hit | Ailment = 0x104 = 260)
+      db.addMod({
+        name: 'Damage',
+        type: 'MORE',
+        value: 30,
+        flags: ModFlag.Melee | ModFlag.Hit | ModFlag.Ailment,
+        keywordFlags: 0,
+        source: 'Test Melee Hit+Ailment',
+      });
+      db.addMod({
+        name: 'ElementalDamage',
+        type: 'INC',
+        value: 48,
+        flags: ModFlag.Hit | ModFlag.Ailment,
+        keywordFlags: 0,
+        source: 'The Taming',
+      });
+      db.addMod({
+        name: 'Damage',
+        type: 'INC',
+        value: 20,
+        flags: ModFlag.Attack | ModFlag.Spell,
+        keywordFlags: 0,
+        source: 'Test Attack+Spell',
+      });
+
+      // Pure Melee Hit (without Ailment bit) MUST match Melee | Hit | Ailment
+      expect(db.more('Damage', ModFlag.Attack | ModFlag.Melee | ModFlag.Hit)).toBeCloseTo(1.3, 4);
+      // Pure Melee Ailment (without Hit bit) MUST also match
+      expect(db.more('Damage', ModFlag.Attack | ModFlag.Melee | ModFlag.Ailment)).toBeCloseTo(1.3, 4);
+      // Ranged Hit (missing Melee) MUST NOT match
+      expect(db.more('Damage', ModFlag.Attack | ModFlag.Projectile | ModFlag.Hit)).toBe(1);
+      // Pure Hit or Pure Ailment matches Hit | Ailment
+      expect(db.sum('INC', 'ElementalDamage', ModFlag.Hit)).toBe(48);
+      expect(db.sum('INC', 'ElementalDamage', ModFlag.Ailment)).toBe(48);
+      expect(db.sum('INC', 'ElementalDamage', ModFlag.Spell)).toBe(0);
+      // Attack OR Spell matches either
+      expect(db.sum('INC', 'Damage', ModFlag.Attack)).toBe(20);
+      expect(db.sum('INC', 'Damage', ModFlag.Spell)).toBe(20);
+      expect(db.sum('INC', 'Damage', ModFlag.Dot)).toBe(0);
+    });
+
+    it('merges wrapped multi-line PoB item mods and infers fallback weapon bases cleanly (Wave 4P)', () => {
+      const wrappedTaming = parseItemText(
+        [
+          'Rarity: UNIQUE',
+          'The Taming',
+          'Prismatic Ring',
+          'Implicits: 1',
+          '+10% to all Elemental Resistances',
+          '+28% to all Elemental Resistances',
+          '48% increased Elemental Damage with Hits and Ailments for',
+          'each type of Elemental Ailment on Enemy',
+        ].join('\n'),
+        'poe1',
+      );
+      expect(wrappedTaming?.implicits).toEqual(['+10% to all Elemental Resistances']);
+      expect(wrappedTaming?.explicits).toContain(
+        '48% increased Elemental Damage with Hits and Ailments for each type of Elemental Ailment on Enemy',
+      );
+
+      const wrappedFortress = parseItemText(
+        [
+          'Rarity: UNIQUE',
+          'The Iron Fortress',
+          'Crusader Plate',
+          'Implicits: 0',
+          '+111 to Strength',
+          "Strength's Damage Bonus instead grants 3% increased Melee",
+          'Physical Damage per 10 Strength',
+        ].join('\n'),
+        'poe1',
+      );
+      expect(wrappedFortress?.explicits).toContain(
+        "Strength's Damage Bonus instead grants 3% increased Melee Physical Damage per 10 Strength",
+      );
+
+      // Weapon base slot inference fallback when base table is not hydrated
+      const cannon = parseItemText('Rarity: RARE\nRedemption\nTrarthan Cannon\nImplicits: 0', 'poe2');
+      expect(cannon?.slotType).toBe('Weapon 1');
+      const rod = parseItemText('Rarity: RARE\nTempest Spire\nEventuality Rod\nImplicits: 0', 'poe1');
+      expect(rod?.slotType).toBe('Weapon 1');
+      const stabber = parseItemText('Rarity: RARE\nBramble Roar\nThroat Stabber\nImplicits: 0', 'poe1');
+      expect(stabber?.slotType).toBe('Weapon 1');
+      const fetish = parseItemText('Rarity: RARE\nGrinning Fetish\nGrinning Fetish\nImplicits: 0', 'poe1');
+      expect(fetish?.slotType).toBe('Weapon 1');
+    });
+
+    it('resolves PoE 2 Cast on Ignite/Freeze/Shock legacy gem aliases to Cast on Elemental Ailment (Wave 4P)', () => {
+      const prevPoe2 = getGemsForGame('poe2');
+      try {
+        registerGemsData('poe2', {
+          game: 'poe2',
+          count: 1,
+          gems: [
+            {
+              id: 'poe2_castonelementalailment',
+              en: 'Cast on Elemental Ailment',
+              cat: 'active',
+              color: 'blue',
+              tags: ['spell', 'meta', 'spirit'],
+              sr: 60,
+            },
+          ],
+        });
+        expect(
+          resolveGemFromPobRef('poe2', {
+            nameSpec: 'Cast on Ignite',
+            skillId: 'MetaCastOnIgnitePlayer',
+            gemId: 'Metadata/Items/Gems/SkillGemCastOnIgnite',
+          })?.id,
+        ).toBe('poe2_castonelementalailment');
+        expect(
+          resolveGemFromPobRef('poe2', {
+            nameSpec: 'Cast on Freeze',
+            skillId: 'MetaCastOnFreezePlayer',
+          })?.id,
+        ).toBe('poe2_castonelementalailment');
+        expect(
+          resolveGemFromPobRef('poe2', {
+            nameSpec: 'Cast on Shock',
+            skillId: 'MetaCastOnShockPlayer',
+          })?.id,
+        ).toBe('poe2_castonelementalailment');
+      } finally {
+        setRegisteredGems('poe2', prevPoe2);
+      }
+    });
   });
 });

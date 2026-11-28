@@ -47,18 +47,18 @@ const SLOT_KEYWORDS: Array<{ pattern: RegExp; slot: EquipmentSlotId | 'Any'; wea
   // Weapons (strict English word boundaries so "Daggerfoot Shoes" or "Ornate Ringmail" never collide)
   { pattern: /\b(?:wands?|horns?)\b|法杖|魔杖/i, slot: 'Weapon 1', weaponType: 'Wand', twoHanded: false },
   { pattern: /\bquartersta(?:ff|ves)\b|细杖/i, slot: 'Weapon 1', weaponType: 'Quarterstaff', twoHanded: true },
-  { pattern: /\b(?:staff|staves|warstaff|warstaves|runic fork|lathi|gnarled branch)\b|长杖|符文之叉/i, slot: 'Weapon 1', weaponType: 'Staff', twoHanded: true },
-  { pattern: /\bcrossbows?\b|\barbalests?\b|战弩|十字弓|弩/i, slot: 'Weapon 1', weaponType: 'Crossbow', twoHanded: true },
+  { pattern: /\b(?:staff|staves|warstaff|warstaves|runic fork|lathi|gnarled branch|rods?)\b|长杖|符文之叉/i, slot: 'Weapon 1', weaponType: 'Staff', twoHanded: true },
+  { pattern: /\b(?:crossbows?|arbalests?|cannons?)\b|战弩|十字弓|弩/i, slot: 'Weapon 1', weaponType: 'Crossbow', twoHanded: true },
   { pattern: /\b(?:bows?|longbow|shortbow|recurve)\b|长弓|弓/i, slot: 'Weapon 1', weaponType: 'Bow', twoHanded: true },
   { pattern: /\bspears?\b|\bglaives?\b|\bpikes?\b|\blances?\b|\bharpoons?\b|\btridents?\b|\bpartisans?\b|战矛|长矛/i, slot: 'Weapon 1', weaponType: 'Sword', twoHanded: false },
   { pattern: /\b(?:daggers?|ambushers?|kris|sai|poignard|stiletto|dirk|skean|knife)\b|匕首/i, slot: 'Weapon 1', weaponType: 'Dagger', twoHanded: false },
-  { pattern: /\b(?:claws?|paws?|katar|talon|awl|gouger)\b|爪/i, slot: 'Weapon 1', weaponType: 'Claw', twoHanded: false },
+  { pattern: /\b(?:claws?|paws?|stabbers?|fists?|katar|talon|awl|gouger)\b|爪/i, slot: 'Weapon 1', weaponType: 'Claw', twoHanded: false },
   { pattern: /\b(?:two[\s-]hand(?:ed)? sword|greatsword|claymore|bastard sword|exquisite blade)\b|双手剑/i, slot: 'Weapon 1', weaponType: 'Sword', twoHanded: true },
   { pattern: /\b(?:swords?|rapier|foil|estoc|sabre|cutlass|scimitar|gladius|falchion|blade)\b|剑/i, slot: 'Weapon 1', weaponType: 'Sword', twoHanded: false },
   { pattern: /\b(?:two[\s-]hand(?:ed)? axe|greataxe|chopper|labrys|fleshripper|poleaxe|halberd|bardiche)\b|双手斧/i, slot: 'Weapon 1', weaponType: 'Axe', twoHanded: true },
   { pattern: /\b(?:axes?|cleaver|hatchet|tomahawk)\b|斧/i, slot: 'Weapon 1', weaponType: 'Axe', twoHanded: false },
   { pattern: /\b(?:two[\s-]hand(?:ed)? mace|greatmace|greatclub|greathammer|maul|sledgehammer|piledriver|meatgrinder)\b|双手锤/i, slot: 'Weapon 1', weaponType: 'Mace', twoHanded: true },
-  { pattern: /\b(?:maces?|sceptres?|flails?|hammers?|clubs?|gavel|cudgel|bludgeon|morningstar)\b|权杖|短杖|连枷|锤/i, slot: 'Weapon 1', weaponType: 'Mace', twoHanded: false },
+  { pattern: /\b(?:maces?|sceptres?|flails?|hammers?|clubs?|gavel|cudgel|bludgeon|morningstar|fetish)\b|权杖|短杖|连枷|锤/i, slot: 'Weapon 1', weaponType: 'Mace', twoHanded: false },
   // Body Armour (checked after Gloves/Boots/Helmet/Belt/Shield/Weapons)
   { pattern: /\b(?:body armour|robe|garb|plate|regalia|vestments?|vest|coat|tunic|brigandine|doublet|jacket|cuirass|armour|hauberk|lamellar|lamellae|chainmail|ringmail|scalemail|mail|mantle|raiment|leather|dragonscale|wyrmscale|garment|markings|jerkin|silks|corselet|breastplate|kaftan|shroud|toga|surcoat)\b|胸甲|长袍|战甲|法衣|背心|外衣|护胸|盔甲/i, slot: 'Body Armour' },
 ];
@@ -667,6 +667,32 @@ export function parseItemText(
     return normalized || null;
   };
 
+  const mergeWrappedModLines = (rawLines: readonly string[]): string[] => {
+    const merged: string[] = [];
+    const danglingEndRe =
+      /\b(?:for|per|between|while|among|with|from|into|of|to|an|or|and|is|are|as|than|their|your|if|when|until|without|containing|instead grants \d+(?:\.\d+)?% increased Melee)$/i;
+    for (const raw of rawLines) {
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+      if (
+        merged.length > 0 &&
+        !trimmed.startsWith('{') &&
+        !trimmed.startsWith('<') &&
+        !/^(?:Corrupted|Mirrored|Split|Unidentified|Fractured|Synthesised|Grants\s+Skill:|Allocates\s)/i.test(trimmed)
+      ) {
+        const prev = merged[merged.length - 1]!;
+        const startsLower = /^[a-z]/.test(trimmed);
+        const endsDangling = danglingEndRe.test(prev.replace(/\s+$/, ''));
+        if (startsLower || endsDangling) {
+          merged[merged.length - 1] = `${prev.replace(/\s+$/, '')} ${trimmed}`;
+          continue;
+        }
+      }
+      merged.push(raw);
+    }
+    return merged;
+  };
+
   for (const rawImp of rawTaggedImplicits) {
     const normalized = resolveAndNormalizeModLine(rawImp);
     if (!normalized) continue;
@@ -675,8 +701,9 @@ export function parseItemText(
   }
 
   if (implicitCountHint !== null) {
-    for (let i = 0; i < rawStatCandidates.length; i++) {
-      const rawLine = rawStatCandidates[i]!;
+    const joinedCandidates = mergeWrappedModLines(rawStatCandidates);
+    for (let i = 0; i < joinedCandidates.length; i++) {
+      const rawLine = joinedCandidates[i]!;
       const normalized = resolveAndNormalizeModLine(rawLine, i + 1);
       if (!normalized) continue;
       const count = getDuplicateVariantRepeatCount(rawLine);
@@ -693,7 +720,7 @@ export function parseItemText(
     const nonEmptySections = rawCollectedSections
       .map((sec) => {
         const out: string[] = [];
-        for (const rawLine of sec) {
+        for (const rawLine of mergeWrappedModLines(sec)) {
           const normalized = resolveAndNormalizeModLine(rawLine, modIdx++);
           if (!normalized) continue;
           const count = getDuplicateVariantRepeatCount(rawLine);

@@ -1038,6 +1038,22 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
     apply: () => ({ tags: [{ type: 'Multiplier', var: 'AbyssJewel' }] }),
   },
   {
+    regex: /(?:\s*,\s*|\s+)(?:for each|per)\s+(Ghastly|Murderous|Hypnotic|Searching)\s+Eye Jewel affecting you(?:,\s*up to (?:a maximum of )?\+?(\d+)%?)?$/i,
+    apply: (m) => ({
+      tags: [
+        {
+          type: 'Multiplier',
+          var: `${capFirst(m[1]!)}EyeJewel`,
+          ...(m[2] ? { limit: Number(m[2]), limitTotal: true } : {}),
+        } as unknown as ModTag,
+      ],
+    }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)for each (?:type of )?Elemental Ailment(?: type)? (?:on Enemy|among your Ailments on them)$/i,
+    apply: () => ({ tags: [{ type: 'Multiplier', var: 'EnemyElementalAilmentCount' }] }),
+  },
+  {
     regex: /(?:\s*,\s*|\s+)(?:for each|per)\s+Impale on Enemy$/i,
     apply: () => ({ tags: [{ type: 'Multiplier', var: 'EnemyImpaleStacks' }] }),
   },
@@ -1293,10 +1309,20 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
     apply: () => ({ tags: [{ type: 'Condition', var: 'SuppressedRecently' }] }),
   },
   {
-    regex: /(?:\s*,\s*|\s+)if\s+you(?:'ve|\s+have)\s+Used\s+a\s+(Warcry|Movement Skill|Travel Skill|Minion Skill|Fire Skill|Cold Skill|Lightning Skill|Chaos Skill|Vaal Skill|Skill)\s+Recently$/i,
+    regex: /(?:\s*,\s*|\s+)if\s+you(?:'ve|\s+have)\s+Used\s+a\s+(Warcry|Movement Skill|Travel Skill|Minion Skill|Retaliation Skill|Fire Skill|Cold Skill|Lightning Skill|Chaos Skill|Vaal Skill|Skill)\s+Recently$/i,
     apply: (m) => ({
       tags: [{ type: 'Condition', var: `Used${toPascalCase(m[1]!)}Recently` }],
     }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)if\s+you(?:'ve|\s+have)\s+consumed\s+a\s+(Power|Frenzy|Endurance)\s+Charge\s+Recently$/i,
+    apply: (m) => ({
+      tags: [{ type: 'Condition', var: `Consumed${capFirst(m[1]!)}ChargeRecently` }],
+    }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)while\s+you\s+have\s+a\s+Totem$/i,
+    apply: () => ({ tags: [{ type: 'Condition', var: 'HaveTotem' }] }),
   },
   {
     regex: /(?:\s*,\s*|\s+)if\s+you(?:'ve|\s+have)\s+(Frozen|Chilled|Ignited|Shocked|Stunned|Impaled|Cursed|Taunted)\s+an\s+Enemy\s+Recently$/i,

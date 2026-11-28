@@ -943,4 +943,70 @@ describe('Real-World Corpus Coverage (parseModLine + parseModCompositional fallb
       expect(combinedPct).toBeGreaterThanOrEqual(ds.minCombinedPct);
     });
   }
+
+  it('parses Wave 4P suffix conditions and multipliers (Retaliation, Consumed Charge, Totem, Yoke Ailment, Eye Jewel)', () => {
+    expect(
+      parseModCompositional('20% increased Attack Speed if you have used a Retaliation Skill Recently', 'tree'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'Speed',
+        type: 'INC',
+        value: 20,
+        tags: [{ type: 'Condition', var: 'UsedRetaliationSkillRecently' }],
+      }),
+    ]);
+    expect(
+      parseModCompositional("15% more Spell Damage if you've consumed a Power Charge Recently", 'tree'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'Damage',
+        type: 'MORE',
+        value: 15,
+        tags: [{ type: 'Condition', var: 'ConsumedPowerChargeRecently' }],
+      }),
+    ]);
+    expect(
+      parseModCompositional('30% increased Armour while you have a Totem', 'tree'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'Armour',
+        type: 'INC',
+        value: 30,
+        tags: [{ type: 'Condition', var: 'HaveTotem' }],
+      }),
+    ]);
+    expect(
+      parseModCompositional(
+        'Enemies take 19% increased Damage for each Elemental Ailment type among your Ailments on them',
+        'item',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'EnemyDamageTaken',
+        type: 'INC',
+        value: 19,
+        tags: [{ type: 'Multiplier', var: 'EnemyElementalAilmentCount' }],
+      }),
+    ]);
+    expect(
+      parseModCompositional(
+        'Minions have +6% to Damage over Time Multiplier per Ghastly Eye Jewel affecting you, up to a maximum of +30%',
+        'item',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'MinionDotMultiplier',
+        type: 'BASE',
+        value: 6,
+        tags: [
+          expect.objectContaining({
+            type: 'Multiplier',
+            var: 'GhastlyEyeJewel',
+            limit: 30,
+            limitTotal: true,
+          }),
+        ],
+      }),
+    ]);
+  });
 });
