@@ -1263,7 +1263,8 @@ const PARSER_RULES: ParserRule[] = [
     build: (m, src) => {
       const val = m[2]!.toLowerCase() === 'less' ? -Number(m[1]) : Number(m[1]);
       const type: ModType = m[2]!.toLowerCase() === 'increased' ? 'INC' : 'MORE';
-      return [mkMod(`${m[3]}Damage`, type, val, src, ModFlag.Attack)];
+      const elem = m[3]![0]!.toUpperCase() + m[3]!.slice(1).toLowerCase();
+      return [mkMod(`${elem}Damage`, type, val, src, ModFlag.Attack)];
     },
   },
   {
@@ -1271,7 +1272,8 @@ const PARSER_RULES: ParserRule[] = [
     build: (m, src) => {
       const val = m[2]!.toLowerCase() === 'less' ? -Number(m[1]) : Number(m[1]);
       const type: ModType = m[2]!.toLowerCase() === 'increased' ? 'INC' : 'MORE';
-      return [mkMod(`${m[3]}Damage`, type, val, src)];
+      const elem = m[3]![0]!.toUpperCase() + m[3]!.slice(1).toLowerCase();
+      return [mkMod(`${elem}Damage`, type, val, src)];
     },
   },
   {

@@ -1645,4 +1645,58 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       expect.objectContaining({ name: 'VaalSoulCost', type: 'MORE', value: -30 }),
     ]);
   });
+
+  it('Wave 6F: AdditionalPoisonChance, Onslaught on Hit, Doryani Prototype, Aegis Aurora, Triad Grip & lowercase ElementalDamage', () => {
+    expect(parseModLine('15% more elemental damage', 'Custom')).toEqual([
+      expect.objectContaining({ name: 'ElementalDamage', type: 'MORE', value: 15 }),
+    ]);
+    expect(
+      parseModLine('46% chance to inflict an additional Poison on the same Target when you inflict Poison', 'Item: Poison Mastery'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'AdditionalPoisonChance',
+        type: 'BASE',
+        value: 46,
+        keywordFlags: KeywordFlag.Poison,
+      }),
+    ]);
+    expect(parseModLine('You gain Onslaught for 4 seconds on Hit', 'Item: Synthesised Ring')).toEqual([
+      expect.objectContaining({
+        name: 'Speed',
+        type: 'INC',
+        value: 20,
+        flags: ModFlag.Attack | ModFlag.Spell,
+        tags: [
+          { type: 'Condition', var: 'HitRecently' },
+          { type: 'Condition', var: 'Onslaught', neg: true },
+        ],
+      }),
+      expect.objectContaining({
+        name: 'MovementSpeed',
+        type: 'INC',
+        value: 20,
+        tags: [
+          { type: 'Condition', var: 'HitRecently' },
+          { type: 'Condition', var: 'Onslaught', neg: true },
+        ],
+      }),
+    ]);
+    expect(parseModLine('Armour also applies to Lightning Damage taken from Hits', "Item: Doryani's Prototype")).toEqual([
+      expect.objectContaining({ name: 'ArmourAppliesToLightning', type: 'BASE', value: 100 }),
+    ]);
+    expect(parseModLine('Nearby Enemies have Lightning Resistance equal to yours', "Item: Doryani's Prototype")).toEqual([
+      expect.objectContaining({ name: 'EnemyLightningResEqualsYours', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Recover Energy Shield equal to 2% of Armour when you Block', 'Item: Aegis Aurora')).toEqual([
+      expect.objectContaining({ name: 'EsRecoverOnBlockPctArmour', type: 'BASE', value: 2 }),
+    ]);
+    expect(
+      parseModLine('Minions convert 25% of Physical Damage to Fire Damage per Red Socket', 'Item: Triad Grip'),
+    ).toEqual([
+      expect.objectContaining({ name: 'MinionPhysConvertToFirePerRedSocket', type: 'BASE', value: 25 }),
+    ]);
+    expect(parseModLine('Nearby Enemies are Scorched', 'Custom')).toEqual([
+      expect.objectContaining({ name: 'EnemyScorched', type: 'FLAG', value: true }),
+    ]);
+  });
 });
