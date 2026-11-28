@@ -1403,6 +1403,15 @@ describe('parseConditionalSuffix', () => {
     expect(evaluateModTags(makeMod({ tags: [{ type: 'Multiplier', var: 'Chain' }] }), ctx).scale).toBe(3);
     expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'KillRecently' }] }), ctx).active).toBe(true);
     expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'AtMaxRage' }] }), ctx).active).toBe(true);
+
+    // Wave 6M: Mine/Trap multiplier & condition aliases (Tree:45608 MineDetonatedRecently)
+    ctx.multipliers.MineDetonatedRecently = 10;
+    ctx.multipliers.ActiveMineCount = 15;
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Multiplier', var: 'MinesDetonatedRecently' }] }), ctx).scale).toBe(10);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'DetonatedMinesRecently' }] }), ctx).active).toBe(true);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Multiplier', var: 'RemoteMineCount' }] }), ctx).scale).toBe(15);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Multiplier', var: 'MinesThrown' }] }), ctx).scale).toBe(15);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Multiplier', var: 'TrapOrMineCount' }] }), ctx).scale).toBe(15);
   });
 
   it('computes PoE 1 Empower/Enhance level-scaled bonuses before static compiledMods in gemBonus (Wave 6E)', () => {

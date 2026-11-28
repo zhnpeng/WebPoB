@@ -392,6 +392,11 @@ function evalSingleConditionVar(varExpr: string, ctx?: ModEvalContext): boolean 
   if (varExpr === 'KilledRecently') {
     return Boolean(ctx.conditions.KillRecently);
   }
+  if (varExpr === 'DetonatedMinesRecently') {
+    return (
+      (ctx.multipliers.MineDetonatedRecently ?? ctx.multipliers.MinesDetonatedRecently ?? 0) > 0
+    );
+  }
   if (varExpr === 'OnFullLife') {
     return Boolean(ctx.conditions.FullLife);
   }
@@ -526,6 +531,30 @@ function resolveMultiplierValue(varName: string, ctx?: ModEvalContext): number {
   }
   if (varName === 'ActiveTotem' || varName === 'SummonedTotem' || varName === 'TotemsSummoned') {
     return ctx.multipliers.ActiveTotem ?? ctx.multipliers.SummonedTotem ?? ctx.multipliers.TotemsSummoned ?? 0;
+  }
+  if (varName === 'MineDetonatedRecently' || varName === 'MinesDetonatedRecently') {
+    return ctx.multipliers.MineDetonatedRecently ?? ctx.multipliers.MinesDetonatedRecently ?? 0;
+  }
+  if (
+    varName === 'RemoteMineCount' ||
+    varName === 'ActiveMineCount' ||
+    varName === 'ActiveMines' ||
+    varName === 'MinesThrown'
+  ) {
+    return (
+      ctx.multipliers.RemoteMineCount ??
+      ctx.multipliers.ActiveMineCount ??
+      ctx.multipliers.ActiveMines ??
+      ctx.multipliers.MinesThrown ??
+      0
+    );
+  }
+  if (varName === 'TrapOrMineCount') {
+    return (
+      ctx.multipliers.TrapOrMineCount ??
+      (ctx.multipliers.ActiveTrapCount ?? ctx.multipliers.ActiveTraps ?? 0) +
+        (ctx.multipliers.RemoteMineCount ?? ctx.multipliers.ActiveMineCount ?? ctx.multipliers.ActiveMines ?? 0)
+    );
   }
   if (varName === 'NonInstantSpellCastRecently' || varName === 'DifferentSpellsCastRecently') {
     return ctx.multipliers.NonInstantSpellCastRecently ?? ctx.multipliers.DifferentSpellsCastRecently ?? 0;
