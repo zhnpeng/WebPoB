@@ -1432,5 +1432,103 @@ describe('Mechanism-Layer Regression Suite (PoE 1 & PoE 2)', () => {
       expect(outDefaultMax.defence.blockChance).toBeGreaterThan(35);
       expect(outTurtleMax.defence.blockChance).toBeLessThanOrEqual(35);
     });
+
+    it('PoE 1 Oath of the Maji doubles Body Armour defences only when Body Armour has 0 socketed gems, and Mercenary skill groups do not reserve player Mana', () => {
+      const base = createSamplePoe1Build();
+      const bigBody: Item = {
+        id: 'reg_maji_body',
+        name: 'Astral Plate',
+        baseName: 'Astral Plate',
+        rarity: 'RARE',
+        slotType: 'Body Armour',
+        quality: 0,
+        armourStats: { armour: 1000, evasion: 0, energyShield: 0 },
+        implicits: [],
+        explicits: [],
+      };
+      const emptyBodyBuild: Build = {
+        ...base,
+        items: { ...base.items, [bigBody.id]: bigBody },
+        equipped: { ...base.equipped, 'Body Armour': bigBody.id },
+        skills: base.skills.map((s) => (s.slot === 'Body Armour' ? { ...s, slot: 'Weapon 1' as const } : s)),
+      };
+      const socketedBodyBuild: Build = {
+        ...emptyBodyBuild,
+        skills: emptyBodyBuild.skills.map((s, i) => (i === 0 ? { ...s, slot: 'Body Armour' as const } : s)),
+      };
+      const outPlainEmpty = calculateBuild(emptyBodyBuild);
+      const outMajiEmpty = calculateBuild(
+        withCustomMods(emptyBodyBuild, 'Defences from Equipped Body Armour are doubled if it has no Socketed Gems'),
+      );
+      const outMajiSocketed = calculateBuild(
+        withCustomMods(socketedBodyBuild, 'Defences from Equipped Body Armour are doubled if it has no Socketed Gems'),
+      );
+      expect(outMajiEmpty.defence.armour).toBeGreaterThanOrEqual(outPlainEmpty.defence.armour + 1000);
+      expect(outMajiSocketed.defence.armour).toBeCloseTo(outPlainEmpty.defence.armour, 0);
+
+      // Mercenary aura skill group must not reserve player Mana
+      const mercAuraGroup = {
+        id: 'sg_merc_det',
+        label: 'Merc Determination',
+        enabled: true,
+        source: 'Mercenary',
+        gems: [{ instanceId: 'md1', gemId: 'poe1_determination', level: 20, quality: 0, enabled: true }],
+      };
+      const outNoMerc = calculateBuild(emptyBodyBuild);
+      const outWithMerc = calculateBuild({
+        ...emptyBodyBuild,
+        skills: [...emptyBodyBuild.skills, mercAuraGroup],
+      });
+      expect(outWithMerc.defence.manaUnreserved).toBe(outNoMerc.defence.manaUnreserved);
+    });
+
+    it('PoE 2 secondary-skill Lightning Exposure support does not leak EnemyExposure when enemyLightningExposure is off, and Shapeshifted is cleared for human spells when conditionShapeshiftToHuman is set', () => {
+      const rawBase = createSamplePoe2Build();
+      const cleanBase: Build = {
+        ...rawBase,
+        config: {
+          ...rawBase.config,
+          enemyShocked: false,
+          shockValue: 0,
+          enemyLightningExposure: false,
+          customMods: '100% increased Critical Hit Chance against Enemies affected by Exposure',
+          rawInputs: {},
+        },
+      };
+      const secExpGroup = {
+        id: 'sg_sec_exp',
+        label: 'Secondary Exposure',
+        enabled: true,
+        weaponSets: [1, 2] as Array<1 | 2>,
+        gems: [
+          { instanceId: 'hf1', gemId: 'poe2_hollowfocus', level: 20, quality: 0, enabled: true },
+          { instanceId: 'le1', gemId: 'poe2_lightningexposuresupport', level: 1, quality: 0, enabled: true },
+        ],
+      };
+      const outPlain = calculateBuild(cleanBase);
+      const outWithSecExp = calculateBuild({ ...cleanBase, skills: [...cleanBase.skills, secExpGroup] });
+      // Must NOT leak EnemyExposure into crit chance when enemyLightningExposure is false
+      expect(outWithSecExp.offence.critChance).toBeCloseTo(outPlain.offence.critChance, 2);
+
+      // Human spell (Spark) with both conditionShapeshiftToAnimal and conditionShapeshiftToHuman clears Shapeshifted
+      const shapeMod = '100% increased Cast Speed while Shapeshifted';
+      const outHuman = calculateBuild({
+        ...cleanBase,
+        config: {
+          ...cleanBase.config,
+          customMods: shapeMod,
+          rawInputs: { conditionShapeshiftToAnimal: true, conditionShapeshiftToHuman: true },
+        },
+      });
+      const outAnimalOnly = calculateBuild({
+        ...cleanBase,
+        config: {
+          ...cleanBase.config,
+          customMods: shapeMod,
+          rawInputs: { conditionShapeshiftToAnimal: true },
+        },
+      });
+      expect(outAnimalOnly.offence.speed).toBeGreaterThan(outHuman.offence.speed * 1.2);
+    });
   });
 });

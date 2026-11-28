@@ -63,9 +63,8 @@ import {
   resolveEffectiveChargesAndRage,
 } from './offenceUpgrade.js';
 import {
-  POE1_EXPANSION_SOCKETS,
   applyPoolZeroingAndKeystoneRules,
-  encodeClusterNodeId,
+  buildClusterSubgraphAdjacency,
   evaluateAllocatedClusterJewels,
   evaluateAurasAndWatchersEye,
 } from './clusterAndReservation.js';
@@ -675,76 +674,10 @@ function calculateBuildSingleWeaponSet(build: Build): CalcOutput {
       : null;
 
   // Build synthetic Cluster Jewel subgraph adjacency so Split Personality inside expansion sockets computes exact BFS distance
-  const clusterAdjacency = new Map<number, number[]>();
-  if (clusterEval && clusterEval.entries.length > 0) {
-    const linkUndirected = (a: number, b: number) => {
-      let la = clusterAdjacency.get(a);
-      if (!la) {
-        la = [];
-        clusterAdjacency.set(a, la);
-      }
-      if (!la.includes(b)) la.push(b);
-      let lb = clusterAdjacency.get(b);
-      if (!lb) {
-        lb = [];
-        clusterAdjacency.set(b, lb);
-      }
-      if (!lb.includes(a)) lb.push(a);
-    };
-    const medSocketByLargeAndMedIdx = new Map<string, number>();
-    const smallSocketByParent = new Map<number, number>();
-    for (const [sockIdStr, info] of Object.entries(POE1_EXPANSION_SOCKETS)) {
-      const sockId = Number(sockIdStr);
-      if (info.socketSize === 1) {
-        medSocketByLargeAndMedIdx.set(`${info.largeSocketIndex}:${info.mediumSocketIndex}`, sockId);
-      } else if (info.socketSize === 0 && info.parentSocketId !== undefined) {
-        smallSocketByParent.set(info.parentSocketId, sockId);
-      }
-    }
-    const largeSlotToMedIdx: Record<number, number> = { 4: 0, 8: 2, 6: 1 };
-    for (const entry of clusterEval.entries) {
-      if (entry.largeSocketIndex === null) continue;
-      const medIdx = entry.mediumSocketIndex ?? 0;
-      // Map all active ring positions (0..11) in this cluster subgraph in angular order
-      const ringPosToNodeId = new Map<number, number>();
-      for (const cid of entry.allocatedClusterNodeIds) {
-        const pos = cid & 0xf;
-        if (pos <= 11) ringPosToNodeId.set(pos, cid);
-      }
-      if (entry.sizeIndex === 2) {
-        for (const [slotPosStr, subMedIdx] of Object.entries(largeSlotToMedIdx)) {
-          const medSockId = medSocketByLargeAndMedIdx.get(`${entry.largeSocketIndex}:${subMedIdx}`);
-          if (medSockId && activeTreeNodes.has(medSockId)) {
-            ringPosToNodeId.set(Number(slotPosStr), medSockId);
-          }
-        }
-      } else if (entry.sizeIndex === 1) {
-        const smSockId = smallSocketByParent.get(entry.nodeId);
-        if (smSockId && activeTreeNodes.has(smSockId)) {
-          ringPosToNodeId.set(6, smSockId);
-        }
-      }
-      const entranceId =
-        ringPosToNodeId.get(0) ??
-        encodeClusterNodeId({
-          nodeIndex: 0,
-          sizeIndex: entry.sizeIndex,
-          largeSocketIndex: entry.largeSocketIndex,
-          mediumSocketIndex: medIdx,
-        });
-      linkUndirected(entry.nodeId, entranceId);
-      const sortedPositions = [...ringPosToNodeId.keys()].sort((a, b) => a - b);
-      if (sortedPositions.length >= 2) {
-        for (let i = 0; i < sortedPositions.length; i++) {
-          const curNode = ringPosToNodeId.get(sortedPositions[i]!)!;
-          const nextNode = ringPosToNodeId.get(sortedPositions[(i + 1) % sortedPositions.length]!)!;
-          if (curNode !== nextNode) {
-            linkUndirected(curNode, nextNode);
-          }
-        }
-      }
-    }
-  }
+  const clusterAdjacency =
+    clusterEval && clusterEval.entries.length > 0
+      ? buildClusterSubgraphAdjacency(clusterEval.entries, activeTreeNodes)
+      : new Map<number, number[]>();
 
   const classStartIdForRadius =
     tree.classStartNodeIds[build.classId] ?? build.tree.allocatedNodeIds[0] ?? 0;
@@ -2198,8 +2131,57 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
   if (parsedCustomAffixMods.length > 0) {
     db.addMods(parsedCustomAffixMods);
   }
-  // Custom modifier shorthand: "X% increased/reduced Defences" (global Armour, Evasion, Energy Shield)
+  // PoE 1 Oath of the Maji: "Defences from Equipped Body Armour are doubled if it has no Socketed Gems"
+  if (
+    build.game === 'poe1' &&
+    db.flag('OathOfTheMajiBodyArmour') &&
+    !build.skills.some((g) => g.enabled && g.slot === 'Body Armour' && g.gems.some((gm) => gm.enabled))
+  ) {
+    if (bodyLocalArmour > 0) {
+      db.addMod({ name: 'Armour', type: 'BASE', value: bodyLocalArmour, flags: 0, keywordFlags: 0, source: 'Oath of the Maji (Body Armour)' });
+      bodyLocalArmour *= 2;
+    }
+    if (bodyLocalEvasion > 0) {
+      db.addMod({ name: 'Evasion', type: 'BASE', value: bodyLocalEvasion, flags: 0, keywordFlags: 0, source: 'Oath of the Maji (Body Armour)' });
+      bodyLocalEvasion *= 2;
+    }
+    if (bodyLocalEs > 0) {
+      db.addMod({ name: 'EnergyShield', type: 'BASE', value: bodyLocalEs, flags: 0, keywordFlags: 0, source: 'Oath of the Maji (Body Armour)' });
+      bodyLocalEs *= 2;
+    }
+  }
+  // Custom modifier shorthand: "Allocates <Notable>" + "X% increased/reduced Defences" (global Armour, Evasion, Energy Shield)
+  const customAllocatedNodeIds = new Set<number>();
   for (const cl of customModLines) {
+    const mAlloc = cl.match(/^Allocates\s+(.+)$/i);
+    if (mAlloc) {
+      const targetLower = mAlloc[1]!.trim().toLowerCase();
+      for (const node of Object.values(tree.nodes)) {
+        if (
+          node.name.en.trim().toLowerCase() === targetLower &&
+          !activeTreeNodes.has(node.id) &&
+          !customAllocatedNodeIds.has(node.id)
+        ) {
+          customAllocatedNodeIds.add(node.id);
+          const allocStats = (node.stats ?? []).flatMap((s) => s.split(/\r?\n/)).map((s) => s.trim()).filter(Boolean);
+          if (allocStats.length > 0) {
+            db.addMods(parseModLines(allocStats, `Custom Modifiers (Allocates ${node.name.en})`));
+            if (allocStats.some((s) => /Enemies .* are Covered in Ash/i.test(s))) {
+              db.addMod({
+                name: 'EnemyCoveredInAshAuto',
+                type: 'FLAG',
+                value: true,
+                flags: 0,
+                keywordFlags: 0,
+                source: `Custom Modifiers (Allocates ${node.name.en})`,
+              });
+            }
+          }
+          break;
+        }
+      }
+      continue;
+    }
     const mDef = cl.match(/^(\d+)% (increased|reduced) (?:global )?defences$/i);
     if (mDef) {
       const alreadyHas = parsedCustomAffixMods.some(
@@ -2911,7 +2893,7 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     }),
   }));
   const auraEval = evaluateAurasAndWatchersEye({
-    build: { ...build, skills: normalizedSkillsForAuras },
+    build: { ...build, skills: normalizedSkillsForAuras.filter((g) => g.source !== 'Mercenary') },
     playerDb: db,
     minionDb: auraMinionDb,
     enemyDb: auraEnemyDb,
@@ -3530,6 +3512,21 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
   }
   if (cfg.enemyIntimidated) {
     db.addMod({ name: 'EnemyDamageTaken', type: 'INC', value: 10, flags: ModFlag.Attack, keywordFlags: 0, source: 'Intimidated' });
+  }
+  if (
+    build.game === 'poe1' &&
+    db.flag('EnemyCoveredInAshAuto') &&
+    !cfg.rawInputs?.conditionEnemyCoveredInAsh &&
+    !auraEnemyDb.calcStat('FireDamageTaken').sources.some((s) => /ash/i.test(s.source))
+  ) {
+    auraEnemyDb.addMod({
+      name: 'FireDamageTaken',
+      type: 'INC',
+      value: 20,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Covered in Ash (Settling Ash)',
+    });
   }
   if (cfg.enemyUnnerved) {
     db.addMod({ name: 'EnemyDamageTaken', type: 'INC', value: 10, flags: ModFlag.Spell, keywordFlags: 0, source: 'Unnerved' });
@@ -5531,24 +5528,28 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     auraEnemyDb.addMod({ name: 'LightningExposure', type: 'BASE', value: 20, flags: 0, keywordFlags: 0, source: 'Exposure (Presence)' });
   }
   if (build.game === 'poe2') {
-    if ((auraEnemyDb.max('FireExposure') ?? 0) > 0 || auraEnemyDb.sum('BASE', 'FireExposure') > 0) {
-      db.setCondition('EnemyFireExposure', true);
-      db.setCondition('EnemyExposure', true);
-      auraEnemyDb.setCondition('FireExposure', true);
-      auraEnemyDb.setCondition('Exposure', true);
-    }
-    if ((auraEnemyDb.max('ColdExposure') ?? 0) > 0 || auraEnemyDb.sum('BASE', 'ColdExposure') > 0) {
-      db.setCondition('EnemyColdExposure', true);
-      db.setCondition('EnemyExposure', true);
-      auraEnemyDb.setCondition('ColdExposure', true);
-      auraEnemyDb.setCondition('Exposure', true);
-    }
-    if ((auraEnemyDb.max('LightningExposure') ?? 0) > 0 || auraEnemyDb.sum('BASE', 'LightningExposure') > 0) {
-      db.setCondition('EnemyLightningExposure', true);
-      db.setCondition('EnemyExposure', true);
-      auraEnemyDb.setCondition('LightningExposure', true);
-      auraEnemyDb.setCondition('Exposure', true);
-    }
+    const syncPoe2EnemyExposure = (el: 'Fire' | 'Cold' | 'Lightning', cfgEnabled: boolean) => {
+      const statKey = `${el}Exposure`;
+      if (!cfgEnabled) {
+        // Strip secondary-skill Support: *Exposure leaks when conditionEnemy<El>Exposure is not enabled
+        for (const [, mods] of auraEnemyDb.entriesByPrefix(statKey)) {
+          for (let i = mods.length - 1; i >= 0; i--) {
+            if (/^Support:\s*.*Exposure/i.test(mods[i]!.source)) {
+              mods.splice(i, 1);
+            }
+          }
+        }
+      }
+      if ((auraEnemyDb.max(statKey) ?? 0) > 0 || auraEnemyDb.sum('BASE', statKey) > 0) {
+        db.setCondition(`Enemy${el}Exposure`, true);
+        db.setCondition('EnemyExposure', true);
+        auraEnemyDb.setCondition(`${el}Exposure`, true);
+        auraEnemyDb.setCondition('Exposure', true);
+      }
+    };
+    syncPoe2EnemyExposure('Fire', Boolean(cfg.enemyFireExposure));
+    syncPoe2EnemyExposure('Cold', Boolean(cfg.enemyColdExposure));
+    syncPoe2EnemyExposure('Lightning', Boolean(cfg.enemyLightningExposure));
   }
 
   // Post-Pool Build-Enabling Uniques (Crown of Eyes, Iron Fortress, Replica Alberon, HoWA, Brutus, Pillar, Rathpith, Perseverance, Ephemeral Edge, Energy Blade, Doryani's Prototype) & Nightgrip Ward->Chaos
@@ -7321,7 +7322,24 @@ function computeGroupOffence(
     if (skillDb.sum('BASE', 'PerfectTimingBase', flags, kwFlags) > 0 || activeNameLower === 'snipe') {
       skillDb.setCondition('PerfectTiming', true);
     }
-    if (build.config.rawInputs?.conditionShapeshiftToAnimal) {
+    const isActiveShapeshiftSkill =
+      effectiveSkillTypeSet.has('bear') ||
+      effectiveSkillTypeSet.has('wolf') ||
+      effectiveSkillTypeSet.has('wyvern') ||
+      effectiveSkillTypeSet.has('shapeshift') ||
+      activeNameLower === 'maul' ||
+      activeNameLower === 'rampage' ||
+      activeNameLower === 'pounce' ||
+      activeNameLower === 'shred' ||
+      activeNameLower === 'rend' ||
+      activeNameLower === 'lunar assault' ||
+      activeNameLower === 'furious slam' ||
+      activeNameLower === 'walking calamity' ||
+      activeNameLower === 'wing blast' ||
+      activeNameLower === 'demon form';
+    if (build.config.rawInputs?.conditionShapeshiftToHuman && !isActiveShapeshiftSkill) {
+      skillDb.setCondition('Shapeshifted', false);
+    } else if (build.config.rawInputs?.conditionShapeshiftToAnimal) {
       skillDb.setCondition('Shapeshifted', true);
     }
     if (
@@ -11262,7 +11280,14 @@ function computeGroupOffence(
     hitsPerUse: hitsPerUseForAilments,
     isAttack,
     skillHasDurationTag: effectiveSkillTypeSet.has('duration'),
-    skillData: Object.keys(mergedSkillData).length > 0 ? mergedSkillData : undefined,
+    skillData:
+      Object.keys(mergedSkillData).length > 0
+        ? {
+            ...mergedSkillData,
+            ...(activeDef.skillData?.dotIsProjectile ? { dotIsProjectile: true } : {}),
+            ...(activeDef.skillData?.dotIsArea ? { dotIsArea: true } : {}),
+          }
+        : undefined,
     enemyConfig: {
       enemyLevel: build.config.enemyLevel,
       enemyFireResist: build.config.enemyFireResist,
