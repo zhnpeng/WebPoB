@@ -1906,4 +1906,47 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       }),
     ]);
   });
+
+  it('Wave 6P: PoE 1 3.30 Ascendancy notables (One Step Ahead, Master Toxicist, Natures Boon, Wind Ward, Sign of Purpose, Natures Reprisal)', () => {
+    expect(parseModLine('Your Action Speed is at least 105% of base value', 'Tree: One Step Ahead')).toEqual([
+      expect.objectContaining({ name: 'MinimumActionSpeed', type: 'MAX', value: 105 }),
+    ]);
+    expect(parseModLine("Nearby Enemy Monsters' Action Speed is at most 90% of base value", 'Tree: One Step Ahead')).toEqual([
+      expect.objectContaining({ name: 'EnemyMaxActionSpeed', type: 'OVERRIDE', value: 90 }),
+    ]);
+    expect(
+      parseModLine('Poisons you inflict during any Flask Effect have 20% chance to deal 100% more Damage', 'Tree: Master Toxicist'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'PoisonDoubleDamageChance',
+        type: 'BASE',
+        value: 20,
+        tags: [{ type: 'Condition', var: 'UsingFlask' }],
+      }),
+    ]);
+    expect(parseModLine('Magic Utility Flasks applied to you have 30% increased Effect', "Tree: Nature's Boon")).toEqual([
+      expect.objectContaining({ name: 'MagicUtilityFlaskEffect', type: 'INC', value: 30 }),
+    ]);
+    expect(parseModLine('4% less Damage taken per Gale Force', 'Tree: Wind Ward')).toEqual([
+      expect.objectContaining({
+        name: 'DamageTaken',
+        type: 'MORE',
+        value: -4,
+        tags: [{ type: 'Multiplier', var: 'GaleForce' }],
+      }),
+    ]);
+    expect(
+      parseModLine('Brands have 100% more Activation Frequency if 75% of Attached Duration expired', 'Tree: Sign of Purpose'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'BrandActivationFrequency',
+        type: 'MORE',
+        value: 100,
+        tags: [{ type: 'Condition', var: 'BrandAttached75PctExpired' }],
+      }),
+    ]);
+    expect(parseModLine('25% chance to inflict Withered for 2 seconds on Hit', "Tree: Nature's Reprisal")).toEqual([
+      expect.objectContaining({ name: 'WitherOnHit', type: 'FLAG', value: true }),
+    ]);
+  });
 });

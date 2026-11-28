@@ -2838,6 +2838,50 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
       },
     ],
   },
+  // Wave 6P: PoE 1 3.30 Ascendancy notable parity (One Step Ahead, Master Toxicist, Nature's Boon, Wind Ward, Sign of Purpose, Nature's Reprisal)
+  {
+    pattern: /^Your Action Speed is at least (\d+)% of base value$/i,
+    build: (m, src) => [mkMod('MinimumActionSpeed', 'MAX', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Nearby Enemy Monsters' Action Speed is at most (\d+)% of base value$/i,
+    build: (m, src) => [mkMod('EnemyMaxActionSpeed', 'OVERRIDE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Poisons you inflict during any Flask Effect have (\d+)% chance to deal 100% more Damage$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('PoisonDoubleDamageChance', 'BASE', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'UsingFlask' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Magic Utility Flasks applied to you have (\d+)% increased Effect$/i,
+    build: (m, src) => [mkMod('MagicUtilityFlaskEffect', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^(\d+)% less Damage taken per Gale Force$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('DamageTaken', 'MORE', -Number(m[1]), src),
+        tags: [{ type: 'Multiplier' as const, var: 'GaleForce' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Brands have (\d+)% more Activation Frequency if 75% of Attached Duration expired$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('BrandActivationFrequency', 'MORE', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'BrandAttached75PctExpired' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% chance to inflict Withered for \d+ seconds? on Hit$/i,
+    build: (_, src) => [mkMod('WitherOnHit', 'FLAG', true, src)],
+  },
 ];
 
 /**
