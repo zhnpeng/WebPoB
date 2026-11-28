@@ -409,4 +409,33 @@ describe('localItem — resolveItemEffectiveStats', () => {
       '5% increased Area of Effect',
     ]);
   });
+
+  it('consumes hybrid flat local armour mods (+N to Evasion Rating and Energy Shield) and Harvest local Weapon Range per Quality', () => {
+    const hybridBody: Item = {
+      id: 'hybrid-flat-body',
+      name: 'Shadow Garb',
+      baseName: 'Synthetic Garb',
+      rarity: 'UNIQUE',
+      slotType: 'Body Armour',
+      quality: 20,
+      localStatsPrecomputed: false,
+      armourStats: { evasion: 400, energyShield: 100 },
+      implicits: [],
+      explicits: ['+150 to Evasion Rating and Energy Shield', '100% increased Evasion and Energy Shield'],
+    };
+    const aRes = resolveItemEffectiveStats(hybridBody, 'poe1');
+    // (400 + 150) * 2.0 * 1.2 = 1320 Evasion; (100 + 150) * 2.0 * 1.2 = 600 ES
+    expect(aRes.armourStats?.evasion).toBe(1320);
+    expect(aRes.armourStats?.energyShield).toBe(600);
+    expect(aRes.globalExplicits).toEqual([]);
+
+    const rangeWeapon = mkWeapon({
+      name: 'Reach Claw',
+      baseName: 'Imperial Claw',
+      quality: 20,
+      implicits: ['{crafted}+0.1 metres to Weapon Range per 10% Quality'],
+    });
+    const wRes = resolveItemEffectiveStats(rangeWeapon, 'poe1');
+    expect(wRes.globalImplicits).toEqual([]);
+  });
 });

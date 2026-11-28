@@ -70,6 +70,35 @@ function tryConsumeLocalArmourMod(
     acc.flatEs += Number(m[1]);
     return true;
   }
+  m = line.match(/^\+(\d+) to Armour and Evasion(?: Rating)?$/i);
+  if (m) {
+    const v = Number(m[1]);
+    acc.flatArmour += v;
+    acc.flatEvasion += v;
+    return true;
+  }
+  m = line.match(/^\+(\d+) to Armour and Energy Shield$/i);
+  if (m) {
+    const v = Number(m[1]);
+    acc.flatArmour += v;
+    acc.flatEs += v;
+    return true;
+  }
+  m = line.match(/^\+(\d+) to Evasion(?: Rating)? and Energy Shield$/i);
+  if (m) {
+    const v = Number(m[1]);
+    acc.flatEvasion += v;
+    acc.flatEs += v;
+    return true;
+  }
+  m = line.match(/^\+(\d+) to Armour, Evasion(?: Rating)? and Energy Shield$/i);
+  if (m) {
+    const v = Number(m[1]);
+    acc.flatArmour += v;
+    acc.flatEvasion += v;
+    acc.flatEs += v;
+    return true;
+  }
   m = line.match(/^(\d+)% (increased|reduced) Armour$/i);
   if (m) {
     const s = m[2]!.toLowerCase() === 'reduced' ? -1 : 1;
@@ -190,6 +219,9 @@ function tryConsumeLocalWeaponMod(
     if (step > 0 && quality > 0) {
       acc.incAttackSpeed += Math.floor(quality / step) * Number(mQualAs[1]);
     }
+    return true;
+  }
+  if (/^\+\d+(?:\.\d+)?\s*(?:metres?\s+to\s+)?Weapon Range per \d+% Quality$/i.test(line)) {
     return true;
   }
 
