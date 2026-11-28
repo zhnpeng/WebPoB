@@ -3187,9 +3187,15 @@ export function evaluateAurasAndWatchersEye(
         if (isArcaneCloakBuff) {
           playerDb.setCondition('ArcaneCloakUsedRecently', true);
         }
+        const explicitSigilZero =
+          build.config.rawInputs?.sigilOfPowerStages === 0 ||
+          build.config.rawInputs?.sigilOfPowerStage === 0;
         const isSigilOfPowerBuff =
           lowerGemName === 'sigil of power' &&
-          (build.game === 'poe2' || (playerDb.getEvalContext().multipliers.SigilOfPowerStage ?? 0) > 0);
+          !explicitSigilZero &&
+          (build.game === 'poe2' ||
+            (playerDb.getEvalContext().multipliers.SigilOfPowerStage ?? 0) > 0 ||
+            build.config.rawInputs?.sigilOfPowerStages === undefined);
         if (
           isSigilOfPowerBuff &&
           (hasStatSource(playerDb, 'Damage', 'MORE', 'Sigil of Power') ||
@@ -3199,7 +3205,6 @@ export function evaluateAurasAndWatchersEye(
         }
         if (
           isSigilOfPowerBuff &&
-          build.game === 'poe2' &&
           (playerDb.getEvalContext().multipliers.SigilOfPowerStage ?? 0) <= 0
         ) {
           playerDb.setMultiplier('SigilOfPowerStage', 1);

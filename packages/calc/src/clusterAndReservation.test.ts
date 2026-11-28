@@ -2681,4 +2681,108 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     // Mark On Hit Lv20 Q20 = -21% + 5% = -16% Mark Effect -> trunc(40 * 0.84) = 33% INC Projectile Damage Taken
     expect(res.enemyDb.sum('INC', 'DamageTaken', ModFlag.Projectile)).toBe(33);
   });
+
+  it('defaults PoE 1 Sigil of Power to Stage 1 when unset (ConfigOptions.lua defaultPlaceholderState = 1) and respects explicit 0', () => {
+    const sigilDef: GemDefinition = {
+      id: 'poe1_sigilofpower',
+      name: { en: 'Sigil of Power', zh: '力量法印' },
+      category: 'active',
+      game: 'poe1',
+      color: 'blue',
+      tags: ['area', 'duration', 'spell', 'lightning'],
+      modFlags: 0,
+      keywordFlags: KeywordFlag.Spell | KeywordFlag.Lightning,
+      stats: [],
+      compiledMods: [
+        {
+          name: 'LightningMin',
+          type: 'BASE',
+          value: 7,
+          flags: 0,
+          keywordFlags: 0,
+          target: 'player',
+          tags: [{ type: 'Multiplier', var: 'SigilOfPowerStage' }],
+        },
+        {
+          name: 'LightningMax',
+          type: 'BASE',
+          value: 141,
+          flags: 0,
+          keywordFlags: 0,
+          target: 'player',
+          tags: [{ type: 'Multiplier', var: 'SigilOfPowerStage' }],
+        },
+      ],
+      levelScaling: {
+        17: {
+          compiledMods: [
+            {
+              name: 'LightningMin',
+              type: 'BASE',
+              value: 6,
+              flags: 0,
+              keywordFlags: 0,
+              target: 'player',
+              tags: [{ type: 'Multiplier', var: 'SigilOfPowerStage' }],
+            },
+            {
+              name: 'LightningMax',
+              type: 'BASE',
+              value: 120,
+              flags: 0,
+              keywordFlags: 0,
+              target: 'player',
+              tags: [{ type: 'Multiplier', var: 'SigilOfPowerStage' }],
+            },
+          ],
+        },
+      },
+    };
+    const lookup = (_g: 'poe1' | 'poe2', id: string) => (id === 'poe1_sigilofpower' ? sigilDef : undefined);
+
+    // 1. Unset sigilOfPowerStages -> defaults to Stage 1 using Lv17 levelScaling (6..120)
+    const dbDefault = new ModDB();
+    evaluateAurasAndWatchersEye({
+      build: mkBuild({
+        game: 'poe1',
+        skills: [
+          {
+            id: 'sg-sigil',
+            label: 'Sigil of Power',
+            enabled: true,
+            gems: [{ instanceId: 's1', gemId: 'poe1_sigilofpower', level: 17, quality: 0, enabled: true }],
+          },
+        ],
+      }),
+      playerDb: dbDefault,
+      getGemByIdFn: lookup,
+      maxMana: 2000,
+    });
+    expect(dbDefault.getEvalContext().multipliers.SigilOfPowerStage).toBe(1);
+    expect(dbDefault.sum('BASE', 'LightningMin')).toBe(6);
+    expect(dbDefault.sum('BASE', 'LightningMax')).toBe(120);
+
+    // 2. Explicit sigilOfPowerStages = 0 -> skipped
+    const dbZero = new ModDB();
+    const buildZero = mkBuild({
+      game: 'poe1',
+      skills: [
+        {
+          id: 'sg-sigil-zero',
+          label: 'Sigil of Power',
+          enabled: true,
+          gems: [{ instanceId: 's2', gemId: 'poe1_sigilofpower', level: 17, quality: 0, enabled: true }],
+        },
+      ],
+    });
+    buildZero.config.rawInputs = { sigilOfPowerStages: 0 };
+    evaluateAurasAndWatchersEye({
+      build: buildZero,
+      playerDb: dbZero,
+      getGemByIdFn: lookup,
+      maxMana: 2000,
+    });
+    expect(dbZero.sum('BASE', 'LightningMin')).toBe(0);
+    expect(dbZero.sum('BASE', 'LightningMax')).toBe(0);
+  });
 });

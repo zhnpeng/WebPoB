@@ -1674,4 +1674,56 @@ describe('uniqueMechanicsRuntime — 5. Pool-Conversion Keystones & Faithguard',
     expect(db.sum('BASE', 'ChaosMin', ModFlag.Attack)).toBe(156);
     expect(db.sum('BASE', 'ChaosMax', ModFlag.Attack)).toBe(396);
   });
+
+  it('skips Mind of the Council post-pool injection when modParser already emitted MindOfTheCouncilManaPct', () => {
+    const motc = makeItem({
+      id: 'helm-motc',
+      name: 'Mind of the Council',
+      baseName: 'Harlequin Mask',
+      slotType: 'Helmet',
+      explicits: ['Attack Skills have Added Lightning Damage equal to 6% of maximum Mana'],
+    });
+
+    // 1. Standalone post-pool (without MindOfTheCouncilManaPct) still injects 6% of 2895 = 174
+    const dbStandalone = new ModDB();
+    evaluatePostPoolBuildEnablingUniques({
+      db: dbStandalone,
+      equippedItems: [{ slot: 'Helmet', item: motc }],
+      str: 100,
+      dex: 100,
+      int: 300,
+      life: 3000,
+      mana: 2895,
+      energyShield: 1200,
+      armour: 0,
+      evasion: 0,
+    });
+    expect(dbStandalone.sum('BASE', 'LightningMin', ModFlag.Attack)).toBe(174);
+    expect(dbStandalone.sum('BASE', 'LightningMax', ModFlag.Attack)).toBe(174);
+
+    // 2. When modParser already emitted MindOfTheCouncilManaPct (consumed by engine.ts), do NOT double-count
+    const dbParsed = new ModDB();
+    dbParsed.addMod({
+      name: 'MindOfTheCouncilManaPct',
+      type: 'BASE',
+      value: 6,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Helmet: Mind of the Council',
+    });
+    evaluatePostPoolBuildEnablingUniques({
+      db: dbParsed,
+      equippedItems: [{ slot: 'Helmet', item: motc }],
+      str: 100,
+      dex: 100,
+      int: 300,
+      life: 3000,
+      mana: 2895,
+      energyShield: 1200,
+      armour: 0,
+      evasion: 0,
+    });
+    expect(dbParsed.sum('BASE', 'LightningMin', ModFlag.Attack)).toBe(0);
+    expect(dbParsed.sum('BASE', 'LightningMax', ModFlag.Attack)).toBe(0);
+  });
 });

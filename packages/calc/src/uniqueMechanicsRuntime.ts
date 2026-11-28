@@ -2209,13 +2209,16 @@ export function evaluatePostPoolBuildEnablingUniques(
       }
 
       // 11. Mind of the Council ("Attack Skills have Added Lightning Damage equal to N% of maximum Mana")
+      // Skip when modParser already emitted `MindOfTheCouncilManaPct` (consumed directly by engine.ts)
+      // to avoid double-counting on builds wearing Mind of the Council.
       const mMindCouncil = line.match(
         /^Attack Skills have Added Lightning Damage equal to (\d+(?:\.\d+)?)% of maximum Mana$/i,
       );
       if (mMindCouncil) {
         const pct = Number(mMindCouncil[1]);
         const added = Math.round((Math.max(0, mana) * pct) / 100);
-        if (added > 0 && !hasStatSource(db, 'LightningMin', 'BASE', src, added)) {
+        const alreadyParsedMotc = db.sum('BASE', 'MindOfTheCouncilManaPct') > 0;
+        if (added > 0 && !alreadyParsedMotc && !hasStatSource(db, 'LightningMin', 'BASE', src, added)) {
           db.addMod(mkMod('LightningMin', 'BASE', added, src, ModFlag.Attack));
           db.addMod(mkMod('LightningMax', 'BASE', added, src, ModFlag.Attack));
           appliedSources.push(src);
