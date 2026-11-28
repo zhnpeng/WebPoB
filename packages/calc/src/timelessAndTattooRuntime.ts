@@ -1749,12 +1749,36 @@ export function evaluateTattoosAndRunegrafts(
           addedMods.push(mkMod('BuffExpireRate', 'INC', -Number(mBuffExpire[1]), src));
           continue;
         }
-        // Runegraft of the Sinistral: "10% more Attack speed with Offhand" (PoB 1 Speed MORE 10, ModFlag.Attack)
+        // Runegraft of Stability: "Your Lucky or Unlucky effects are instead Unexciting" (PoB 1 ModParser.lua:4175)
+        if (/^Your Lucky or Unlucky effects are instead Unexciting$/i.test(line)) {
+          addedMods.push(mkMod('Unexciting', 'FLAG', true, src));
+          continue;
+        }
+        // Runegraft of the Sinistral: "10% more Attack speed with Offhand" (PoB 1 Speed MORE 10, ModFlag.Attack, OffHandAttack)
         const mOffhandSpeed = line.match(/^(\d+)% more Attack speed with Offhand$/i);
         if (mOffhandSpeed) {
           const alreadyNative = skipNative && parseModLines([line], src).length > 0;
           if (!alreadyNative) {
-            addedMods.push(mkMod('Speed', 'MORE', Number(mOffhandSpeed[1]), src, ModFlag.Attack));
+            addedMods.push({
+              ...mkMod('Speed', 'MORE', Number(mOffhandSpeed[1]), src, ModFlag.Attack),
+              tags: [{ type: 'Condition', var: 'OffHandAttack' }],
+            });
+          }
+          continue;
+        }
+        // Runegraft of Refraction: "Skills Chain +1 times" / "Projectiles Fork"
+        const mChain = line.match(/^Skills Chain \+(\d+) times?$/i);
+        if (mChain) {
+          const alreadyNative = skipNative && parseModLines([line], src).length > 0;
+          if (!alreadyNative) {
+            addedMods.push(mkMod('ChainCountMax', 'BASE', Number(mChain[1]), src));
+          }
+          continue;
+        }
+        if (/^Projectiles Fork$/i.test(line)) {
+          const alreadyNative = skipNative && parseModLines([line], src).length > 0;
+          if (!alreadyNative) {
+            addedMods.push(mkMod('ForkCountMax', 'BASE', 1, src));
           }
           continue;
         }

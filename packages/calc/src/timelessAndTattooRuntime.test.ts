@@ -1623,4 +1623,70 @@ describe('evaluatePoe2UnbakedSocketedRunes', () => {
     expect(lowLines).not.toContain('Gain 5% of Maximum Mana as Extra Maximum Energy Shield');
     expect(lowLines).not.toContain('+1% to all maximum Resistances');
   });
+
+  it('emits Unexciting flag for Runegraft of Stability, OffHandAttack-scoped speed for Sinistral, and Chain/Fork for Refraction', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe1',
+      version: '3_30',
+      nodes: {
+        1: mkNode(1, 'Mastery 1', 'mastery', 0, 0, []),
+        2: mkNode(2, 'Mastery 2', 'mastery', 100, 0, []),
+        3: mkNode(3, 'Mastery 3', 'mastery', 200, 0, []),
+      },
+      groups: {},
+      classStartNodeIds: {},
+      bounds: { minX: -1000, maxX: 1000, minY: -1000, maxY: 1000 },
+    };
+    const build = {
+      id: 'b-runegrafts',
+      name: 'Runegrafts Test',
+      game: 'poe1',
+      level: 95,
+      activeWeaponSet: 1,
+      tree: {
+        title: 'Default',
+        treeVersion: '3_30',
+        allocatedNodeIds: [1, 2, 3],
+        weaponSet1NodeIds: [],
+        weaponSet2NodeIds: [],
+        masteryEffects: {},
+        nodeOverrides: {
+          1: {
+            name: 'Runegraft of Stability',
+            stats: ['Your Lucky or Unlucky effects are instead Unexciting'],
+          },
+          2: {
+            name: 'Runegraft of the Sinistral',
+            stats: ['10% more Attack speed with Offhand'],
+          },
+          3: {
+            name: 'Runegraft of Refraction',
+            stats: ['Skills Chain +1 times', 'Projectiles Fork'],
+          },
+        },
+      },
+      items: {},
+      equipped: {},
+      skills: [],
+      config: {},
+    } as unknown as Build;
+
+    const res = evaluateTattoosAndRunegrafts(build, tree, new Set([1, 2, 3]), {
+      skipNativelyParsedRunegraftStats: false,
+    });
+    expect(res.addedMods).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'Unexciting', type: 'FLAG', value: true }),
+        expect.objectContaining({
+          name: 'Speed',
+          type: 'MORE',
+          value: 10,
+          flags: ModFlag.Attack,
+          tags: [{ type: 'Condition', var: 'OffHandAttack' }],
+        }),
+        expect.objectContaining({ name: 'ChainCountMax', type: 'BASE', value: 1 }),
+        expect.objectContaining({ name: 'ForkCountMax', type: 'BASE', value: 1 }),
+      ]),
+    );
+  });
 });
