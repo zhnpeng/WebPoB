@@ -1498,5 +1498,38 @@ describe('Mechanism-Layer Regression Suite — Round 2 (Upstream PoB spec/System
         setRegisteredGems('poe1', prevPoe1);
       }
     });
+
+    it('skips {disabled} item mod lines and applies PoE 2 {corruptedRange:X} scalar in itemParser (Wave 4V)', () => {
+      const poe1Item = parseItemText(
+        [
+          'Rarity: RARE',
+          'Test Boots',
+          'Sorcerer Boots',
+          'Implicits: 2',
+          '{exarch}{disabled}Drops Scorched Ground while moving, lasting 5 seconds',
+          '{eater}10% increased Movement Speed',
+          '+80 to maximum Life',
+        ].join('\n'),
+        'poe1',
+      );
+      expect(poe1Item?.implicits).toEqual(['10% increased Movement Speed']);
+      expect(poe1Item?.explicits).toEqual(['+80 to maximum Life']);
+
+      const poe2Corrupted = parseItemText(
+        [
+          'Rarity: UNIQUE',
+          'Test Corrupted Weapon',
+          'Expert Warhammer',
+          'Implicits: 0',
+          '{corruptedRange:1.22}{range:1}(80-100)% increased Ignite Magnitude',
+          '{corruptedRange:0.78}{range:0}(60-75)% reduced Ignite Duration on Enemies',
+        ].join('\n'),
+        'poe2',
+      );
+      expect(poe2Corrupted?.explicits).toEqual([
+        '122% increased Ignite Magnitude',
+        '47% reduced Ignite Duration on Enemies',
+      ]);
+    });
   });
 });

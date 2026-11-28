@@ -621,6 +621,9 @@ export function parseItemText(
       : undefined;
 
   const resolveAndNormalizeModLine = (rawLine: string, rawModIndex?: number): string | null => {
+    if (/\{disabled\}/i.test(rawLine)) {
+      return null;
+    }
     if (!shouldIncludeVariantLine(rawLine, variantSelection)) {
       return null;
     }
@@ -631,6 +634,31 @@ export function parseItemText(
     const modRangeOverride =
       inlineRanges ?? (rawModIndex !== undefined ? modRanges.get(rawModIndex) : undefined);
     let interpolated = interpolateModRanges(rawLine, modRangeOverride);
+    // PoE 2 `{corruptedRange:X}` (upstream PoB2 ItemTools.lua baseValueScalar):
+    // multiplies interpolated range values by X and rounds before catalyst scaling.
+    const corruptedRangeMatch = rawLine.match(/\{corruptedRange:([+-]?\d+(?:\.\d+)?)\}/i);
+    const corruptedRangeScalar = corruptedRangeMatch ? Number(corruptedRangeMatch[1]) : 1;
+    if (
+      Number.isFinite(corruptedRangeScalar) &&
+      corruptedRangeScalar > 0 &&
+      corruptedRangeScalar !== 1 &&
+      /\(\d/.test(rawLine) &&
+      !/\{unscalable\}|\bunscalable value\b/i.test(rawLine)
+    ) {
+      interpolated = interpolated.replace(
+        /([+-]?)(\d+(?:\.\d+)?)/g,
+        (_full, sign: string, numStr: string) => {
+          const val = Number(numStr);
+          const dotIdx = numStr.indexOf('.');
+          if (dotIdx === -1) {
+            return `${sign}${Math.round(val * corruptedRangeScalar)}`;
+          }
+          const decimals = numStr.length - dotIdx - 1;
+          const factor = Math.pow(10, decimals);
+          return `${sign}${Math.round(val * corruptedRangeScalar * factor) / factor}`;
+        },
+      );
+    }
     if (
       activeCatalystTags &&
       catalystQuality &&
