@@ -6013,6 +6013,7 @@ function computeOffence(
       baseBuses.enemyDb.setCondition('Shocked', true);
       baseBuses.enemyDb.setMultiplier('ShockEffect', effShockPct);
       baseBuses.playerDb.setMultiplier('EnemyShockEffect', effShockPct);
+      baseBuses.playerDb.setMultiplier('ShockEffect', effShockPct / 5);
       baseBuses.enemyDb.addMod({
         name: 'DamageTaken',
         type: 'INC',
@@ -6714,12 +6715,16 @@ function computeGroupOffence(
       const supSock = isSquireBridged || gemInst.fromItem
         ? { qualBonus: 0, diallaLevelBonus: 0, diallaQualBonus: 0 }
         : consumeMatchingSocketBonus(def, gemInst.instanceId);
-      const supIsCorrupted = Boolean(
-        gemInst.level >= 21 ||
-          gemInst.quality >= 21 ||
-          def.tags.some((t) => t.toLowerCase() === 'vaal') ||
-          (/^awakened\s+/i.test(def.name.en) && gemInst.level >= 6),
-      );
+      const explicitSupCorrupted = (gemInst as { corrupted?: boolean }).corrupted;
+      const supIsCorrupted =
+        explicitSupCorrupted !== undefined
+          ? explicitSupCorrupted
+          : Boolean(
+              gemInst.level >= 21 ||
+                gemInst.quality >= 21 ||
+                def.tags.some((t) => t.toLowerCase() === 'vaal') ||
+                (/^awakened\s+/i.test(def.name.en) && gemInst.level >= 6),
+            );
       const supBonus = isSquireBridged
         ? resolveGemBonuses(def, baseBuses.playerDb, [], { isCorrupted: supIsCorrupted })
         : resolveGemBonuses(def, baseBuses.playerDb, socketedRules, { isCorrupted: supIsCorrupted });
@@ -7612,6 +7617,7 @@ function computeGroupOffence(
         });
         groupEnemyDb.setMultiplier('ShockEffect', skillShockPct);
         skillDb.setMultiplier('EnemyShockEffect', skillShockPct);
+        skillDb.setMultiplier('ShockEffect', skillShockPct / 5);
       }
     }
   }
@@ -11573,6 +11579,25 @@ function computeGroupOffence(
     const brandFreqMore = skillDb.more('BrandActivationFrequency', flags, kwFlags);
     hitRateForDps =
       (1 / activeSkillData.repeatFrequency) * Math.max(0.05, 1 + brandFreqInc / 100) * brandFreqMore * actionSpeedMult;
+  } else if (
+    build.game === 'poe1' &&
+    (effectiveSkillTypeSet.has('herald') || activeDef.tags.some((t) => t.toLowerCase() === 'herald')) &&
+    typeof activeSkillData?.repeatFrequency === 'number' &&
+    activeSkillData.repeatFrequency > 0
+  ) {
+    const heraldFreqInc = skillDb.sum(
+      'INC',
+      ['HeraldStormFrequency', 'HeraldOfThunderHitFrequency', 'HitRate'],
+      flags,
+      kwFlags,
+    );
+    const heraldFreqMore = skillDb.more(
+      ['HeraldStormFrequency', 'HeraldOfThunderHitFrequency', 'HitRate'],
+      flags,
+      kwFlags,
+    );
+    hitRateForDps =
+      (1 / activeSkillData.repeatFrequency) * Math.max(0.05, 1 + heraldFreqInc / 100) * heraldFreqMore;
   }
 
   const isPoe2PureDotPart =
