@@ -2444,6 +2444,20 @@ export function evaluateAurasAndWatchersEye(
   }> = [];
   const resolvedMainIdx = build.skills.findIndex((g) => g.id === build.mainSkillGroupId);
   const mainGroupIndex = resolvedMainIdx >= 0 ? resolvedMainIdx : 0;
+  // PoE 2 `Ice Bite I/II` GlobalEffect support buff:
+  // Only applies when linked to an Attack/Warcry active skill (never spells like Orb of Storms / Ice Nova),
+  // and never stacks across multiple skill groups (keep single highest tier).
+  let poe2IceBiteBest: { def: GemDefinition; effLevel: number; tier: number } | null = null;
+  const poe2PersistentSupFamilyBest = new Map<string, { def: GemDefinition; effLevel: number; tier: number }>();
+  const resolvePoe2PersistentSupFamily = (
+    supNameL: string,
+  ): { family: string; tier: number } | null => {
+    for (const fam of ['precision', 'clarity', 'vitality', 'mysticism', 'herbalism', 'cannibalism'] as const) {
+      if (supNameL === fam || supNameL === `${fam} i`) return { family: fam, tier: 1 };
+      if (supNameL === `${fam} ii`) return { family: fam, tier: 2 };
+    }
+    return null;
+  };
 
   for (let groupIdx = 0; groupIdx < build.skills.length; groupIdx++) {
     const group = build.skills[groupIdx]!;
@@ -2605,10 +2619,7 @@ export function evaluateAurasAndWatchersEye(
           supNameL === 'blazing critical' ||
           supNameL === 'direstrike' ||
           supNameL === 'direstrike i' ||
-          supNameL === 'direstrike ii' ||
-          supNameL === 'ice bite' ||
-          supNameL === 'ice bite i' ||
-          supNameL === 'ice bite ii'
+          supNameL === 'direstrike ii'
         ) {
           const globalSupCmods = resolveAuraLevelCompiledMods(supDef, effSupLevel);
           if (globalSupCmods && globalSupCmods.length > 0) {
@@ -2619,27 +2630,24 @@ export function evaluateAurasAndWatchersEye(
               });
             }
           }
-        }
-        if (
-          supNameL === 'precision' ||
-          supNameL === 'precision i' ||
-          supNameL === 'precision ii' ||
-          supNameL === 'clarity' ||
-          supNameL === 'clarity i' ||
-          supNameL === 'clarity ii' ||
-          supNameL === 'vitality' ||
-          supNameL === 'vitality i' ||
-          supNameL === 'vitality ii' ||
-          supNameL === 'mysticism' ||
-          supNameL === 'mysticism i' ||
-          supNameL === 'mysticism ii' ||
-          supNameL === 'herbalism' ||
-          supNameL === 'herbalism i' ||
-          supNameL === 'herbalism ii' ||
-          supNameL === 'cannibalism' ||
-          supNameL === 'cannibalism i' ||
-          supNameL === 'cannibalism ii'
-        ) {
+        } else if (supNameL === 'ice bite' || supNameL === 'ice bite i' || supNameL === 'ice bite ii') {
+          const groupHasAttackOrWarcry = group.gems.some((g) => {
+            if (!g.enabled) return false;
+            const gd = lookupGem('poe2', g.gemId);
+            if (!gd || gd.category !== 'active') return false;
+            return gd.tags.some((t) => /^(attack|warcry)$/i.test(t));
+          });
+          if (groupHasAttackOrWarcry) {
+            const tier = supNameL === 'ice bite ii' ? 2 : 1;
+            if (
+              !poe2IceBiteBest ||
+              tier > poe2IceBiteBest.tier ||
+              (tier === poe2IceBiteBest.tier && effSupLevel > poe2IceBiteBest.effLevel)
+            ) {
+              poe2IceBiteBest = { def: supDef, effLevel: effSupLevel, tier };
+            }
+          }
+        } else if (resolvePoe2PersistentSupFamily(supNameL)) {
           poe2PersistentPlayerSupportMods.push({ def: supDef, effLevel: effSupLevel, effQuality: effSupQuality });
         }
       }
@@ -2654,13 +2662,11 @@ export function evaluateAurasAndWatchersEye(
       });
       if (groupHasPersistentActive) {
         for (const ps of poe2PersistentPlayerSupportMods) {
-          const cmods = resolveAuraLevelCompiledMods(ps.def, ps.effLevel);
-          if (cmods && cmods.length > 0) {
-            const pMods = cmods.filter((m) => m.target === 'player');
-            if (pMods.length > 0) {
-              injectCompiledGemMods(playerDb, enemyDb, minionDb, pMods, `Support Buff: ${ps.def.name.en}`, {
-                game: 'poe2',
-              });
+          const fam = resolvePoe2PersistentSupFamily(stripSupportSuffix(ps.def.name.en));
+          if (fam) {
+            const prev = poe2PersistentSupFamilyBest.get(fam.family);
+            if (!prev || fam.tier > prev.tier || (fam.tier === prev.tier && ps.effLevel > prev.effLevel)) {
+              poe2PersistentSupFamilyBest.set(fam.family, { def: ps.def, effLevel: ps.effLevel, tier: fam.tier });
             }
           }
         }
@@ -3122,13 +3128,54 @@ export function evaluateAurasAndWatchersEye(
     }
   }
 
-  // Summon Spectral Tiger stack count
-  if (build.game === 'poe1' && allCandidates.some((c) => c.isSpectralTigerBuff)) {
-    const tigerCount =
-      typeof build.config.rawInputs?.multiplierSpectralTigerCount === 'number'
-        ? build.config.rawInputs.multiplierSpectralTigerCount
-        : 5;
-    playerDb.setMultiplier('SpectralTigerCount', Math.max(0, tigerCount));
+  // Inject deduplicated PoE 2 Ice Bite & persistent support buffs (one highest-tier entry per family).
+  if (build.game === 'poe2') {
+    if (poe2IceBiteBest) {
+      const globalSupCmods = resolveAuraLevelCompiledMods(poe2IceBiteBest.def, poe2IceBiteBest.effLevel);
+      if (globalSupCmods && globalSupCmods.length > 0) {
+        const pMods = globalSupCmods.filter((m) => m.target === 'player');
+        if (pMods.length > 0) {
+          injectCompiledGemMods(playerDb, enemyDb, minionDb, pMods, `Support Buff: ${poe2IceBiteBest.def.name.en}`, {
+            game: 'poe2',
+          });
+        }
+      }
+    }
+    for (const best of poe2PersistentSupFamilyBest.values()) {
+      const cmods = resolveAuraLevelCompiledMods(best.def, best.effLevel);
+      if (cmods && cmods.length > 0) {
+        const pMods = cmods.filter((m) => m.target === 'player');
+        if (pMods.length > 0) {
+          injectCompiledGemMods(playerDb, enemyDb, minionDb, pMods, `Support Buff: ${best.def.name.en}`, {
+            game: 'poe2',
+          });
+        }
+      }
+    }
+  }
+
+  // Summon Spectral Tiger stack count & tree/item trigger synthesis (Huntleader node 35011 / Farrul's Chase)
+  if (build.game === 'poe1') {
+    const hasTigerCandidate = allCandidates.some((c) => c.isSpectralTigerBuff);
+    const hasTigerFromTreeOrItem =
+      !hasTigerCandidate &&
+      (build.tree.allocatedNodeIds.includes(35011) ||
+        getActiveEquippedItemsSimple(build).some(({ item }) =>
+          collectCleanItemLines(item).some((l) => /Triggers?\s+Level\s+\d+\s+Summon\s+Spectral\s+Tiger/i.test(l)),
+        ));
+    if (hasTigerCandidate || hasTigerFromTreeOrItem) {
+      const tigerCount =
+        typeof build.config.rawInputs?.multiplierSpectralTigerCount === 'number'
+          ? build.config.rawInputs.multiplierSpectralTigerCount
+          : 5;
+      playerDb.setMultiplier('SpectralTigerCount', Math.max(0, tigerCount));
+      if (hasTigerFromTreeOrItem && tigerCount > 0) {
+        const tigerSrc = `Skill: Summon Spectral Tiger (${tigerCount} tigers)`;
+        playerDb.addMod(mkMod('Speed', 'INC', 7 * tigerCount, tigerSrc, ModFlag.Attack));
+        playerDb.addMod(mkMod('Speed', 'INC', 7 * tigerCount, tigerSrc, ModFlag.Spell));
+        playerDb.addMod(mkMod('CritChance', 'INC', 25 * tigerCount, tigerSrc));
+      }
+    }
   }
 
   // Approaching Flames (Annihilation's Approach boots) -> Adrenaline

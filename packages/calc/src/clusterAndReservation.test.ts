@@ -1862,4 +1862,159 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     // Must keep ONLY the single Lv.19 Sigil of Power (1.16x), NEVER 1.12 * 1.16 = 1.2992x!
     expect(db.more('Damage', ModFlag.Spell)).toBeCloseTo(1.16, 4);
   });
+
+  it('gates PoE 2 Ice Bite I/II to Attack/Warcry groups (blocking Spell groups like Orb of Storms), deduplicates tiers across groups, and synthesizes PoE 1 Summon Spectral Tiger from tree node 35011', () => {
+    const orbOfStormsDef: GemDefinition = {
+      id: 'poe2_orbofstorms',
+      name: { en: 'Orb of Storms', zh: '风暴漩涡' },
+      category: 'active',
+      game: 'poe2',
+      color: 'blue',
+      tags: ['spell', 'lightning', 'area'],
+      modFlags: ModFlag.Spell,
+      keywordFlags: KeywordFlag.Spell | KeywordFlag.Lightning,
+      stats: [],
+    };
+    const iceShotDef: GemDefinition = {
+      id: 'poe2_iceshot',
+      name: { en: 'Ice Shot', zh: '冰霜射击' },
+      category: 'active',
+      game: 'poe2',
+      color: 'green',
+      tags: ['attack', 'projectile', 'cold'],
+      modFlags: ModFlag.Attack,
+      keywordFlags: KeywordFlag.Attack | KeywordFlag.Cold,
+      stats: [],
+    };
+    const iceBite1Def: GemDefinition = {
+      id: 'poe2_icebitesupport',
+      name: { en: 'Ice Bite I', zh: '霜咬 I' },
+      category: 'support',
+      game: 'poe2',
+      color: 'blue',
+      tags: ['cold', 'duration', 'support'],
+      modFlags: 0,
+      keywordFlags: 0,
+      stats: [],
+      compiledMods: [
+        {
+          name: 'DamageGainAsCold',
+          type: 'BASE',
+          value: 25,
+          flags: 0,
+          keywordFlags: 0,
+          target: 'player',
+          tags: [{ type: 'Condition', var: 'FrozenEnemyRecently' }],
+        },
+      ],
+    };
+    const iceBite2Def: GemDefinition = {
+      id: 'poe2_icebitesupporttwo',
+      name: { en: 'Ice Bite II', zh: '霜咬 II' },
+      category: 'support',
+      game: 'poe2',
+      color: 'blue',
+      tags: ['cold', 'duration', 'support'],
+      modFlags: 0,
+      keywordFlags: 0,
+      stats: [],
+      compiledMods: [
+        {
+          name: 'DamageGainAsCold',
+          type: 'BASE',
+          value: 30,
+          flags: 0,
+          keywordFlags: 0,
+          target: 'player',
+          tags: [{ type: 'Condition', var: 'FrozenEnemyRecently' }],
+        },
+      ],
+    };
+    const gemLookup = (_g: 'poe1' | 'poe2', id: string) =>
+      id === 'poe2_orbofstorms'
+        ? orbOfStormsDef
+        : id === 'poe2_iceshot'
+          ? iceShotDef
+          : id === 'poe2_icebitesupport'
+            ? iceBite1Def
+            : id === 'poe2_icebitesupporttwo'
+              ? iceBite2Def
+              : undefined;
+
+    // 1. Ice Bite II linked to a Spell (Orb of Storms) must NOT grant DamageGainAsCold
+    const spellDb = new ModDB();
+    spellDb.setCondition('FrozenEnemyRecently', true);
+    evaluateAurasAndWatchersEye({
+      build: mkBuild({
+        game: 'poe2',
+        skills: [
+          {
+            id: 'sg-orb',
+            label: 'Orb',
+            enabled: true,
+            gems: [
+              { instanceId: 'g1', gemId: 'poe2_orbofstorms', level: 20, quality: 0, enabled: true },
+              { instanceId: 'g2', gemId: 'poe2_icebitesupporttwo', level: 1, quality: 0, enabled: true },
+            ],
+          },
+        ],
+      }),
+      playerDb: spellDb,
+      getGemByIdFn: gemLookup,
+      maxMana: 1000,
+    });
+    expect(spellDb.sum('BASE', 'DamageGainAsCold')).toBe(0);
+
+    // 2. Ice Bite I + Ice Bite II across two Attack groups -> deduplicated to single Ice Bite II (30, NOT 55!)
+    const atkDb = new ModDB();
+    atkDb.setCondition('FrozenEnemyRecently', true);
+    evaluateAurasAndWatchersEye({
+      build: mkBuild({
+        game: 'poe2',
+        skills: [
+          {
+            id: 'sg-atk1',
+            label: 'Attack 1',
+            enabled: true,
+            gems: [
+              { instanceId: 'a1', gemId: 'poe2_iceshot', level: 20, quality: 0, enabled: true },
+              { instanceId: 'a2', gemId: 'poe2_icebitesupport', level: 1, quality: 0, enabled: true },
+            ],
+          },
+          {
+            id: 'sg-atk2',
+            label: 'Attack 2',
+            enabled: true,
+            gems: [
+              { instanceId: 'b1', gemId: 'poe2_iceshot', level: 20, quality: 0, enabled: true },
+              { instanceId: 'b2', gemId: 'poe2_icebitesupporttwo', level: 1, quality: 0, enabled: true },
+            ],
+          },
+        ],
+      }),
+      playerDb: atkDb,
+      getGemByIdFn: gemLookup,
+      maxMana: 1000,
+    });
+    expect(atkDb.sum('BASE', 'DamageGainAsCold')).toBe(30);
+
+    // 3. PoE 1 Summon Spectral Tiger synthesized from Huntleader passive node 35011 (default 5 tigers -> +35% Speed, +125% Crit)
+    const tigerDb = new ModDB();
+    evaluateAurasAndWatchersEye({
+      build: mkBuild({
+        game: 'poe1',
+        tree: {
+          ...mkBuild().tree,
+          allocatedNodeIds: [35011],
+        },
+        skills: [],
+      }),
+      playerDb: tigerDb,
+      maxMana: 1000,
+    });
+    expect(tigerDb.getEvalContext().multipliers.SpectralTigerCount).toBe(5);
+    expect(tigerDb.sum('INC', 'Speed', ModFlag.Attack)).toBe(35);
+    expect(tigerDb.sum('INC', 'Speed', ModFlag.Spell)).toBe(35);
+    expect(tigerDb.sum('INC', 'CritChance')).toBe(125);
+  });
 });
