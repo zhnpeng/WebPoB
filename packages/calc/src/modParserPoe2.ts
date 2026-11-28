@@ -2786,6 +2786,32 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     pattern: /^Regenerate Mana equal to (\d+(?:\.\d+)?)% of maximum Life per second$/i,
     build: (m, src) => [mkMod('ManaRegenFromLifePct', 'BASE', Number(m[1]), src)],
   },
+  // Wave 4V: Open Weakness presence speed, Lich Eternal Life, Rage regeneration & Armour defend rules
+  {
+    pattern: /^(\d+)% increased Movement Speed while an enemy with an Open Weakness is in your Presence$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('MovementSpeed', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: 'OpenWeaknessEnemyPresence|EnemyHasOpenWeakness|EnemyOpenWeakness' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Your Life cannot change while you have Energy Shield$/i,
+    build: (_, src) => [mkMod('LifeCannotChangeWhileES', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^No Inherent loss of Rage$/i,
+    build: (_, src) => [mkMod('NoInherentRageLoss', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Regenerate (\d+(?:\.\d+)?)% of your maximum Rage per second$/i,
+    build: (m, src) => [mkMod('RageRegenPct', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Increases and Reductions to Mana Regeneration Rate also apply to Rage Regeneration Rate$/i,
+    build: (_, src) => [mkMod('ManaRegenAppliesToRageRegen', 'FLAG', true, src)],
+  },
 
   // =========================================================================
   // 5. PoE 2 Skill-Specific & Tag Gem Level Scaling (+X to Level of all <SkillName|Nova|...> Skills)

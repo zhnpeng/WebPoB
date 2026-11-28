@@ -1837,5 +1837,36 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
       expect(normalizeGemFilterTokens('Golems')).toBe('golem');
       expect(normalizeGemFilterTokens('Channelled Fire Skills')).toBe('channelling+fire');
     });
+
+    it('parses Wave 4V PoE 2 Open Weakness speed, Lich Eternal Life & Rage regeneration rules', () => {
+      expect(
+        parseModLine(
+          '20% increased Movement Speed while an enemy with an Open Weakness is in your Presence',
+          'Tree: Reveal Weakness',
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'MovementSpeed',
+          type: 'INC',
+          value: 20,
+          tags: [{ type: 'Condition', var: 'OpenWeaknessEnemyPresence|EnemyHasOpenWeakness|EnemyOpenWeakness' }],
+        }),
+      ]);
+      expect(parseModLine('Your Life cannot change while you have Energy Shield', 'Tree: Eternal Life')).toEqual([
+        expect.objectContaining({ name: 'LifeCannotChangeWhileES', type: 'FLAG', value: true }),
+      ]);
+      expect(parseModLine('No Inherent loss of Rage', 'Tree: Shaman')).toEqual([
+        expect.objectContaining({ name: 'NoInherentRageLoss', type: 'FLAG', value: true }),
+      ]);
+      expect(parseModLine('Regenerate 6% of your maximum Rage per second', 'Tree: Shaman')).toEqual([
+        expect.objectContaining({ name: 'RageRegenPct', type: 'BASE', value: 6 }),
+      ]);
+      expect(
+        parseModLine(
+          'Increases and Reductions to Mana Regeneration Rate also apply to Rage Regeneration Rate',
+          'Tree: Shaman',
+        ),
+      ).toEqual([expect.objectContaining({ name: 'ManaRegenAppliesToRageRegen', type: 'FLAG', value: true })]);
+    });
   });
 });

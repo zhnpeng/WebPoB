@@ -187,14 +187,16 @@ function evalSingleConditionVar(varExpr: string, ctx?: ModEvalContext): boolean 
     if (ctx.conditions[alt]) return true;
   }
   if (varExpr === 'EnemyExposure') {
-    return Boolean(
-      ctx.conditions.EnemyFireExposure ||
-        ctx.conditions.EnemyColdExposure ||
-        ctx.conditions.EnemyLightningExposure ||
-        ctx.conditions.FireExposure ||
-        ctx.conditions.ColdExposure ||
-        ctx.conditions.LightningExposure,
-    );
+    const fireExp =
+      ctx.conditions.CanApplyFireExposure !== false &&
+      Boolean(ctx.conditions.EnemyFireExposure || ctx.conditions.FireExposure);
+    const coldExp =
+      ctx.conditions.CanApplyColdExposure !== false &&
+      Boolean(ctx.conditions.EnemyColdExposure || ctx.conditions.ColdExposure);
+    const lightExp =
+      ctx.conditions.CanApplyLightningExposure !== false &&
+      Boolean(ctx.conditions.EnemyLightningExposure || ctx.conditions.LightningExposure);
+    return fireExp || coldExp || lightExp;
   }
   if (varExpr === 'EnemyFireExposure') {
     if (ctx.conditions.CanApplyFireExposure === false) return false;
@@ -246,6 +248,9 @@ function evalSingleConditionVar(varExpr: string, ctx?: ModEvalContext): boolean 
     return Boolean(ctx.conditions.IsUnarmed);
   }
   if (varExpr === 'Shapeshifted') {
+    if (ctx.conditions.ShapeshiftToHuman || ctx.conditions.ShapeshiftedToHumanRecently) {
+      return false;
+    }
     return Boolean(
       ctx.conditions.ShapeshiftedToAnimalRecently || ctx.conditions.ShapeshiftToAnimal,
     );

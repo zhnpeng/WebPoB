@@ -1239,4 +1239,36 @@ describe('parseConditionalSuffix', () => {
       evaluateModTags(makeMod({ tags: [{ type: 'PerStat', stat: 'ActiveTotemLimit', div: 1 }] }), ctx).scale,
     ).toBe(3);
   });
+
+  it('guards EnemyExposure with CanApply*Exposure===false and gates Shapeshifted when shifted back to Human (Wave 4V)', () => {
+    const ctxExpBlocked = createEmptyEvalContext();
+    ctxExpBlocked.conditions.EnemyLightningExposure = true;
+    ctxExpBlocked.conditions.CanApplyLightningExposure = false;
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'EnemyExposure' }] }), ctxExpBlocked).active,
+    ).toBe(false);
+
+    const ctxExpAllowed = createEmptyEvalContext();
+    ctxExpAllowed.conditions.EnemyColdExposure = true;
+    ctxExpAllowed.conditions.CanApplyLightningExposure = false;
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'EnemyExposure' }] }), ctxExpAllowed).active,
+    ).toBe(true);
+
+    // Human spell with both ShapeshiftToAnimal and ShapeshiftToHuman is NOT currently Shapeshifted
+    const ctxHuman = createEmptyEvalContext();
+    ctxHuman.conditions.ShapeshiftToAnimal = true;
+    ctxHuman.conditions.ShapeshiftToHuman = true;
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'Shapeshifted' }] }), ctxHuman).active,
+    ).toBe(false);
+
+    // Active Bear/Wolf/Wyvern skill with explicit Shapeshifted=true stays active
+    const ctxBear = createEmptyEvalContext();
+    ctxBear.conditions.Shapeshifted = true;
+    ctxBear.conditions.ShapeshiftToHuman = true;
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'Shapeshifted' }] }), ctxBear).active,
+    ).toBe(true);
+  });
 });
