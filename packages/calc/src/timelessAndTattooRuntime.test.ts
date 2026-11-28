@@ -1418,4 +1418,93 @@ describe('evaluatePoe2UnbakedSocketedRunes', () => {
       ]),
     );
   });
+
+  it('evaluates PoE 2 Carved Majesty (+3 to Spirit per Idol socketed in your Equipment) on baked rune items', () => {
+    const body = mkItem({
+      id: 'body-temporalis',
+      name: 'Temporalis',
+      baseName: 'Silk Robe',
+      rarity: 'UNIQUE',
+      implicits: [
+        '{enchant}{rune}+3 to Spirit per Idol socketed in your Equipment',
+        '{enchant}{rune}Idols socketed in this item gain the benefits of their Bonded modifiers',
+      ],
+      rawText: [
+        'Rarity: UNIQUE',
+        'Temporalis',
+        'Silk Robe',
+        'Rune: Carved Majesty',
+        'Rune: Fox Idol',
+        'Rune: Rabbit Idol',
+      ].join('\n'),
+    });
+    const focus = mkItem({
+      id: 'w2-focus',
+      name: 'Storm Focus',
+      baseName: 'Vortex Focus',
+      rarity: 'RARE',
+      rawText: ['Rarity: RARE', 'Storm Focus', 'Vortex Focus', 'Rune: Owl Idol', 'Rune: Owl Idol'].join('\n'),
+    });
+    const helm = mkItem({
+      id: 'helm-1',
+      name: 'Oracle Crown',
+      baseName: 'Tiara',
+      rarity: 'RARE',
+      rawText: ['Rarity: RARE', 'Oracle Crown', 'Tiara', 'Rune: Idol of Eeshta'].join('\n'),
+    });
+
+    const res = evaluatePoe2UnbakedSocketedRunes(
+      [
+        { slot: 'Body Armour', item: body },
+        { slot: 'Weapon 2', item: focus },
+        { slot: 'Helmet', item: helm },
+      ],
+      'poe2',
+    );
+
+    // 6 Idols total (Carved Majesty + Fox Idol + Rabbit Idol + 2x Owl Idol + Idol of Eeshta) * 3 = +18 Spirit
+    expect(res.addedMods).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'Spirit', type: 'BASE', value: 18 }),
+      ]),
+    );
+  });
+
+  it('evaluates Militant Faith Devotion Minion Attack and Cast Speed as MinionSpeed INC', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe1',
+      version: '3_28',
+      nodes: {
+        1: mkNode(1, 'Jewel Socket', 'jewel', 0, 0),
+        2: mkNode(2, 'Small Str', 'small', 200, 0, ['+10 to Strength']),
+        3: mkNode(3, 'Small Int', 'small', 300, 0, ['+10 to Intelligence']),
+        4: mkNode(4, 'Notable A', 'notable', 400, 0, ['20% increased Damage']),
+      },
+      groups: {},
+      classStartNodeIds: {},
+      bounds: { minX: -2000, maxX: 2000, minY: -2000, maxY: 2000 },
+    };
+    const mf = mkItem({
+      id: 'mf-minion-speed',
+      name: 'Militant Faith',
+      baseName: 'Timeless Jewel',
+      rarity: 'UNIQUE',
+      explicits: [
+        'Carved to glorify 2000 new faithful converted by High Templar Dominus',
+        '1% increased Minion Attack and Cast Speed per 10 Devotion',
+      ],
+    });
+    const res = evaluateTimelessJewels(
+      [{ nodeId: 1, jewel: mf }],
+      tree,
+      new Set([1, 2, 3, 4]),
+      { game: 'poe1' },
+    );
+    // 30 Devotion -> floor(30/10) = 3% MinionSpeed
+    expect(res.addedMods).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'MinionSpeed', type: 'INC', value: 3 }),
+      ]),
+    );
+  });
 });

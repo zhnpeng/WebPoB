@@ -1227,7 +1227,8 @@ export function evaluatePersistentBuffAndStanceSkills(
               : (ctxMult.WindDancerStage ?? ctxMult.WindDancerStacks ?? 0);
           const stages = Math.min(6, Math.max(0, Math.round(configuredStages)));
           if (stages > 0) {
-            const perStagePct = Math.floor(10 + (level - 1) * 0.5);
+            // Upstream PoB 2 WindDancerPlayer: flat 10% more Evasion Rating per stage across all gem levels
+            const perStagePct = 10;
             addPlayerMod({
               name: 'Evasion',
               type: 'MORE',

@@ -354,8 +354,8 @@ describe('multiPartAndMetaRuntime', () => {
     expect(evalRes.appliedSkills).toContain('Berserk');
     expect(evalRes.appliedSkills).toContain('Trinity');
 
-    // Wind Dancer: 3 stages * 19% = 57% more Evasion
-    expect(playerDb.more('Evasion')).toBeCloseTo(1.57, 2);
+    // Wind Dancer: 3 stages * 10% = 30% more Evasion (PoB 2 WindDancerPlayer flat 10%/stage)
+    expect(playerDb.more('Evasion')).toBeCloseTo(1.3, 2);
     // Scavenged Plating skipped because weaponSets: [2] vs activeWeaponSet: 1
     expect(playerDb.more('Armour')).toBe(1);
     // Withering Presence: 8 stacks * 5% = 40% increased Chaos Damage Taken on enemyDb

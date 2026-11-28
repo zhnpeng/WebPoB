@@ -1044,6 +1044,13 @@ function evaluateDevotionLine(
     outMods.push(mkMod('AuraEffectOnSelf', 'INC', Number(mAuraSelf[1]), source));
     return;
   }
+  const mMinionSpeed = scaledLine.match(
+    /^(\d+)% increased Minion Attack and Cast Speed$/i,
+  );
+  if (mMinionSpeed) {
+    outMods.push(mkMod('MinionSpeed', 'INC', Number(mMinionSpeed[1]), source));
+    return;
+  }
 
   // Standard parseable lines: "+X% to all Elemental Resistances", "X% increased Area/Elemental/Minion Damage",
   // "X% reduced Mana Cost of Skills", "X% increased Global Defences", etc.
@@ -2611,8 +2618,41 @@ export function evaluatePoe2UnbakedSocketedRunes(
     return POE2_RUNE_CATALOG[rawName.trim().toLowerCase()] ?? null;
   };
 
+  // Count total socketed Idols across all active equipped items for per-Idol scaling runes
+  // such as Carved Majesty ("+3 to Spirit per Idol socketed in your Equipment").
+  const isSocketedIdol = (rawRuneName: string): boolean => {
+    const lowerName = rawRuneName.trim().toLowerCase();
+    const dsEntry = dsMap?.get(lowerName);
+    if (dsEntry) {
+      return Object.values(dsEntry.slots).some((sub) => sub?.type === 'Idol');
+    }
+    return /\bidol\b/i.test(lowerName) || lowerName === 'carved majesty';
+  };
+  let totalSocketedIdols = 0;
+  for (const { item } of equippedItems) {
+    for (const rawRuneName of extractRawRuneNames(item)) {
+      if (isSocketedIdol(rawRuneName)) {
+        totalSocketedIdols += 1;
+      }
+    }
+  }
+  const SPIRIT_PER_IDOL_RE = /^\+?(\d+)\s+to\s+Spirit\s+per\s+Idol\s+socketed\s+in\s+your\s+Equipment$/i;
+  const emitSpiritPerIdolMods = (lines: readonly string[], source: string): void => {
+    if (totalSocketedIdols <= 0) return;
+    for (const rawLine of lines) {
+      const m = stripPobTags(rawLine).match(SPIRIT_PER_IDOL_RE);
+      if (m) {
+        addedMods.push(mkMod('Spirit', 'BASE', Number(m[1]) * totalSocketedIdols, source));
+      }
+    }
+  };
+
   for (const { slot, item } of equippedItems) {
     const runesFound = extractRawRuneNames(item);
+    const bakedSrc = `PoE 2 Rune (${slot}): ${item.name}`;
+    // Evaluate dynamic per-Idol mods (e.g. Carved Majesty) even when `{rune}` implicits are baked
+    emitSpiritPerIdolMods([...item.implicits, ...item.explicits], bakedSrc);
+
     if (runesFound.length === 0) continue;
 
     const slotCategory = classifyPoe2RuneSlotCategory(slot, item);
@@ -2760,6 +2800,7 @@ export function evaluatePoe2UnbakedSocketedRunes(
     }
 
     if (itemStatLines.length > 0) {
+      emitSpiritPerIdolMods(itemStatLines, src);
       addedStatLines.push({
         source: src,
         lines: itemStatLines,
