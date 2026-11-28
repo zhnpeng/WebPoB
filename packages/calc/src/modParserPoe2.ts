@@ -2564,6 +2564,30 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
       ),
     ],
   },
+  // Wave 4T: Chronomancer Apex of the Moment, Now and Again, Infusion limits
+  {
+    pattern: /^Enemies in your Presence are Slowed by (\d+)%$/i,
+    build: (m, src) => [
+      mkMod('EnemyActionSpeed', 'INC', -Number(m[1]), src),
+      mkMod('Condition:EnemySlowed', 'FLAG', true, src),
+    ],
+  },
+  {
+    pattern: /^(Cascadable|Repeatable) Spells have (\d+)% chance to (Echo|Repeat)$/i,
+    build: (m, src) => [
+      mkMod(
+        m[3]!.toLowerCase() === 'echo' ? 'SpellEchoChance' : 'SpellRepeatChance',
+        'BASE',
+        Number(m[2]),
+        src,
+        ModFlag.Spell,
+      ),
+    ],
+  },
+  {
+    pattern: /^\+(\d+) to maximum (Fire|Cold|Lightning) Infusions?$/i,
+    build: (m, src) => [mkMod(`Max${m[2]}Infusions`, 'BASE', Number(m[1]), src)],
+  },
   // Falcon Dive (PoB 2 ModParser.lua:1620): "1% increased Attack Speed per 400 Accuracy Rating, up to 20%"
   {
     pattern: /^(\d+)% (increased|reduced) (Attack|Cast) Speed per (\d+) Accuracy Rating(?:,\s*up to (\d+)%)?$/i,

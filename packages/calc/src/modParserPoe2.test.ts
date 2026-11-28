@@ -1740,5 +1740,27 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
         parseModLine('Break 50% of Armour on Heavy Stunning an Enemy', 'Tree: Shattering Blow'),
       ).toEqual([expect.objectContaining({ name: 'ArmourBreakOnHeavyStunPct', type: 'BASE', value: 50 })]);
     });
+
+    it('parses Wave 4T Chronomancer & Infusion rules (Apex of the Moment, Now and Again, Max Infusions)', () => {
+      expect(
+        parseModLine('Enemies in your Presence are Slowed by 20%', 'Tree: Apex of the Moment'),
+      ).toEqual([
+        expect.objectContaining({ name: 'EnemyActionSpeed', type: 'INC', value: -20 }),
+        expect.objectContaining({ name: 'Condition:EnemySlowed', type: 'FLAG', value: true }),
+      ]);
+      expect(
+        parseModLine('Cascadable Spells have 20% chance to Echo', 'Tree: Now and Again'),
+      ).toEqual([
+        expect.objectContaining({ name: 'SpellEchoChance', type: 'BASE', value: 20, flags: ModFlag.Spell }),
+      ]);
+      expect(
+        parseModLine('Repeatable Spells have 20% chance to Repeat', 'Tree: Now and Again'),
+      ).toEqual([
+        expect.objectContaining({ name: 'SpellRepeatChance', type: 'BASE', value: 20, flags: ModFlag.Spell }),
+      ]);
+      expect(parseModLine('+1 to maximum Lightning Infusions', 'Tree: Shocking Limit')).toEqual([
+        expect.objectContaining({ name: 'MaxLightningInfusions', type: 'BASE', value: 1 }),
+      ]);
+    });
   });
 });
