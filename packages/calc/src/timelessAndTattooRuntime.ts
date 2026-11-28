@@ -1468,7 +1468,7 @@ function extractTattooTribe(name?: string): string | null {
 }
 
 function isPerAllocatedTattooLine(line: string): boolean {
-  return /\bper\s+Allocated\s+(?:[A-Za-z]+\s+)?Tattoo$/i.test(line);
+  return /\bper\s+Allocated\s+(?:(?:[A-Za-z]+\s+)?Tattoo|Journey\s+Tattoo\s+of\s+.+)$/i.test(line);
 }
 
 /**
@@ -1577,8 +1577,18 @@ export function evaluateTattoosAndRunegrafts(
     }
   }
 
-  // 3. Journey Tattoos (`per Allocated <Tribe> Tattoo` / `per Allocated Tattoo`)
+  // 3. Journey Tattoos (`per Allocated Journey Tattoo of <Name>` / `per Allocated <Tribe> Tattoo` / `per Allocated Tattoo`)
   //    & Runegrafts (`Runegraft of the Fortress`, `Treachery`, `Gemcraft`, etc.)
+  const byJourneyName: Record<string, number> = {};
+  for (const nodeId of activeTreeNodes) {
+    const ov = nodeOverrides[nodeId];
+    if (!ov?.name) continue;
+    const normName = ov.name.trim().toLowerCase();
+    if (normName.startsWith('journey tattoo of ')) {
+      byJourneyName[normName] = (byJourneyName[normName] ?? 0) + 1;
+    }
+  }
+
   for (const nodeId of activeTreeNodes) {
     const override = nodeOverrides[nodeId];
     if (!override) continue;
@@ -1589,7 +1599,26 @@ export function evaluateTattoosAndRunegrafts(
       const line = stripPobTags(rawLine);
       if (!line) continue;
 
-      // 3a. Journey Tattoo `per Allocated (<Tribe> )?Tattoo` lines
+      // 3a. Journey Tattoo `per Allocated Journey Tattoo of <X>` and `per Allocated (<Tribe> )?Tattoo` lines
+      const mNamedJourney = line.match(
+        /^(.+?)\s+per\s+Allocated\s+(Journey\s+Tattoo\s+of\s+.+)$/i,
+      );
+      if (mNamedJourney) {
+        const baseClause = mNamedJourney[1]!.trim();
+        const targetName = mNamedJourney[2]!.trim();
+        const count = byJourneyName[targetName.toLowerCase()] ?? 0;
+        if (count > 0) {
+          const wtBoostPct = warriorsTaleBoostPctByNode.get(nodeId)?.pct ?? 0;
+          const totalScale = count * (1 + wtBoostPct / 100);
+          const expanded = scaleStatLineNumeric(baseClause, totalScale);
+          addedStatLines.push({
+            source: `${src} (${count} ${targetName})`,
+            lines: [expanded],
+          });
+        }
+        continue;
+      }
+
       const mJourney = line.match(
         /^(.+?)\s+per\s+Allocated\s+(?:([A-Za-z]+)\s+)?Tattoo$/i,
       );

@@ -388,4 +388,25 @@ describe('localItem — resolveItemEffectiveStats', () => {
     // Grants +1 to Strength per 2% Quality at Q20 -> +10 to Strength
     expect(res.globalImplicits).toEqual(['+10 to Strength']);
   });
+
+  it('expands PoE 1 Harvest weapon Grants <stat> per <N>% Quality enchants into globalImplicits', () => {
+    const weapon = mkWeapon({
+      name: 'Tempest Wand',
+      baseName: 'Imbued Wand',
+      quality: 20,
+      implicits: [
+        '{crafted}Quality does not increase Physical Damage',
+        '{crafted}Grants 1% increased Elemental Damage per 2% Quality',
+        '{crafted}Grants 1% increased Accuracy per 2% Quality',
+        '{crafted}Grants 1% increased Area of Effect per 4% Quality',
+      ],
+    });
+
+    const res = resolveItemEffectiveStats(weapon, 'poe1');
+    expect(res.globalImplicits).toEqual([
+      '10% increased Elemental Damage',
+      '10% increased Accuracy',
+      '5% increased Area of Effect',
+    ]);
+  });
 });

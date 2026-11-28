@@ -1507,4 +1507,61 @@ describe('evaluatePoe2UnbakedSocketedRunes', () => {
       ]),
     );
   });
+
+  it('evaluates named Journey Tattoos (Journey Tattoo of the Soul / Mind) per allocated copy', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe1',
+      version: '3_28',
+      nodes: {
+        1: mkNode(1, 'Int 1', 'small', 0, 0, ['+10 to Intelligence']),
+        2: mkNode(2, 'Int 2', 'small', 100, 0, ['+10 to Intelligence']),
+        3: mkNode(3, 'Int 3', 'small', 200, 0, ['+10 to Intelligence']),
+      },
+      groups: {},
+      classStartNodeIds: {},
+      bounds: { minX: -1000, maxX: 1000, minY: -1000, maxY: 1000 },
+    };
+    const build = {
+      id: 'b-journey',
+      name: 'Journey Test',
+      game: 'poe1',
+      level: 100,
+      activeWeaponSet: 1,
+      tree: {
+        title: 'Default',
+        treeVersion: '3_28',
+        allocatedNodeIds: [1, 2, 3],
+        weaponSet1NodeIds: [],
+        weaponSet2NodeIds: [],
+        masteryEffects: {},
+        nodeOverrides: {
+          1: {
+            name: 'Journey Tattoo of the Soul',
+            stats: ['+40 to maximum Energy Shield per Allocated Journey Tattoo of the Soul'],
+          },
+          2: {
+            name: 'Journey Tattoo of the Soul',
+            stats: ['+40 to maximum Energy Shield per Allocated Journey Tattoo of the Soul'],
+          },
+          3: {
+            name: 'Journey Tattoo of the Soul',
+            stats: ['+40 to maximum Energy Shield per Allocated Journey Tattoo of the Soul'],
+          },
+        },
+      },
+      items: {},
+      equipped: {},
+      skills: [],
+      config: {},
+    } as unknown as Build;
+
+    const res = evaluateTattoosAndRunegrafts(build, tree, new Set([1, 2, 3]));
+    const esLines = res.addedStatLines.flatMap((e) => e.lines);
+    // 3 allocated copies -> each grants +40 * 3 = +120 to maximum Energy Shield (+360 total)
+    expect(esLines).toEqual([
+      '+120 to maximum Energy Shield',
+      '+120 to maximum Energy Shield',
+      '+120 to maximum Energy Shield',
+    ]);
+  });
 });

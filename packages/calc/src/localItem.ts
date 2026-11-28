@@ -639,6 +639,20 @@ export function resolveItemEffectiveStats(
   const globalImplicits: string[] = [];
   const globalExplicits: string[] = [];
 
+  // PoE 1 Harvest Alternate Quality enchants on both Armour and Weapons (`ModParser.lua:5958-5972`):
+  // "Grants <stat> per <N>% Quality" (e.g. "+1 to Strength per 2% Quality",
+  // "1% increased Elemental Damage per 2% Quality", "1% increased Accuracy per 2% Quality",
+  // "1% increased Area of Effect per 4% Quality").
+  const expandQualityGrant = (rawLine: string): string => {
+    const clean = normalizeStatLineToEn(rawLine.replace(/\{[^}]*\}/g, '').trim());
+    const mGrant = clean.match(/^Grants\s+(.+?)\s+per\s+(\d+)%\s+Quality$/i);
+    if (!mGrant) return rawLine;
+    const step = Number(mGrant[2]);
+    const steps = step > 0 && item.quality > 0 ? Math.floor(item.quality / step) : 0;
+    if (steps <= 0) return '';
+    return scaleRuneLineByEffect(mGrant[1]!.trim(), steps);
+  };
+
   if (isArmour) {
     const baseBlockFromDb = getBaseItemStats(item.baseName, 0, game)?.armour?.blockChance;
     const isShield =
@@ -658,24 +672,15 @@ export function resolveItemEffectiveStats(
       incWard: 0,
       noQualityDefences: false,
     };
-    const expandArmourQualityGrant = (rawLine: string): string => {
-      const clean = normalizeStatLineToEn(rawLine.replace(/\{[^}]*\}/g, '').trim());
-      const mGrant = clean.match(/^Grants\s+(.+?)\s+per\s+(\d+)%\s+Quality$/i);
-      if (!mGrant) return rawLine;
-      const step = Number(mGrant[2]);
-      const steps = step > 0 && item.quality > 0 ? Math.floor(item.quality / step) : 0;
-      if (steps <= 0) return '';
-      return scaleRuneLineByEffect(mGrant[1]!.trim(), steps);
-    };
     for (const line of effectiveImplicits) {
       if (!tryConsumeLocalArmourMod(line, acc, opts?.allowBonded, isShield)) {
-        const expanded = expandArmourQualityGrant(line);
+        const expanded = expandQualityGrant(line);
         if (expanded) globalImplicits.push(expanded);
       }
     }
     for (const line of effectiveExplicits) {
       if (!tryConsumeLocalArmourMod(line, acc, opts?.allowBonded, isShield)) {
-        const expanded = expandArmourQualityGrant(line);
+        const expanded = expandQualityGrant(line);
         if (expanded) globalExplicits.push(expanded);
       }
     }
@@ -760,10 +765,16 @@ export function resolveItemEffectiveStats(
     eleDamage: {},
   };
   for (const line of effectiveImplicits) {
-    if (!tryConsumeLocalWeaponMod(line, acc, opts?.allowBonded, item.quality)) globalImplicits.push(line);
+    if (!tryConsumeLocalWeaponMod(line, acc, opts?.allowBonded, item.quality)) {
+      const expanded = expandQualityGrant(line);
+      if (expanded) globalImplicits.push(expanded);
+    }
   }
   for (const line of effectiveExplicits) {
-    if (!tryConsumeLocalWeaponMod(line, acc, opts?.allowBonded, item.quality)) globalExplicits.push(line);
+    if (!tryConsumeLocalWeaponMod(line, acc, opts?.allowBonded, item.quality)) {
+      const expanded = expandQualityGrant(line);
+      if (expanded) globalExplicits.push(expanded);
+    }
   }
 
   if (item.localStatsPrecomputed) {
