@@ -1493,6 +1493,34 @@ export function evaluatePreStatBuildEnablingUniques(
         continue;
       }
 
+      // 8b. Legacy of Fury ("Nearby Enemies are Scorched" — base -10% Ele Res, scaled by Scorch Effect, cap 30%)
+      if (/^Nearby Enemies are Scorched$/i.test(line)) {
+        if (
+          !db.getEvalContext().conditions.EnemyScorched &&
+          !hasStatSource(db, 'EnemyFireResist', 'BASE', 'Scorch')
+        ) {
+          let localScorchEff = 0;
+          for (const otherLine of lines) {
+            const mScEff = otherLine.match(/^(\d+)% increased Effect of Scorch$/i);
+            if (mScEff) localScorchEff += Number(mScEff[1]);
+          }
+          const dbScorchEff =
+            db.sum('INC', 'EnemyScorchEffect') + db.sum('INC', 'EnemyAilmentEffect');
+          // Avoid double-counting if modParser already parsed local "increased Effect of Scorch" into db
+          const totalScorchEffInc = Math.max(localScorchEff, dbScorchEff);
+          const scorchVal = Math.min(30, Math.floor(10 * Math.max(0, 1 + totalScorchEffInc / 100) + 1e-9));
+          if (scorchVal > 0) {
+            const scorchSrc = `${src} (Scorched)`;
+            db.addMod(mkMod('EnemyFireResist', 'BASE', -scorchVal, scorchSrc));
+            db.addMod(mkMod('EnemyColdResist', 'BASE', -scorchVal, scorchSrc));
+            db.addMod(mkMod('EnemyLightningResist', 'BASE', -scorchVal, scorchSrc));
+          }
+        }
+        db.setCondition('EnemyScorched', true);
+        appliedSources.push(src);
+        continue;
+      }
+
       // 9. Singularity ("Nearby Enemies are Hindered, with 25% reduced Movement Speed")
       if (/^Nearby Enemies are Hindered\b/i.test(line)) {
         db.setCondition('EnemyHindered', true);

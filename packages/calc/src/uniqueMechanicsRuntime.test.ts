@@ -1559,4 +1559,55 @@ describe('uniqueMechanicsRuntime — 5. Pool-Conversion Keystones & Faithguard',
     expect(postDb.sum('INC', 'ElementalDamage', ModFlag.Hit)).toBe(160);
     expect(postDb.sum('INC', 'ElementalDamage', ModFlag.Ailment)).toBe(160);
   });
+
+  it('evaluates Legacy of Fury Nearby Enemies are Scorched with Scorch Effect scaling, 30% cap, and dedupe', () => {
+    const db = new ModDB();
+    const legacyOfFury = makeItem({
+      id: 'boots-lof',
+      name: 'Legacy of Fury',
+      baseName: 'Wyrmscale Boots',
+      slotType: 'Boots',
+      explicits: [
+        'Nearby Enemies are Scorched',
+        '48% increased Effect of Scorch',
+      ],
+    });
+    evaluatePreStatBuildEnablingUniques({
+      db,
+      equippedItems: [{ slot: 'Boots', item: legacyOfFury }],
+      game: 'poe1',
+    });
+    // Base -10% Ele Res * (1 + 48/100) = -14.8 -> floor = -14%
+    expect(db.getEvalContext().conditions.EnemyScorched).toBe(true);
+    expect(db.sum('BASE', 'EnemyFireResist')).toBe(-14);
+    expect(db.sum('BASE', 'EnemyColdResist')).toBe(-14);
+    expect(db.sum('BASE', 'EnemyLightningResist')).toBe(-14);
+
+    // Dedupe: calling again when EnemyScorched is already active must not double-apply
+    evaluatePreStatBuildEnablingUniques({
+      db,
+      equippedItems: [{ slot: 'Boots', item: legacyOfFury }],
+      game: 'poe1',
+    });
+    expect(db.sum('BASE', 'EnemyFireResist')).toBe(-14);
+
+    // Cap at -30% when Scorch Effect >= 200%
+    const cappedDb = new ModDB();
+    cappedDb.addMod({
+      name: 'EnemyScorchEffect',
+      type: 'INC',
+      value: 250,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Tree',
+    });
+    evaluatePreStatBuildEnablingUniques({
+      db: cappedDb,
+      equippedItems: [{ slot: 'Boots', item: legacyOfFury }],
+      game: 'poe1',
+    });
+    expect(cappedDb.sum('BASE', 'EnemyFireResist')).toBe(-30);
+    expect(cappedDb.sum('BASE', 'EnemyColdResist')).toBe(-30);
+    expect(cappedDb.sum('BASE', 'EnemyLightningResist')).toBe(-30);
+  });
 });
