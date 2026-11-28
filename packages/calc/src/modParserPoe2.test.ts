@@ -2093,6 +2093,28 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
           tags: [{ type: 'Multiplier', var: 'EnemyElementalAilmentCount' }],
         }),
       ]);
+      // Wave 6G: poe2-regression-bugs semantic flags & mods
+      expect(parseModLine('Grants 1 Rage on Hit', 'Item:Weapon 1')).toEqual([
+        expect.objectContaining({ name: 'RageOnHit', type: 'BASE', value: 1 }),
+      ]);
+      expect(parseModLine('Cannot Leech Mana', 'Item:Gloves')).toEqual([
+        expect.objectContaining({ name: 'CannotLeechMana', type: 'FLAG', value: true }),
+      ]);
+      expect(parseModLine('Maim on Critical Hit', 'Item:Weapon 1')).toEqual([
+        expect.objectContaining({ name: 'MaimOnCrit', type: 'FLAG', value: true }),
+      ]);
+      expect(parseModLine("Can't use Body Armour", 'Item:Helmet')).toEqual([
+        expect.objectContaining({ name: 'DisablesSlot:Body Armour', type: 'FLAG', value: true }),
+      ]);
+      expect(
+        parseModLine('This item gains bonuses from Socketed Items as though it was a Body Armour', 'Item:Helmet'),
+      ).toEqual([expect.objectContaining({ name: 'SocketedItemsAsBodyArmour', type: 'FLAG', value: true })]);
+      expect(parseModLine('Your speed is unaffected by Slows', 'Item:Boots')).toEqual([
+        expect.objectContaining({ name: 'ActionSpeedCannotBeReducedBelowBase', type: 'FLAG', value: true }),
+      ]);
+      expect(parseModLine('Attacks consume an Endurance Charge to Critically Hit', 'Item:Weapon 1')).toEqual([
+        expect.objectContaining({ name: 'AttacksConsumeEnduranceChargeToCrit', type: 'FLAG', value: true }),
+      ]);
     });
   });
 });

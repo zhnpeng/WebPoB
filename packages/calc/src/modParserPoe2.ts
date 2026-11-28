@@ -3047,6 +3047,43 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
       },
     ],
   },
+  // Wave 6G: poe2-regression-bugs semantic flags & mods
+  {
+    pattern: /^Grants (\d+) Rage on Hit$/i,
+    build: (m, src) => [mkMod('RageOnHit', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Cannot Leech Mana$/i,
+    build: (_, src) => [mkMod('CannotLeechMana', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Maim on Critical Hit$/i,
+    build: (_, src) => [mkMod('MaimOnCrit', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Can't use Body Armour$/i,
+    build: (_, src) => [mkMod('DisablesSlot:Body Armour', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^This item gains bonuses from Socketed Items as though it was a Body Armour$/i,
+    build: (_, src) => [mkMod('SocketedItemsAsBodyArmour', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Your speed is unaffected by Slows$/i,
+    build: (_, src) => [mkMod('ActionSpeedCannotBeReducedBelowBase', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Lightning damage from Hits Contributes to Electrocution Buildup$/i,
+    build: (_, src) => [mkMod('LightningDamageContributesToElectrocution', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Physical damage from Hits Contributes to Chill Magnitude and Freeze Buildup$/i,
+    build: (_, src) => [mkMod('PhysicalDamageContributesToChillAndFreeze', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Attacks consume an Endurance Charge to Critically Hit$/i,
+    build: (_, src) => [mkMod('AttacksConsumeEnduranceChargeToCrit', 'FLAG', true, src)],
+  },
 
   // =========================================================================
   // 5. PoE 2 Skill-Specific & Tag Gem Level Scaling (+X to Level of all <SkillName|Nova|...> Skills)
