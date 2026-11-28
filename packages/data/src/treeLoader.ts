@@ -527,6 +527,74 @@ function hydrateSkillParts(
   });
 }
 
+const UPSTREAM_MISSING_QUALITY_COMPILED_MODS: Readonly<
+  Record<GameId, Readonly<Record<string, readonly CompiledGemMod[]>>>
+> = {
+  poe1: {
+    // Upstream PoB1 3.30 Data/Skills/act_str.lua: active_skill_hit_ailment_damage_with_projectile_+%_final = 0.5/qual
+    poe1_moltenstrike: [
+      {
+        name: 'Damage',
+        type: 'MORE',
+        value: 0.5,
+        flags: ModFlag.Projectile | ModFlag.Hit | ModFlag.Ailment,
+        keywordFlags: 0,
+      },
+    ],
+    poe1_vaalmoltenstrike: [
+      {
+        name: 'Damage',
+        type: 'MORE',
+        value: 0.5,
+        flags: ModFlag.Projectile | ModFlag.Hit | ModFlag.Ailment,
+        keywordFlags: 0,
+      },
+    ],
+    // Upstream PoB1 3.30 Data/Skills/sup_str.lua: cruelty_effect_+% = 0.25/qual
+    poe1_supportcruelty: [
+      {
+        name: 'CrueltyEffect',
+        type: 'INC',
+        value: 0.25,
+        flags: 0,
+        keywordFlags: 0,
+      },
+    ],
+    // Upstream PoB1 3.30 Data/Skills/act_dex.lua: Windburst 0.5% increased Projectile Damage per quality
+    poe1_windburst: [
+      {
+        name: 'Damage',
+        type: 'INC',
+        value: 0.5,
+        flags: ModFlag.Projectile,
+        keywordFlags: 0,
+      },
+    ],
+  },
+  poe2: {
+    // Upstream PoB2 0.5 Data/Skills/act_str.lua: walking_calamity_non_skill_base_all_damage_%_to_gain_as_fire = 0.5/qual
+    poe2_walkingcalamity: [
+      {
+        name: 'DamageGainAsFire',
+        type: 'BASE',
+        value: 0.5,
+        flags: 0,
+        keywordFlags: 0,
+      },
+    ],
+    // Upstream PoB2 0.5 Data/Skills/act_str.lua: armour_break_amount_+% = 1/qual
+    poe2_resonatingshield: [
+      {
+        name: 'ArmourBreak',
+        type: 'INC',
+        value: 1,
+        flags: 0,
+        keywordFlags: 0,
+      },
+    ],
+  },
+};
+
 function hydrateQualityStats(
   qs?: Array<{ t: string; q: number }> | Record<string, never>,
 ): GemDefinition['qualityStats'] | undefined {
@@ -607,10 +675,18 @@ function synthesizeGemDefinition(
   const addSkillTypes = hydrateStringList(entry.addTypes);
   const excludeSkillTypes = hydrateStringList(entry.excTypes);
   const compiledMods = hydrateCompiledMods(entry.cmods);
-  const qualityCompiledMods = hydrateCompiledMods(entry.qmods);
+  const rawQualityCompiledMods = hydrateCompiledMods(entry.qmods);
+  const qualityStats = hydrateQualityStats(entry.qs);
+  const fallbackQualityMods =
+    (!rawQualityCompiledMods || rawQualityCompiledMods.length === 0) &&
+    (!qualityStats || qualityStats.length === 0)
+      ? UPSTREAM_MISSING_QUALITY_COMPILED_MODS[game][entry.id]
+      : undefined;
+  const qualityCompiledMods =
+    rawQualityCompiledMods ??
+    (fallbackQualityMods ? fallbackQualityMods.map((m) => ({ ...m })) : undefined);
   const skillData = hydrateSkillData(entry.sdata);
   const minionBase = hydrateMinionBase(entry.mb);
-  const qualityStats = hydrateQualityStats(entry.qs);
   const levelScaling = hydrateLevelScaling(entry.ls);
   const parts = hydrateSkillParts(entry.parts);
 

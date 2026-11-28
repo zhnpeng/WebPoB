@@ -970,6 +970,9 @@ const POE2_LEGACY_GEM_ALIASES: Readonly<Record<string, string>> = {
   metacastonshockplayer: 'poe2_castonelementalailment',
   castonshock: 'poe2_castonelementalailment',
   skillgemcastonshock: 'poe2_castonelementalailment',
+  // PoE 2 v0.1/v0.2 SupportCoursingCurrentPlayer -> Shock Conduction (poe2_shockconductionsupport)
+  supportcoursingcurrentplayer: 'poe2_shockconductionsupport',
+  supportgemcoursingcurrent: 'poe2_shockconductionsupport',
 };
 
 interface GemLookupIndex {

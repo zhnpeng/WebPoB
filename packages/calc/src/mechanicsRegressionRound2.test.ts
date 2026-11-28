@@ -1299,5 +1299,100 @@ describe('Mechanism-Layer Regression Suite — Round 2 (Upstream PoB spec/System
       expect(db.sum('INC', 'DotDamage', ModFlag.Attack | ModFlag.Melee, KeywordFlag.Bleed)).toBe(90);
       expect(db.sum('INC', 'DotDamage', ModFlag.Attack | ModFlag.Bow, KeywordFlag.Bleed)).toBe(0);
     });
+
+    it('injects verified upstream 3.30/0.5 missing qualityCompiledMods in treeLoader and maps PoE 2 SupportCoursingCurrentPlayer to Shock Conduction (Wave 4S)', () => {
+      const prevPoe1 = getGemsForGame('poe1');
+      const prevPoe2 = getGemsForGame('poe2');
+      try {
+        const poe1Hydrated = registerGemsData('poe1', {
+          game: 'poe1',
+          count: 2,
+          gems: [
+            {
+              id: 'poe1_moltenstrike',
+              en: 'Molten Strike',
+              cat: 'active',
+              color: 'red',
+              tags: ['attack', 'melee', 'projectile', 'fire', 'area'],
+              qs: {},
+            },
+            {
+              id: 'poe1_supportcruelty',
+              en: 'Cruelty',
+              cat: 'support',
+              color: 'red',
+              tags: ['support'],
+              qs: {},
+            },
+          ],
+        });
+        const ms = poe1Hydrated.find((g) => g.id === 'poe1_moltenstrike')!;
+        expect(ms.qualityCompiledMods).toEqual([
+          expect.objectContaining({
+            name: 'Damage',
+            type: 'MORE',
+            value: 0.5,
+            flags: ModFlag.Projectile | ModFlag.Hit | ModFlag.Ailment,
+          }),
+        ]);
+        const cruelty = poe1Hydrated.find((g) => g.id === 'poe1_supportcruelty')!;
+        expect(cruelty.qualityCompiledMods).toEqual([
+          expect.objectContaining({ name: 'CrueltyEffect', type: 'INC', value: 0.25 }),
+        ]);
+
+        const poe2Hydrated = registerGemsData('poe2', {
+          game: 'poe2',
+          count: 3,
+          gems: [
+            {
+              id: 'poe2_walkingcalamity',
+              en: 'Walking Calamity',
+              cat: 'active',
+              color: 'red',
+              tags: ['attack', 'fire'],
+            },
+            {
+              id: 'poe2_shockconductionsupport',
+              en: 'Shock Conduction',
+              cat: 'support',
+              color: 'blue',
+              tags: ['support', 'lightning'],
+              altIds: ['SupportShockConductionPlayer', 'SupportGemCoursingCurrent'],
+            },
+            {
+              id: 'poe2_deadlycurrentsupport',
+              en: 'Coursing Current',
+              cat: 'support',
+              color: 'blue',
+              tags: ['support', 'lightning'],
+              altIds: ['SupportDeadlyCurrentPlayer', 'SupportGemDeadlyCurrent'],
+            },
+          ],
+        });
+        const wc = poe2Hydrated.find((g) => g.id === 'poe2_walkingcalamity')!;
+        expect(wc.qualityCompiledMods).toEqual([
+          expect.objectContaining({ name: 'DamageGainAsFire', type: 'BASE', value: 0.5 }),
+        ]);
+        // Legacy SupportCoursingCurrentPlayer -> Shock Conduction (matches upstream PoB2 Gems.lua)
+        expect(
+          resolveGemFromPobRef('poe2', {
+            nameSpec: 'Coursing Current',
+            skillId: 'SupportCoursingCurrentPlayer',
+            gemId: 'Metadata/Items/Gems/SupportGemCoursingCurrent',
+          })?.id,
+        ).toBe('poe2_shockconductionsupport');
+        // Modern v0.5 SupportDeadlyCurrentPlayer -> Coursing Current (poe2_deadlycurrentsupport)
+        expect(
+          resolveGemFromPobRef('poe2', {
+            nameSpec: 'Coursing Current',
+            skillId: 'SupportDeadlyCurrentPlayer',
+            gemId: 'Metadata/Items/Gems/SupportGemDeadlyCurrent',
+          })?.id,
+        ).toBe('poe2_deadlycurrentsupport');
+      } finally {
+        setRegisteredGems('poe1', prevPoe1);
+        setRegisteredGems('poe2', prevPoe2);
+      }
+    });
   });
 });
