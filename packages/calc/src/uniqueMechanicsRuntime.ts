@@ -2141,7 +2141,10 @@ export function evaluatePostPoolBuildEnablingUniques(
       if (/^You have Onslaught while (?:you have Fortify|Fortified)$/i.test(line)) {
         if (ctx.fortified) {
           perseveranceGrantedOnslaught = true;
-          if (!hasStatSource(db, 'MovementSpeed', 'INC', 'Onslaught')) {
+          const hasActiveOnslaught = db
+            .calcStat('MovementSpeed')
+            .sources.some((s) => s.type === 'INC' && /onslaught/i.test(s.source));
+          if (!hasActiveOnslaught) {
             db.addMod(mkMod('Speed', 'INC', 20, `${src} (Onslaught)`, ModFlag.Attack));
             db.addMod(mkMod('Speed', 'INC', 20, `${src} (Onslaught)`, ModFlag.Spell));
             db.addMod(mkMod('MovementSpeed', 'INC', 20, `${src} (Onslaught)`));

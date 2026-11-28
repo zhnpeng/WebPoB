@@ -2352,6 +2352,7 @@ export function evaluateAurasAndWatchersEye(
   // Pre-scan equipped gear & socketed jewels for per-skill aura/herald/golem effect, reservation efficiency,
   // Sublime Vision restrictions, Curse-on-Hit gear mods, Replica Farrul's Fur, Annihilation's Approach, and item Exposure.
   const perSkillEffectPct = new Map<string, number>();
+  const perSkillEffectScannedSources = new Set<string>();
   const perSkillResEffPct = new Map<string, number>();
   let sublimeOnlyAuraLower: string | null = null;
   const curseOnHitEntries: Array<{ curseName: string; effectPct: number; source: string }> = [];
@@ -2375,6 +2376,7 @@ export function evaluateAurasAndWatchersEye(
       if (mSkillEff) {
         const key = mSkillEff[1]!.trim().toLowerCase();
         perSkillEffectPct.set(key, (perSkillEffectPct.get(key) ?? 0) + Number(mSkillEff[2]));
+        perSkillEffectScannedSources.add(`${key}|${label}`);
         continue;
       }
       const mGolemEff = line.match(
@@ -3646,7 +3648,27 @@ export function evaluateAurasAndWatchersEye(
         lowerAuraName === 'defiance banner');
     const bannerAuraEffInc = isBannerAura ? playerDb.sum('INC', 'BannerAuraEffect') : 0;
 
-    const skillSpecificEffectPct = perSkillEffectPct.get(lowerAuraName) ?? 0;
+    const auraEffectDbKeys: string[] = [];
+    const auraLabelForKey = cand.canonicalAuraName ?? def.name.en;
+    if (auraLabelForKey) {
+      auraEffectDbKeys.push(`AuraEffect:${auraLabelForKey}`);
+      const noSpaceAura = auraLabelForKey.replace(/\s+/g, '');
+      if (noSpaceAura !== auraLabelForKey) {
+        auraEffectDbKeys.push(`AuraEffect:${noSpaceAura}`);
+      }
+      auraEffectDbKeys.push(`${noSpaceAura}AuraEffect`);
+    }
+    let dbPerAuraEffectPct = 0;
+    for (const statKey of auraEffectDbKeys) {
+      const statRes = playerDb.calcStat(statKey);
+      for (const s of statRes.sources) {
+        if (s.type !== 'INC' || typeof s.value !== 'number') continue;
+        if (perSkillEffectScannedSources.has(`${lowerAuraName}|${s.source}`)) continue;
+        dbPerAuraEffectPct += s.value;
+      }
+    }
+    const skillSpecificEffectPct =
+      (perSkillEffectPct.get(lowerAuraName) ?? 0) + dbPerAuraEffectPct;
     const skillSpecificResEffPct =
       (perSkillResEffPct.get(lowerAuraName) ?? 0) +
       playerDb.sum('INC', `SkillManaReservationEfficiency:${lowerAuraName}`);

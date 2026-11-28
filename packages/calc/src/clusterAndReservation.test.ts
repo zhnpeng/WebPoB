@@ -2102,4 +2102,80 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     }
     expect(dist.get(medSock0)).toBe(4);
   });
+
+  it('consumes ModDB per-aura AuraEffect:<AuraName> INC without double-counting item-scanned lines', () => {
+    const prideDef: GemDefinition = {
+      id: 'poe1_pride',
+      name: { en: 'Pride', zh: '骄傲' },
+      category: 'active',
+      game: 'poe1',
+      color: 'red',
+      tags: ['aura', 'aoe', 'physical'],
+      modFlags: 0,
+      keywordFlags: 0,
+      manaReservationPct: 50,
+      stats: [],
+      compiledMods: [
+        {
+          name: 'PhysicalDamageTaken',
+          type: 'MORE',
+          value: 39,
+          flags: 0,
+          keywordFlags: 0,
+          target: 'enemy',
+        },
+      ],
+    };
+    const db = new ModDB();
+    // ModDB per-aura effect from tree/bloodline/cluster notable (not an item) -> +50% Pride Aura Effect
+    db.addMod({
+      name: 'AuraEffect:Pride',
+      type: 'INC',
+      value: 50,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Tree: Pride Notable',
+    });
+    // Also simulate a Belt item with "Pride has 20% increased Aura Effect" parsed into BOTH item text and ModDB
+    db.addMod({
+      name: 'AuraEffect:Pride',
+      type: 'INC',
+      value: 20,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Item (Belt): Test Belt',
+    });
+    const res = evaluateAurasAndWatchersEye({
+      build: mkBuild({
+        game: 'poe1',
+        items: {
+          belt1: {
+            id: 'belt1',
+            name: 'Test Belt',
+            baseName: 'Leather Belt',
+            rarity: 'RARE',
+            slotType: 'Belt',
+            quality: 0,
+            implicits: ['Pride has 20% increased Aura Effect'],
+            explicits: [],
+            rawText: '',
+          },
+        },
+        equipped: { Belt: 'belt1' },
+        skills: [
+          {
+            id: 'sg-pride',
+            label: 'Pride',
+            enabled: true,
+            gems: [{ instanceId: 'pr1', gemId: 'poe1_pride', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+      }),
+      playerDb: db,
+      getGemByIdFn: (_game, id) => (id === 'poe1_pride' ? prideDef : undefined),
+      maxMana: 1000,
+    });
+    // Total Pride Aura Effect = +50% (Tree) + 20% (Belt, counted once) = +70% -> trunc(39 * 1.7) = 66% MORE
+    expect(res.enemyDb.more('PhysicalDamageTaken')).toBeCloseTo(1.66, 4);
+  });
 });

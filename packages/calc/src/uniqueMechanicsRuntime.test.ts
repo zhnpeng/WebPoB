@@ -1610,4 +1610,42 @@ describe('uniqueMechanicsRuntime — 5. Pool-Conversion Keystones & Faithguard',
     expect(cappedDb.sum('BASE', 'EnemyColdResist')).toBe(-30);
     expect(cappedDb.sum('BASE', 'EnemyLightningResist')).toBe(-30);
   });
+
+  it('grants Perseverance Onslaught when only an inactive conditional Onslaught mod exists in ModDB', () => {
+    const db = new ModDB();
+    // Inactive conditional Onslaught (e.g. "Onslaught if you have Killed Recently" when KilledRecently is false)
+    db.addMod({
+      name: 'MovementSpeed',
+      type: 'INC',
+      value: 20,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Tree (Onslaught)',
+      tags: [{ type: 'Condition', var: 'KilledRecently' }],
+    });
+    const perseverance = makeItem({
+      id: 'belt-persev',
+      name: 'Perseverance',
+      baseName: 'Vanguard Belt',
+      slotType: 'Belt',
+      explicits: ['You have Onslaught while you have Fortify'],
+    });
+    evaluatePostPoolBuildEnablingUniques({
+      db,
+      equippedItems: [{ slot: 'Belt', item: perseverance }],
+      str: 100,
+      dex: 100,
+      int: 100,
+      life: 4000,
+      mana: 500,
+      energyShield: 0,
+      armour: 10000,
+      evasion: 10000,
+      fortified: true,
+    });
+    // Inactive conditional Onslaught must NOT suppress Perseverance's active Onslaught
+    expect(db.sum('INC', 'MovementSpeed')).toBe(20);
+    expect(db.sum('INC', 'Speed', ModFlag.Attack)).toBe(20);
+    expect(db.sum('INC', 'Speed', ModFlag.Spell)).toBe(20);
+  });
 });
