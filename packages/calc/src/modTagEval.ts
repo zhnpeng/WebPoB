@@ -344,6 +344,21 @@ function evalSingleConditionVar(varExpr: string, ctx?: ModEvalContext): boolean 
   if (varExpr === 'CritInPast8Sec') {
     return Boolean(ctx.conditions.CritRecently || ctx.conditions.SkillCritRecently);
   }
+  if (varExpr === 'CritRecently') {
+    return Boolean(ctx.conditions.SkillCritRecently);
+  }
+  if (varExpr === 'EnemyBurning') {
+    return Boolean(ctx.conditions.EnemyIgnited || ctx.conditions.EnemyOnBurningGround);
+  }
+  if (varExpr === 'Burning') {
+    return Boolean(ctx.conditions.Ignited);
+  }
+  if (varExpr === 'OnConsecratedGround') {
+    return Boolean(ctx.conditions.ConsecratedGround);
+  }
+  if (varExpr === 'ConsecratedGround') {
+    return Boolean(ctx.conditions.OnConsecratedGround);
+  }
   return false;
 }
 
@@ -379,16 +394,33 @@ function resolveMultiplierValue(varName: string, ctx?: ModEvalContext): number {
   return 0;
 }
 
+const STAT_ALIASES: Record<string, string> = {
+  Strength: 'Str',
+  Str: 'Strength',
+  Dexterity: 'Dex',
+  Dex: 'Dexterity',
+  Intelligence: 'Int',
+  Int: 'Intelligence',
+  ES: 'EnergyShield',
+  EnergyShield: 'ES',
+};
+
 function resolveThresholdValue(name: string, ctx: ModEvalContext, preferStat: boolean): number {
+  const alias = STAT_ALIASES[name];
   if (preferStat) {
     if (ctx.stats[name] !== undefined) return ctx.stats[name];
+    if (alias && ctx.stats[alias] !== undefined) return ctx.stats[alias];
     if (ctx.multipliers[name] !== undefined) return ctx.multipliers[name];
+    if (alias && ctx.multipliers[alias] !== undefined) return ctx.multipliers[alias];
     return resolveMultiplierValue(name, ctx);
   }
   if (ctx.multipliers[name] !== undefined) return ctx.multipliers[name];
+  if (alias && ctx.multipliers[alias] !== undefined) return ctx.multipliers[alias];
   const resolved = resolveMultiplierValue(name, ctx);
   if (resolved !== 0) return resolved;
-  return ctx.stats[name] ?? 0;
+  if (ctx.stats[name] !== undefined) return ctx.stats[name];
+  if (alias && ctx.stats[alias] !== undefined) return ctx.stats[alias];
+  return 0;
 }
 
 function evalConditionVar(varExpr: string, ctx?: ModEvalContext): boolean {

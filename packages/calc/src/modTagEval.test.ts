@@ -1271,4 +1271,22 @@ describe('parseConditionalSuffix', () => {
       evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'Shapeshifted' }] }), ctxBear).active,
     ).toBe(true);
   });
+
+  it('evaluates Wave 4Y PoE 1+2 parity aliases (EnemyBurning<-EnemyIgnited, OnConsecratedGround, CritRecently, PerStat attribute aliases)', () => {
+    const ctx = createEmptyEvalContext();
+    ctx.conditions.EnemyIgnited = true;
+    ctx.conditions.ConsecratedGround = true;
+    ctx.conditions.SkillCritRecently = true;
+    ctx.stats.Str = 450;
+    ctx.stats.EnergyShield = 1200;
+
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'EnemyBurning' }] }), ctx).active).toBe(true);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'OnConsecratedGround' }] }), ctx).active).toBe(true);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'CritRecently' }] }), ctx).active).toBe(true);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'PerStat', stat: 'Strength', div: 10 }] }), ctx).scale).toBe(45);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'PerStat', stat: 'ES', div: 100 }] }), ctx).scale).toBe(12);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'StatThreshold:Strength:400' }] }), ctx).active,
+    ).toBe(true);
+  });
 });
