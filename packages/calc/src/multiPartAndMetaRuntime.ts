@@ -1441,6 +1441,68 @@ export function evaluatePersistentBuffAndStanceSkills(
           appliedSkills.push('Combat Frenzy');
           continue;
         }
+
+        if (lower === 'charge regulation') {
+          if (seenPersistentBuffs.has('charge regulation')) continue;
+          seenPersistentBuffs.add('charge regulation');
+          // PoB 2 Data/Skills/act_int.lua:3119-3245 ChargeRegulationPlayer (Lv1..40):
+          // - With Frenzy Charges (>=1): Speed INC (20%..30%)
+          // - With Power Charges (>=1): CritChance MORE (20%..32%)
+          // - With Endurance Charges (>=1): Armour / Evasion / EnergyShield MORE (15%..24%)
+          const CHARGE_REG_SPEED_INC = [
+            20, 21, 21, 21, 21, 22, 22, 22, 22, 23,
+            23, 23, 23, 24, 24, 24, 24, 25, 25, 25,
+            25, 26, 26, 26, 26, 27, 27, 27, 27, 28,
+            28, 28, 28, 29, 29, 29, 29, 30, 30, 30,
+          ];
+          const CHARGE_REG_CRIT_MORE = [
+            20, 20, 20, 21, 21, 21, 22, 22, 22, 23,
+            23, 23, 24, 24, 24, 25, 25, 25, 26, 26,
+            26, 27, 27, 27, 28, 28, 28, 29, 29, 29,
+            30, 30, 30, 31, 31, 31, 32, 32, 32, 33,
+          ];
+          const CHARGE_REG_DEF_MORE = [
+            15, 15, 16, 16, 16, 16, 17, 17, 17, 17,
+            18, 18, 18, 18, 19, 19, 19, 19, 20, 20,
+            20, 20, 21, 21, 21, 21, 22, 22, 22, 22,
+            23, 23, 23, 23, 24, 24, 24, 24, 25, 25,
+          ];
+          const lvIdx = Math.max(0, Math.min(39, Math.round(level) - 1));
+          const speedInc = CHARGE_REG_SPEED_INC[lvIdx] ?? 25;
+          const critMore = CHARGE_REG_CRIT_MORE[lvIdx] ?? 26;
+          const defMore = CHARGE_REG_DEF_MORE[lvIdx] ?? 20;
+          addPlayerMod({
+            name: 'Speed',
+            type: 'INC',
+            value: speedInc,
+            flags: 0,
+            keywordFlags: 0,
+            source: 'Charge Regulation',
+            tags: [{ type: 'Multiplier', var: 'FrenzyCharge', limit: 1 }],
+          });
+          addPlayerMod({
+            name: 'CritChance',
+            type: 'MORE',
+            value: critMore,
+            flags: 0,
+            keywordFlags: 0,
+            source: 'Charge Regulation',
+            tags: [{ type: 'Multiplier', var: 'PowerCharge', limit: 1 }],
+          });
+          for (const defStat of ['Armour', 'Evasion', 'EnergyShield'] as const) {
+            addPlayerMod({
+              name: defStat,
+              type: 'MORE',
+              value: defMore,
+              flags: 0,
+              keywordFlags: 0,
+              source: 'Charge Regulation',
+              tags: [{ type: 'Multiplier', var: 'EnduranceCharge', limit: 1 }],
+            });
+          }
+          appliedSkills.push('Charge Regulation');
+          continue;
+        }
       }
 
       // Cross-game persistent buffs: Trinity & Plague Bearer (deduplicated across socket groups)

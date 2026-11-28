@@ -1609,12 +1609,14 @@ export function evaluateTattoosAndRunegrafts(
         continue;
       }
 
-      // 3d. Global Defences inside Runegraft / nodeOverrides (e.g. Runegraft of the Fortress `40% increased Global Defences`)
+      // 3d. Global Defences inside Runegraft / nodeOverrides
+      //     (e.g. Runegraft of the Fortress `40% increased Global Defences` or `40% increased Defences`)
       const mGlobalDef = line.match(
-        /^(\d+)% (increased|reduced) Global Defences$/i,
+        /^(\d+)% (increased|reduced) (?:Global )?Defences$/i,
       );
       if (mGlobalDef) {
-        if (!skipNative) {
+        const alreadyNative = skipNative && parseModLines([line], src).length > 0;
+        if (!alreadyNative) {
           const val =
             mGlobalDef[2]!.toLowerCase() === 'reduced'
               ? -Number(mGlobalDef[1])
@@ -1661,6 +1663,15 @@ export function evaluateTattoosAndRunegrafts(
         const mBuffExpire = line.match(/^Buffs on you expire (\d+)% slower$/i);
         if (mBuffExpire) {
           addedMods.push(mkMod('BuffExpireRate', 'INC', -Number(mBuffExpire[1]), src));
+          continue;
+        }
+        // Runegraft of the Sinistral: "10% more Attack speed with Offhand" (PoB 1 Speed MORE 10, ModFlag.Attack)
+        const mOffhandSpeed = line.match(/^(\d+)% more Attack speed with Offhand$/i);
+        if (mOffhandSpeed) {
+          const alreadyNative = skipNative && parseModLines([line], src).length > 0;
+          if (!alreadyNative) {
+            addedMods.push(mkMod('Speed', 'MORE', Number(mOffhandSpeed[1]), src, ModFlag.Attack));
+          }
           continue;
         }
       }

@@ -1323,4 +1323,54 @@ describe('evaluatePoe2UnbakedSocketedRunes', () => {
     expect(lines).toContain('+50 to Spirit');
     expect(lines).not.toContain('5% increased Spirit Reservation Efficiency');
   });
+
+  it('evaluates PoE 1 Runegraft of the Fortress ("40% increased Defences") and Runegraft of the Sinistral ("10% more Attack speed with Offhand")', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe1',
+      version: '3_30',
+      classStartNodeIds: { Marauder: 1 },
+      nodes: {
+        1: mkNode(1, 'Marauder', 'start', 0, 0),
+        25011: mkNode(25011, 'Mastery 1', 'mastery', 100, 0, []),
+        25012: mkNode(25012, 'Mastery 2', 'mastery', 200, 0, []),
+      },
+    };
+    const build = mkBuild({
+      game: 'poe1',
+      tree: {
+        title: 'Runegraft Test',
+        treeVersion: '3_30',
+        allocatedNodeIds: [1, 25011, 25012],
+        weaponSet1NodeIds: [],
+        weaponSet2NodeIds: [],
+        masteryEffects: {},
+        socketedJewels: {},
+        nodeOverrides: {
+          25011: {
+            name: 'Runegraft of the Sinistral',
+            stats: ['10% more Attack speed with Offhand', 'Limited to 1 Runegraft of the Sinistral'],
+          },
+          25012: {
+            name: 'Runegraft of the Fortress',
+            stats: ['10% reduced Attributes', '40% increased Defences', 'Limited to 1 Runegraft of the Fortress'],
+          },
+        },
+      },
+    });
+    const res = evaluateTattoosAndRunegrafts(
+      build,
+      tree,
+      new Set([1, 25011, 25012]),
+      { skipNativelyParsedRunegraftStats: false },
+    );
+
+    expect(res.addedMods).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'Speed', type: 'MORE', value: 10, flags: ModFlag.Attack }),
+        expect.objectContaining({ name: 'Armour', type: 'INC', value: 40 }),
+        expect.objectContaining({ name: 'Evasion', type: 'INC', value: 40 }),
+        expect.objectContaining({ name: 'EnergyShield', type: 'INC', value: 40 }),
+      ]),
+    );
+  });
 });

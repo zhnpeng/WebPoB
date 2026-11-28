@@ -1076,4 +1076,39 @@ describe('multiPartAndMetaRuntime', () => {
       ]),
     );
   });
+
+  it('evaluates PoE 2 Charge Regulation persistent Spirit buff gated by active Frenzy/Power/Endurance charges', () => {
+    const crDef = makeGemDef({
+      id: 'poe2_chargeregulation',
+      en: 'Charge Regulation',
+      game: 'poe2',
+      tags: ['Buff', 'Persistent'],
+    });
+    const playerDb = new ModDB();
+    const enemyDb = new ModDB();
+    const res = evaluatePersistentBuffAndStanceSkills(
+      [makeGroup({ gems: [makeGemInst({ gemId: crDef.id, level: 20 })] })],
+      1,
+      'poe2',
+      playerDb,
+      enemyDb,
+      (id) => (id === crDef.id ? crDef : undefined),
+    );
+    expect(res.appliedSkills).toContain('Charge Regulation');
+
+    // Without charges active, all Charge Regulation bonuses evaluate to 0 / 1.0x
+    expect(playerDb.sum('INC', 'Speed')).toBe(0);
+    expect(playerDb.more('CritChance')).toBe(1);
+    expect(playerDb.more('Armour')).toBe(1);
+
+    // With Frenzy/Power/Endurance charges active (>= 1), Lv20 grants +25% Speed INC, 26% MORE CritChance, 20% MORE Defences
+    playerDb.setMultiplier('FrenzyCharge', 3);
+    playerDb.setMultiplier('PowerCharge', 2);
+    playerDb.setMultiplier('EnduranceCharge', 1);
+    expect(playerDb.sum('INC', 'Speed')).toBe(25);
+    expect(playerDb.more('CritChance')).toBeCloseTo(1.26, 4);
+    expect(playerDb.more('Armour')).toBeCloseTo(1.2, 4);
+    expect(playerDb.more('Evasion')).toBeCloseTo(1.2, 4);
+    expect(playerDb.more('EnergyShield')).toBeCloseTo(1.2, 4);
+  });
 });
