@@ -414,6 +414,33 @@ export function resolveActiveSkillPartAndStats(
     ...(partLevelEntry?.skillData ?? {}),
   };
 
+  // PoE 1 off-hand shield attacks (Shield Crush, Shield Charge, Divine Blast, Spectral Shield Throw, etc.)
+  // carry explicit `setOffHandPhysicalMin`/`setOffHandFireMin`/`setOffHandColdMin` and `attackTime` (ms)
+  // in `skillData` with no weapon `BaseMultiplier` (PoB1 `baseMultiplier = 1.0`, not the 145% generic attack fallback).
+  const isPoe1OffHandShieldSkill =
+    game === 'poe1' &&
+    (typeof skillData.setOffHandPhysicalMin === 'number' ||
+      typeof skillData.setOffHandFireMin === 'number' ||
+      typeof skillData.setOffHandColdMin === 'number');
+  if (isPoe1OffHandShieldSkill) {
+    if (
+      typeof skillData.BaseMultiplier !== 'number' &&
+      typeof skillData.baseMultiplier !== 'number' &&
+      baseLevelEntry?.attackDamageMultiplierPct === undefined &&
+      selectedPart?.attackDamageMultiplierPct === undefined &&
+      partLevelEntry?.attackDamageMultiplierPct === undefined
+    ) {
+      attackDamageMultiplierPct = 100;
+    }
+    if (
+      typeof skillData.attackTime === 'number' &&
+      skillData.attackTime > 0 &&
+      skillData.setOffHandAttackTime === undefined
+    ) {
+      skillData.setOffHandAttackTime = skillData.attackTime;
+    }
+  }
+
   const spell = selectedPart?.spell ?? (gemDef.modFlags & ModFlag.Spell) !== 0;
   const attack = selectedPart?.attack ?? (gemDef.modFlags & ModFlag.Attack) !== 0;
   const melee = selectedPart?.melee ?? (gemDef.modFlags & ModFlag.Melee) !== 0;

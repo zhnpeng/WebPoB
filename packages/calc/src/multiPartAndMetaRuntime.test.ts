@@ -1209,4 +1209,30 @@ describe('multiPartAndMetaRuntime', () => {
     expect(bloodEnemyDb.more('PhysicalDamageTaken', ModFlag.Hit)).toBeCloseTo(1.2, 4);
     expect(bloodEnemyDb.more('PhysicalDamageTaken', ModFlag.Dot)).toBe(1);
   });
+
+  it('normalizes PoE 1 off-hand shield attacks (Shield Crush / Divine Blast) to 100% base multiplier and maps attackTime to setOffHandAttackTime', () => {
+    const shieldCrushDef = makeGemDef({
+      id: 'poe1_shieldcrush',
+      en: 'Shield Crush',
+      game: 'poe1',
+      modFlags: ModFlag.Attack | ModFlag.Melee | ModFlag.Area,
+      attackDamageMultiplierPct: 145, // synthetic loader fallback when am is omitted
+      skillData: {
+        CritChance: 5,
+        attackTime: 800,
+        setOffHandPhysicalMin: 300,
+        setOffHandPhysicalMax: 450,
+      },
+      parts: [
+        { index: 1, name: '1 Wave' },
+        { index: 2, name: '2 Overlapping Waves', skillData: { dpsMultiplier: 2 } },
+      ],
+    });
+    const inst = makeGemInst({ gemId: 'poe1_shieldcrush', level: 21, quality: 20, skillPart: 2 });
+    const group = makeGroup({ gems: [inst] });
+    const res = resolveActiveSkillPartAndStats(shieldCrushDef, inst, group, 21, { game: 'poe1' });
+    expect(res.attackDamageMultiplierPct).toBe(100);
+    expect(res.skillData.setOffHandAttackTime).toBe(800);
+    expect(res.skillData.dpsMultiplier).toBe(2);
+  });
 });
