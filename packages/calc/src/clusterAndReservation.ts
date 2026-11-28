@@ -3695,6 +3695,7 @@ export function evaluateAurasAndWatchersEye(
         lowerAuraName === 'defiance banner');
     const bannerAuraEffInc = isBannerAura ? playerDb.sum('INC', 'BannerAuraEffect') : 0;
 
+    const baseAuraNameLower = lowerAuraName.replace(/^vaal\s+/, '');
     const auraEffectDbKeys: string[] = [];
     const auraLabelForKey = cand.canonicalAuraName ?? def.name.en;
     if (auraLabelForKey) {
@@ -3704,13 +3705,29 @@ export function evaluateAurasAndWatchersEye(
         auraEffectDbKeys.push(`AuraEffect:${noSpaceAura}`);
       }
       auraEffectDbKeys.push(`${noSpaceAura}AuraEffect`);
+      if (/^vaal\s+/i.test(auraLabelForKey)) {
+        const baseLabel = auraLabelForKey.replace(/^vaal\s+/i, '');
+        const baseNoSpace = baseLabel.replace(/\s+/g, '');
+        auraEffectDbKeys.push(`AuraEffect:${baseLabel}`);
+        if (baseNoSpace !== baseLabel) {
+          auraEffectDbKeys.push(`AuraEffect:${baseNoSpace}`);
+        }
+        auraEffectDbKeys.push(`${baseNoSpace}AuraEffect`);
+      }
     }
     let dbPerAuraEffectPct = 0;
-    for (const statKey of auraEffectDbKeys) {
+    for (const statKey of new Set(auraEffectDbKeys)) {
       const statRes = playerDb.calcStat(statKey);
       for (const s of statRes.sources) {
         if (s.type !== 'INC' || typeof s.value !== 'number') continue;
-        if (perSkillEffectScannedSources.has(`${lowerAuraName}|${s.source}`)) continue;
+        const normSrc = s.source.replace(/\s*\[Implicit\]$/i, '');
+        if (
+          perSkillEffectScannedSources.has(`${lowerAuraName}|${normSrc}`) ||
+          (baseAuraNameLower !== lowerAuraName &&
+            perSkillEffectScannedSources.has(`${baseAuraNameLower}|${normSrc}`))
+        ) {
+          continue;
+        }
         dbPerAuraEffectPct += s.value;
       }
     }
@@ -3738,17 +3755,24 @@ export function evaluateAurasAndWatchersEye(
         const res = playerDb.calcStat(ck);
         for (const s of res.sources) {
           if (s.type !== 'INC' || typeof s.value !== 'number') continue;
-          if (perSkillEffectScannedSources.has(`${lowerAuraName}|${s.source}`)) continue;
+          const normSrc = s.source.replace(/\s*\[Implicit\]$/i, '');
+          if (perSkillEffectScannedSources.has(`${lowerAuraName}|${normSrc}`)) continue;
           dbCurseEff += s.value;
         }
       }
       return (perSkillEffectPct.get(lowerAuraName) ?? 0) + dbCurseEff;
     })();
-    const skillSpecificEffectPct =
-      (perSkillEffectPct.get(lowerAuraName) ?? 0) + dbPerAuraEffectPct;
+    const itemSkillSpecificEffectPct =
+      (perSkillEffectPct.get(lowerAuraName) ?? 0) +
+      (baseAuraNameLower !== lowerAuraName ? (perSkillEffectPct.get(baseAuraNameLower) ?? 0) : 0);
+    const skillSpecificEffectPct = itemSkillSpecificEffectPct + dbPerAuraEffectPct;
     const skillSpecificResEffPct =
       (perSkillResEffPct.get(lowerAuraName) ?? 0) +
-      playerDb.sum('INC', `SkillManaReservationEfficiency:${lowerAuraName}`);
+      (baseAuraNameLower !== lowerAuraName ? (perSkillResEffPct.get(baseAuraNameLower) ?? 0) : 0) +
+      playerDb.sum('INC', `SkillManaReservationEfficiency:${lowerAuraName}`) +
+      (baseAuraNameLower !== lowerAuraName
+        ? playerDb.sum('INC', `SkillManaReservationEfficiency:${baseAuraNameLower}`)
+        : 0);
 
     const auraEffectPctForPlayer = isAura
       ? baseAuraEffectPct +
@@ -4242,7 +4266,8 @@ export function evaluateAurasAndWatchersEye(
             const res = playerDb.calcStat(ck);
             for (const s of res.sources) {
               if (s.type !== 'INC' || typeof s.value !== 'number') continue;
-              if (perSkillEffectScannedSources.has(`${lowerCurse}|${s.source}`)) continue;
+              const normSrc = s.source.replace(/\s*\[Implicit\]$/i, '');
+              if (perSkillEffectScannedSources.has(`${lowerCurse}|${normSrc}`)) continue;
               dbCurseEff += s.value;
             }
           }

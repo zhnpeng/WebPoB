@@ -2291,4 +2291,82 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     // Elemental Weakness (Unique enemy in presence active via Pinnacle): -30 * 1.2 = -36 FireResist
     expect(res.enemyDb.sum('BASE', 'FireResist')).toBe(-36);
   });
+
+  it('applies base-aura per-aura effect to Vaal Aura variants and deduplicates [Implicit] ModDB sources', () => {
+    const vaalHasteDef: GemDefinition = {
+      id: 'poe1_vaalhaste',
+      name: { en: 'Vaal Haste', zh: '瓦尔·迅捷' },
+      category: 'active',
+      game: 'poe1',
+      color: 'green',
+      tags: ['area', 'aura', 'dexterity', 'duration', 'spell', 'vaal'],
+      modFlags: 0,
+      keywordFlags: 0,
+      stats: [],
+      compiledMods: [
+        { name: 'Speed', type: 'INC', value: 30, flags: ModFlag.Attack, keywordFlags: 0, target: 'player' },
+      ],
+    };
+    const db = new ModDB();
+    // Simulate modParser also emitting AuraEffect:Haste with [Implicit] suffix for the same Body Armour
+    db.addMod({
+      name: 'AuraEffect:Haste',
+      type: 'INC',
+      value: 25,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Item (Body Armour): Exarch Chest [Implicit]',
+    });
+    // Plus a separate Tree source (+25%) that SHOULD stack
+    db.addMod({
+      name: 'AuraEffect:Haste',
+      type: 'INC',
+      value: 25,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Tree: Haste Mastery',
+    });
+    evaluateAurasAndWatchersEye({
+      build: mkBuild({
+        game: 'poe1',
+        items: {
+          body1: {
+            id: 'body1',
+            name: 'Exarch Chest',
+            baseName: 'Astral Plate',
+            rarity: 'RARE',
+            slotType: 'Body Armour',
+            quality: 0,
+            implicits: ['Haste has 25% increased Aura Effect'],
+            explicits: [],
+            rawText: '',
+          },
+        },
+        equipped: { 'Body Armour': 'body1' },
+        skills: [
+          {
+            id: 'sg-vh',
+            label: 'Vaal Haste',
+            enabled: true,
+            gems: [
+              {
+                instanceId: 'vh1',
+                gemId: 'poe1_vaalhaste',
+                level: 20,
+                quality: 0,
+                enabled: true,
+                enableGlobal1: false,
+                enableGlobal2: true,
+              },
+            ],
+          },
+        ],
+      }),
+      playerDb: db,
+      getGemByIdFn: (_game, id) => (id === 'poe1_vaalhaste' ? vaalHasteDef : undefined),
+      maxMana: 1000,
+    });
+    // Total Haste Aura Effect on Vaal Haste = +25% (Body Armour, counted once) + 25% (Tree) = +50% -> 30 * 1.5 = 45% Attack Speed
+    expect(db.sum('INC', 'Speed', ModFlag.Attack)).toBe(45);
+  });
 });
