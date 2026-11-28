@@ -1738,4 +1738,129 @@ describe('Mechanism-Layer Regression Suite (PoE 1 & PoE 2)', () => {
       );
     });
   });
+
+  describe('Wave 5B: DamageIsUnlucky, Unexciting, Wilma CastSpeed->AttackSpeed & ArmourFromHelmetAndGloves', () => {
+    it('evaluates DamageIsUnlucky as min+(max-min)/3 and cancels it when Unexciting is active', () => {
+      const base = createSamplePoe1Build();
+      const arcBase: Build = {
+        ...base,
+        skills: [
+          {
+            id: 'sg_unlucky_arc',
+            label: 'Arc',
+            enabled: true,
+            gems: [{ instanceId: 'g_arc', gemId: 'poe1_arc', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_unlucky_arc',
+      };
+      const plain: Build = {
+        ...arcBase,
+        config: {
+          ...arcBase.config,
+          customMods: 'Adds 1 to 5001 Lightning Damage to Spells',
+        },
+      };
+      const unlucky: Build = {
+        ...plain,
+        config: {
+          ...plain.config,
+          customMods: [
+            'Adds 1 to 5001 Lightning Damage to Spells',
+            'Damage with Hits is Unlucky',
+          ].join('\n'),
+        },
+      };
+      const unexciting: Build = {
+        ...plain,
+        config: {
+          ...plain.config,
+          customMods: [
+            'Adds 1 to 5001 Lightning Damage to Spells',
+            'Damage with Hits is Unlucky',
+            'Your Lucky or Unlucky effects are instead Unexciting',
+          ].join('\n'),
+        },
+      };
+      const outPlain = calculateBuild(plain);
+      const outUnlucky = calculateBuild(unlucky);
+      const outUnexciting = calculateBuild(unexciting);
+      // Unlucky shifts average from 50% of range toward 33.3% of range (~0.68x on wide lightning range)
+      expect(outUnlucky.offence.averageHit).toBeLessThan(outPlain.offence.averageHit * 0.8);
+      // Unexciting cancels DamageIsUnlucky back to normal average
+      expect(outUnexciting.offence.averageHit).toBeCloseTo(outPlain.offence.averageHit, 1);
+    });
+
+    it('applies Cast Speed INC to Attack Speed with Wilma (CastSpeedAppliesToAttackSpeed) and scales Helmet+Gloves Armour', () => {
+      const base = createSamplePoe1Build();
+      const sword = makeWeapon({
+        id: 'wilma_sword',
+        name: 'Test Sword',
+        baseName: 'Jewelled Foil',
+        slotType: 'Weapon 1',
+        weaponStats: {
+          weaponType: 'Sword',
+          twoHanded: false,
+          physicalMin: 50,
+          physicalMax: 100,
+          attacksPerSecond: 1.5,
+          critChance: 5,
+        },
+      });
+      const helm = {
+        id: 'arm_helm',
+        name: 'Armour Helm',
+        baseName: 'Royal Burgonet',
+        rarity: 'RARE' as const,
+        slotType: 'Helmet' as const,
+        quality: 0,
+        armourStats: { armour: 500, evasion: 0, energyShield: 0 },
+        implicits: [],
+        explicits: [],
+      };
+      const gloves = {
+        id: 'arm_gloves',
+        name: 'Armour Gloves',
+        baseName: 'Titan Gauntlets',
+        rarity: 'RARE' as const,
+        slotType: 'Gloves' as const,
+        quality: 0,
+        armourStats: { armour: 300, evasion: 0, energyShield: 0 },
+        implicits: [],
+        explicits: [],
+      };
+      const atkBase: Build = {
+        ...base,
+        items: { ...base.items, [sword.id]: sword, [helm.id]: helm, [gloves.id]: gloves },
+        equipped: { ...base.equipped, 'Weapon 1': sword.id, Helmet: helm.id, Gloves: gloves.id },
+        skills: [
+          {
+            id: 'sg_wilma',
+            label: 'Attack',
+            enabled: true,
+            gems: [{ instanceId: 'g1', gemId: 'poe1_cyclone', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_wilma',
+        config: {
+          ...base.config,
+          customMods: '50% increased Cast Speed',
+        },
+      };
+      const outNoWilma = calculateBuild(atkBase);
+      const outWilma = calculateBuild({
+        ...atkBase,
+        config: {
+          ...atkBase.config,
+          customMods: [
+            '50% increased Cast Speed',
+            'Increases and Reductions to Cast Speed apply to Attack Speed',
+            '100% increased Armour from Equipped Helmet and Gloves',
+          ].join('\n'),
+        },
+      });
+      expect(outWilma.offence.speed).toBeGreaterThan(outNoWilma.offence.speed * 1.3);
+      expect(outWilma.defence.armour).toBeGreaterThanOrEqual(outNoWilma.defence.armour + 800);
+    });
+  });
 });

@@ -858,6 +858,11 @@ function calculateBuildSingleWeaponSet(build: Build): CalcOutput {
           db.addMod({ name: 'MarkedEnemyDamageTaken', type: 'BASE', value: Number(mMarkPrey[1]), flags: 0, keywordFlags: 0, source: nodeSrc });
           continue;
         }
+        // Runegraft of Stability: "Your Lucky or Unlucky effects are instead Unexciting" (`CalcOffence.lua:3157-3160`, `3516-3519`)
+        if (/^Your Lucky or Unlucky effects are instead Unexciting$/i.test(cleanSt)) {
+          db.addMod({ name: 'Unexciting', type: 'FLAG', value: true, flags: 0, keywordFlags: 0, source: nodeSrc });
+          continue;
+        }
         // PoE 1 Dual Wield Mastery & Consecrated Ground Accuracy (`CalcSetup.lua:648`, `CalcPerform.lua:823`)
         if (/^Inherent Attack Speed bonus from Dual Wielding is Doubled/i.test(cleanSt)) {
           db.addMod({ name: 'DoubledInherentDualWieldingSpeed', type: 'FLAG', value: true, flags: 0, keywordFlags: 0, source: nodeSrc });
@@ -2208,6 +2213,10 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
           break;
         }
       }
+      continue;
+    }
+    if (/^Your Lucky or Unlucky effects are instead Unexciting$/i.test(cl)) {
+      db.addMod({ name: 'Unexciting', type: 'FLAG', value: true, flags: 0, keywordFlags: 0, source: 'Custom Modifiers' });
       continue;
     }
     const mDef = cl.match(/^(\d+)% (increased|reduced) (?:global )?defences$/i);
@@ -5138,12 +5147,18 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
         computeSlotExtra(bootsLocalEs, 'Boots', 'EnergyShield', esEval.incPct, esEval.moreMultiplier) +
         computeSlotExtra(glovesLocalEs, 'Gloves', 'EnergyShield', esEval.incPct, esEval.moreMultiplier);
   const bodyArmourSlotFactor = db.flag('BodyArmourDoubled') ? 2 : 1;
+  const helmetGlovesArmourInc = db.sum('INC', 'ArmourFromHelmetAndGloves');
+  const extraHelmetGlovesArmour =
+    helmetGlovesArmourInc !== 0 && helmetLocalArmour + glovesLocalArmour > 0
+      ? (helmetLocalArmour + glovesLocalArmour) * (helmetGlovesArmourInc / 100) * armourEval.moreMultiplier
+      : 0;
   const extraSlotArmour =
     computeSlotExtra(bodyArmourSlotFactor * bodyLocalArmour, 'BodyArmour', 'Armour', armourEval.incPct, armourEval.moreMultiplier) +
     computeSlotExtra(shieldLocalArmour, 'Shield', 'Armour', armourEval.incPct, armourEval.moreMultiplier) +
     computeSlotExtra(helmetLocalArmour, 'Helmet', 'Armour', armourEval.incPct, armourEval.moreMultiplier) +
     computeSlotExtra(bootsLocalArmour, 'Boots', 'Armour', armourEval.incPct, armourEval.moreMultiplier) +
-    computeSlotExtra(glovesLocalArmour, 'Gloves', 'Armour', armourEval.incPct, armourEval.moreMultiplier);
+    computeSlotExtra(glovesLocalArmour, 'Gloves', 'Armour', armourEval.incPct, armourEval.moreMultiplier) +
+    extraHelmetGlovesArmour;
   const extraSlotEvasion =
     computeSlotExtra(bodyLocalEvasion, 'BodyArmour', 'Evasion', evasionEval.incPct, evasionEval.moreMultiplier) +
     computeSlotExtra(shieldLocalEvasion, 'Shield', 'Evasion', evasionEval.incPct, evasionEval.moreMultiplier) +
@@ -6197,10 +6212,19 @@ function computeGroupOffence(
     let diallaLevelBonus = 0;
     let diallaQualBonus = 0;
     if (isDiallasMalefaction) {
+      let redLv = 2;
+      let greenQual = 30;
+      for (const rawL of [...slotItem.implicits, ...slotItem.explicits]) {
+        const cl = rawL.replace(/^\{[^}]*\}/g, '').trim();
+        const mRed = cl.match(/^Gems Socketed in Red Sockets have \+(\d+) to Level$/i);
+        if (mRed) redLv = Number(mRed[1]);
+        const mGreen = cl.match(/^Gems Socketed in Green Sockets have \+(\d+)% Quality$/i);
+        if (mGreen) greenQual = Number(mGreen[1]);
+      }
       if (sockCol === 'R' || (!sockCol && colorKey === 'R')) {
-        diallaLevelBonus = 2;
+        diallaLevelBonus = redLv;
       } else if (sockCol === 'G' || (!sockCol && colorKey === 'G')) {
-        diallaQualBonus = 30;
+        diallaQualBonus = greenQual;
       }
     }
     return { qualBonus, diallaLevelBonus, diallaQualBonus };
@@ -7253,9 +7277,10 @@ function computeGroupOffence(
       ? resolvedPartStats.attack
       : (activeDef.modFlags & ModFlag.Attack) !== 0;
   const isShieldOffHandEarly =
-    typeof activeSkillData?.setOffHandPhysicalMin === 'number' ||
-    typeof activeSkillData?.setOffHandFireMin === 'number' ||
-    (typeof activeSkillData?.setOffHandAttackTime === 'number' && activeSkillData.setOffHandAttackTime > 0);
+    typeof (activeSkillData?.setOffHandPhysicalMin ?? activeDef.skillData?.setOffHandPhysicalMin) === 'number' ||
+    typeof (activeSkillData?.setOffHandFireMin ?? activeDef.skillData?.setOffHandFireMin) === 'number' ||
+    (typeof (activeSkillData?.setOffHandAttackTime ?? activeDef.skillData?.setOffHandAttackTime) === 'number' &&
+      Number(activeSkillData?.setOffHandAttackTime ?? activeDef.skillData?.setOffHandAttackTime) > 0);
   const isUnarmedConcoctionEarly =
     effectiveSkillTypeSet.has('requiresoffhandnotweapon') ||
     (build.game === 'poe2' && /\bconcoction\b/i.test(activeDef.name.en));
@@ -7480,16 +7505,17 @@ function computeGroupOffence(
     // because its name starts with `Enemy`, so query both `skillDb` and `groupEnemyDb` without double-counting globalDb.
     if (build.config.enemyShocked) {
       const shockStatNames = ['ShockEffect', 'EnemyShockEffect', 'EnemyShockMagnitude', 'AilmentMagnitude', 'ShockMagnitude'];
+      const enemyShockStatNames = ['EnemyShockMagnitude', 'SelfShockMagnitude', 'ShockMagnitude', 'ShockEffect', 'AilmentMagnitude'];
       const skillShockEffMult =
         Math.max(
           0,
           1 +
             (skillDb.sum('INC', shockStatNames, flags, kwFlags) +
-              groupEnemyDb.sum('INC', ['EnemyShockMagnitude', 'SelfShockMagnitude', 'AilmentMagnitude'], flags, kwFlags)) /
+              groupEnemyDb.sum('INC', enemyShockStatNames, flags, kwFlags)) /
               100,
         ) *
         skillDb.more(shockStatNames, flags, kwFlags) *
-        groupEnemyDb.more(['EnemyShockMagnitude', 'SelfShockMagnitude', 'AilmentMagnitude'], flags, kwFlags);
+        groupEnemyDb.more(enemyShockStatNames, flags, kwFlags);
       const shockStacksLocal = Math.max(1, Number(build.config.rawInputs?.ShockStacks ?? 1));
       const skillShockPct = Math.max(
         0,
@@ -8719,25 +8745,18 @@ function computeGroupOffence(
       source: 'Hits with both weapons',
     });
   }
-  const offHandSetMin =
-    typeof activeSkillData?.setOffHandPhysicalMin === 'number'
-      ? activeSkillData.setOffHandPhysicalMin
-      : undefined;
-  const offHandSetMax =
-    typeof activeSkillData?.setOffHandPhysicalMax === 'number'
-      ? activeSkillData.setOffHandPhysicalMax
-      : undefined;
-  const offHandFireMin =
-    typeof activeSkillData?.setOffHandFireMin === 'number'
-      ? activeSkillData.setOffHandFireMin
-      : undefined;
-  const offHandFireMax =
-    typeof activeSkillData?.setOffHandFireMax === 'number'
-      ? activeSkillData.setOffHandFireMax
-      : undefined;
+  const rawOffHandMin = activeSkillData?.setOffHandPhysicalMin ?? activeDef.skillData?.setOffHandPhysicalMin;
+  const rawOffHandMax = activeSkillData?.setOffHandPhysicalMax ?? activeDef.skillData?.setOffHandPhysicalMax;
+  const rawOffHandFireMin = activeSkillData?.setOffHandFireMin ?? activeDef.skillData?.setOffHandFireMin;
+  const rawOffHandFireMax = activeSkillData?.setOffHandFireMax ?? activeDef.skillData?.setOffHandFireMax;
+  const rawOffHandAtkTime = activeSkillData?.setOffHandAttackTime ?? activeDef.skillData?.setOffHandAttackTime;
+  const offHandSetMin = typeof rawOffHandMin === 'number' ? rawOffHandMin : undefined;
+  const offHandSetMax = typeof rawOffHandMax === 'number' ? rawOffHandMax : undefined;
+  const offHandFireMin = typeof rawOffHandFireMin === 'number' ? rawOffHandFireMin : undefined;
+  const offHandFireMax = typeof rawOffHandFireMax === 'number' ? rawOffHandFireMax : undefined;
   const offHandAttackTimeMs =
-    typeof activeSkillData?.setOffHandAttackTime === 'number' && activeSkillData.setOffHandAttackTime > 0
-      ? activeSkillData.setOffHandAttackTime
+    typeof rawOffHandAtkTime === 'number' && rawOffHandAtkTime > 0
+      ? rawOffHandAtkTime
       : undefined;
   const isShieldOffHandAttack =
     offHandSetMin !== undefined ||
@@ -10041,12 +10060,23 @@ function computeGroupOffence(
       : hasDiamondShrine
         ? 100
         : Math.min(100, baseCrit * (1 + critInc / 100) * critMore);
+    const isUnexcitingCrit = skillDb.flag('Unexciting', flags, kwFlags);
     const isLuckyCrit =
       skillDb.flag('CritChanceIsLucky', flags, kwFlags) ||
       skillDb.flag('CritChanceLucky', flags, kwFlags);
+    const isUnluckyCrit =
+      skillDb.flag('CritChanceIsUnlucky', flags, kwFlags) ||
+      skillDb.flag('CritChanceUnlucky', flags, kwFlags);
+    const pCrit = preLuckyCrit / 100;
     const preBifurcateCrit =
-      isLuckyCrit && !neverCrit && !hasDiamondShrine
-        ? (1 - Math.pow(1 - preLuckyCrit / 100, 2)) * 100
+      !neverCrit && !hasDiamondShrine
+        ? isUnexcitingCrit && isLuckyCrit !== isUnluckyCrit
+          ? (3 * pCrit * pCrit - 2 * pCrit * pCrit * pCrit) * 100
+          : isLuckyCrit && !isUnluckyCrit
+            ? (1 - Math.pow(1 - pCrit, 2)) * 100
+            : isUnluckyCrit && !isLuckyCrit
+              ? pCrit * pCrit * 100
+              : preLuckyCrit
         : preLuckyCrit;
     let postUseCrit =
       hasBifurcatedCrit && !neverCrit && !hasDiamondShrine
@@ -10187,8 +10217,10 @@ function computeGroupOffence(
   const dealNoNonFire = skillDb.flag('DealNoNonFire', flags, kwFlags);
   const globalMinMore = skillDb.more('MinDamage', flags, kwFlags);
   const globalMaxMore = skillDb.more('MaxDamage', flags, kwFlags);
-  const hasLuckyHits = skillDb.flag('LuckyHits', flags, kwFlags);
-  const hasLightningNoCritLucky = skillDb.flag('LightningNoCritLucky', flags, kwFlags);
+  const isUnexcitingDmg = skillDb.flag('Unexciting', flags, kwFlags);
+  const hasLuckyHits = !isUnexcitingDmg && skillDb.flag('LuckyHits', flags | ModFlag.Hit, kwFlags);
+  const hasUnluckyHits = !isUnexcitingDmg && skillDb.flag('DamageIsUnlucky', flags | ModFlag.Hit, kwFlags);
+  const hasLightningNoCritLucky = !isUnexcitingDmg && skillDb.flag('LightningNoCritLucky', flags | ModFlag.Hit, kwFlags);
   let totalAvgHit = 0;
 
   for (const dt of DAMAGE_TYPES) {
@@ -10225,19 +10257,23 @@ function computeGroupOffence(
       rawMin += pMin * mult * typeMinMore;
       rawMax += pMax * mult * typeMaxMore;
     }
-    const typeLuckyChance = hasLuckyHits
-      ? 1
-      : Math.min(
-          1,
-          Math.max(
-            0,
-            skillDb.sum('BASE', ['LuckyHitsChance', `${dt}LuckyHitsChance`], flags, kwFlags) / 100,
-          ),
-        );
+    const typeLuckyChance = isUnexcitingDmg
+      ? 0
+      : hasLuckyHits
+        ? 1
+        : Math.min(
+            1,
+            Math.max(
+              0,
+              skillDb.sum('BASE', ['LuckyHitsChance', `${dt}LuckyHitsChance`], flags, kwFlags) / 100,
+            ),
+          );
     const rawAvg =
-      typeLuckyChance > 0
+      typeLuckyChance > 0 && !hasUnluckyHits
         ? typeLuckyChance * ((rawMin + 2 * rawMax) / 3) + (1 - typeLuckyChance) * ((rawMin + rawMax) / 2)
-        : (rawMin + rawMax) / 2;
+        : hasUnluckyHits && typeLuckyChance === 0
+          ? rawMin + (rawMax - rawMin) / 3
+          : (rawMin + rawMax) / 2;
     preMitigationHitByType[dt] = rawAvg * effectiveCritMultiplier * doubleDamageMult;
 
     // Enemy mitigation (Resistances + Curses + Penetration; separate Non-Crit & Crit Enemy Armour PDR + Negative PDR)
@@ -10453,8 +10489,10 @@ function computeGroupOffence(
     const min = rawMin * finalMult;
     const max = rawMax * finalMult;
     let average: number;
-    if (typeLuckyChance > 0) {
+    if (typeLuckyChance > 0 && !hasUnluckyHits) {
       average = typeLuckyChance * ((min + 2 * max) / 3) + (1 - typeLuckyChance) * ((min + max) / 2);
+    } else if (hasUnluckyHits && typeLuckyChance === 0) {
+      average = min + (max - min) / 3;
     } else if (dt === 'Lightning' && hasLightningNoCritLucky) {
       const critFrac = neverCrit || noCritExtra ? 0 : critChance / 100;
       const noCritShare = effectiveCritMultiplier > 0 ? (1 - critFrac) / effectiveCritMultiplier : 1;
@@ -10484,10 +10522,11 @@ function computeGroupOffence(
       : isDualWield && mainWeaponStats && offWeaponStats
         ? 2 / (1 / Math.max(0.1, mainWeaponStats.attacksPerSecond) + 1 / Math.max(0.1, offWeaponStats.attacksPerSecond))
         : (weaponStats?.attacksPerSecond ?? (build.game === 'poe2' ? 1.65 : 1.2));
+  const rawFixedAttackTime = activeSkillData?.attackTime ?? activeDef.skillData?.attackTime;
   const skillFixedAttackTimeMs =
     offHandAttackTimeMs ??
-    (typeof activeSkillData?.attackTime === 'number' && activeSkillData.attackTime > 0
-      ? activeSkillData.attackTime
+    (typeof rawFixedAttackTime === 'number' && rawFixedAttackTime > 0
+      ? rawFixedAttackTime
       : undefined);
   const sdataAtkSpeedMult =
     activeDef.attackSpeedMultiplier === undefined && typeof activeSkillData?.attackSpeedMultiplier === 'number'
@@ -10664,10 +10703,14 @@ function computeGroupOffence(
     compatibleSupportNames.has('multistrike') ||
     compatibleSupportNames.has('awakened multistrike') ||
     compatibleSupportNames.has('greater multistrike');
-  const speedQueryFlags =
+  const baseSpeedQueryFlags =
     isAttack && hasMultistrikeSup && (activeDef.modFlags & ModFlag.Melee) !== 0
       ? flags | ModFlag.Melee
       : flags;
+  const speedQueryFlags =
+    isAttack && skillDb.flag('CastSpeedAppliesToAttackSpeed', flags, kwFlags)
+      ? baseSpeedQueryFlags | ModFlag.Cast | ModFlag.Spell
+      : baseSpeedQueryFlags;
   const speedInc =
     (build.game === 'poe1' && isMineSkill
       ? skillDb.sum('INC', 'MineLayingSpeed', speedQueryFlags, kwFlags)
