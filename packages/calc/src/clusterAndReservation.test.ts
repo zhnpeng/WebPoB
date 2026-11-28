@@ -2540,4 +2540,92 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     // PoE 1 3.20+: Awakened Hextouch applies 0% reduced Curse Effect -> Flammability keeps full -36% FireResist
     expect(res.enemyDb.sum('BASE', 'FireResist')).toBe(-36);
   });
+
+  it('emits PoE 1 Flame Surge 30% Burning Ground and consumes ModDB HeraldBuffEffect:<Herald> with dedupe', () => {
+    const flameSurgeDef: GemDefinition = {
+      id: 'poe1_flamesurge',
+      name: { en: 'Flame Surge', zh: '烈焰涌动' },
+      category: 'active',
+      game: 'poe1',
+      color: 'blue',
+      tags: ['spell', 'aoe', 'fire'],
+      modFlags: 0,
+      keywordFlags: 0,
+      stats: [],
+    };
+    const heraldAshDef: GemDefinition = {
+      id: 'poe1_heraldofash',
+      name: { en: 'Herald of Ash', zh: '灰烬之捷' },
+      category: 'active',
+      game: 'poe1',
+      color: 'red',
+      tags: ['spell', 'aoe', 'fire', 'herald'],
+      modFlags: 0,
+      keywordFlags: 0,
+      manaReservationPct: 25,
+      stats: [],
+      compiledMods: [
+        { name: 'PhysicalDamageGainAsFire', type: 'BASE', value: 15, flags: 0, keywordFlags: 0, target: 'player' },
+      ],
+    };
+    const db = new ModDB();
+    // Circle of Anguish ModDB stat (not an item-scanned duplicate) + duplicate ring source
+    db.addMod({
+      name: 'HeraldBuffEffect:Herald of Ash',
+      type: 'INC',
+      value: 60,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Tree/ModDB: Circle of Anguish',
+    });
+    db.addMod({
+      name: 'HeraldBuffEffect:Herald of Ash',
+      type: 'INC',
+      value: 40,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Item (Ring 1): Circle of Anguish [Implicit]',
+    });
+    const res = evaluateAurasAndWatchersEye({
+      build: mkBuild({
+        game: 'poe1',
+        items: {
+          ring1: {
+            id: 'ring1',
+            name: 'Circle of Anguish',
+            baseName: 'Ruby Ring',
+            rarity: 'UNIQUE',
+            slotType: 'Ring 1',
+            quality: 0,
+            implicits: ['Herald of Ash has 40% increased Buff Effect'],
+            explicits: [],
+            rawText: '',
+          },
+        },
+        equipped: { 'Ring 1': 'ring1' },
+        skills: [
+          {
+            id: 'sg-fs-hoa',
+            label: 'Flame Surge + Herald of Ash',
+            enabled: true,
+            gems: [
+              { instanceId: 'fs1', gemId: 'poe1_flamesurge', level: 20, quality: 20, enabled: true },
+              { instanceId: 'hoa1', gemId: 'poe1_heraldofash', level: 20, quality: 0, enabled: true },
+            ],
+          },
+        ],
+      }),
+      playerDb: db,
+      getGemByIdFn: (_game, id) => {
+        if (id === 'poe1_flamesurge') return flameSurgeDef;
+        if (id === 'poe1_heraldofash') return heraldAshDef;
+        return undefined;
+      },
+      maxMana: 1000,
+    });
+    // Flame Surge 3.25+ Burning Ground = 30% of Ignite DPS
+    expect(res.enemyDb.max('IgniteDpsAsBurningGround')).toBe(30);
+    // Herald of Ash: +40% (Ring 1, counted once) + 60% (ModDB) = +100% -> 15 * 2.0 = 30% Phys as Extra Fire
+    expect(db.sum('BASE', 'PhysicalDamageGainAsFire')).toBe(30);
+  });
 });

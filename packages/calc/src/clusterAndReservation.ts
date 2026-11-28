@@ -3686,12 +3686,12 @@ export function evaluateAurasAndWatchersEye(
     const parsedBaseMods =
       compiledMods && compiledMods.length > 0 ? [] : parseModLines(rawStats, sourceLabel);
 
-    // PoE 1 Flame Surge: creates Burning Ground dealing 25% of Ignite DPS (unscalable global buff)
+    // PoE 1 Flame Surge (3.25+): creates Burning Ground dealing 30% of Ignite DPS (unscalable global buff)
     if (build.game === 'poe1' && lowerAuraName === 'flame surge') {
       enemyDb.addMod({
         name: 'IgniteDpsAsBurningGround',
         type: 'MAX',
-        value: 25,
+        value: 30,
         flags: 0,
         keywordFlags: 0,
         source: sourceLabel,
@@ -4069,11 +4069,22 @@ export function evaluateAurasAndWatchersEye(
           cand.groupCurseEffectInc +
           qualCurseEffInc +
           skillSpecificCurseEffectPct;
+        let dbPerHeraldBuffEffPct = 0;
+        if (isHerald && def.name.en) {
+          const heraldStatRes = playerDb.calcStat(`HeraldBuffEffect:${def.name.en}`);
+          for (const s of heraldStatRes.sources) {
+            if (s.type !== 'INC' || typeof s.value !== 'number') continue;
+            const normSrc = s.source.replace(/\s*\[Implicit\]$/i, '');
+            if (perSkillEffectScannedSources.has(`${lowerAuraName}|${normSrc}`)) continue;
+            dbPerHeraldBuffEffPct += s.value;
+          }
+        }
         const heraldEffectMult = isHerald
           ? Math.max(
               0,
               1 +
                 (playerDb.sum('INC', ['HeraldBuffEffect', 'BuffEffectOnSelf']) +
+                  dbPerHeraldBuffEffPct +
                   skillSpecificEffectPct) /
                   100,
             )
