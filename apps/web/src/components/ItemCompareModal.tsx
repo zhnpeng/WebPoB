@@ -12,9 +12,10 @@ import {
 import type { EquipmentSlotId, Item, ItemRarity } from '@webpob/core';
 import { listBaseItemsForGame } from '@webpob/data';
 import { parseItemText } from '@webpob/codec';
-import { calculateBuild, resolveItemEffectiveStats } from '@webpob/calc';
+import { resolveItemEffectiveStats } from '@webpob/calc/localItem';
 import { getSlotLabel, localizeStatLine, uiText } from '@webpob/i18n';
 import { useWebPobStore } from '../store/useWebPobStore';
+import { calculateBuildInWorker } from '../workers/calcWorkerClient';
 
 const RARITY_COLOR: Record<ItemRarity, string> = {
   NORMAL: 'text-zinc-200 border-zinc-600/50',
@@ -298,39 +299,63 @@ export function ItemCompareModal({
     [candidate, build.game],
   );
 
-  const simulation = useMemo(() => {
-    if (!open) return null;
+  const [simulation, setSimulation] = useState<{
+    dpsDelta: number;
+    dpsPct: number;
+    lifeDelta: number;
+    esDelta: number;
+    ehpDelta: number;
+    ehpPct: number;
+    resistDelta: { fire: number; cold: number; lightning: number; chaos: number };
+    nextResist: { fire: number; cold: number; lightning: number; chaos: number };
+  } | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setSimulation(null);
+      return;
+    }
+    let cancelled = false;
     const simBuild = {
       ...build,
       items: { ...build.items, [candidate.id]: candidate },
       equipped: { ...build.equipped, [slot]: candidate.id },
     };
-    const next = calculateBuild(simBuild);
-    const baseDps = calc.offence.fullDps ?? calc.offence.totalDps;
-    const nextDps = next.offence.fullDps ?? next.offence.totalDps;
-    const baseEhp = Math.max(0, calc.defence.effectiveHitPool);
-    const nextEhp = next.defence.effectiveHitPool;
-    return {
-      dpsDelta: nextDps - baseDps,
-      dpsPct: baseDps > 0 ? ((nextDps - baseDps) / baseDps) * 100 : 0,
-      lifeDelta: next.defence.life - calc.defence.life,
-      esDelta: next.defence.energyShield - calc.defence.energyShield,
-      ehpDelta: nextEhp - baseEhp,
-      ehpPct: baseEhp > 0 ? ((nextEhp - baseEhp) / baseEhp) * 100 : 0,
-      resistDelta: {
-        fire: next.defence.fireResist - calc.defence.fireResist,
-        cold: next.defence.coldResist - calc.defence.coldResist,
-        lightning: next.defence.lightningResist - calc.defence.lightningResist,
-        chaos: next.defence.chaosResist - calc.defence.chaosResist,
-      },
-      nextResist: {
-        fire: next.defence.fireResist,
-        cold: next.defence.coldResist,
-        lightning: next.defence.lightningResist,
-        chaos: next.defence.chaosResist,
-      },
+    void calculateBuildInWorker(simBuild, locale)
+      .then((next) => {
+        if (cancelled) return;
+        const baseDps = calc.offence.fullDps ?? calc.offence.totalDps;
+        const nextDps = next.offence.fullDps ?? next.offence.totalDps;
+        const baseEhp = Math.max(0, calc.defence.effectiveHitPool);
+        const nextEhp = next.defence.effectiveHitPool;
+        setSimulation({
+          dpsDelta: nextDps - baseDps,
+          dpsPct: baseDps > 0 ? ((nextDps - baseDps) / baseDps) * 100 : 0,
+          lifeDelta: next.defence.life - calc.defence.life,
+          esDelta: next.defence.energyShield - calc.defence.energyShield,
+          ehpDelta: nextEhp - baseEhp,
+          ehpPct: baseEhp > 0 ? ((nextEhp - baseEhp) / baseEhp) * 100 : 0,
+          resistDelta: {
+            fire: next.defence.fireResist - calc.defence.fireResist,
+            cold: next.defence.coldResist - calc.defence.coldResist,
+            lightning: next.defence.lightningResist - calc.defence.lightningResist,
+            chaos: next.defence.chaosResist - calc.defence.chaosResist,
+          },
+          nextResist: {
+            fire: next.defence.fireResist,
+            cold: next.defence.coldResist,
+            lightning: next.defence.lightningResist,
+            chaos: next.defence.chaosResist,
+          },
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setSimulation(null);
+      });
+    return () => {
+      cancelled = true;
     };
-  }, [open, build, candidate, slot, calc]);
+  }, [open, build, candidate, slot, calc, locale]);
 
   if (!open) return null;
 

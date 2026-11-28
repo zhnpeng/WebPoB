@@ -34,9 +34,8 @@ import {
   normalizeAscendancyTreeKey,
 } from '@webpob/data';
 import { isChineseLocale, localizeStatLine, localizeText, t, toSimplifiedZh, toTraditionalZh, uiText } from '@webpob/i18n';
-import { computeNodePower } from '@webpob/calc';
 import { useWebPobStore } from '../store/useWebPobStore';
-import { computeHeatmapInWorker } from '../workers/calcWorkerClient';
+import { computeHeatmapInWorker, computeNodePowerInWorker } from '../workers/calcWorkerClient';
 import type { NodePowerHeatItem } from '../workers/calc.worker';
 import {
   getCachedArtImage,
@@ -1088,13 +1087,31 @@ export function PassiveTreeCanvas() {
     return new Set(findShortestPathToNode(tree, baseAllocated, hoveredNodeId));
   }, [hoveredNodeId, build.game, treePaintMode, sharedSet, set1Set, set2Set, ascStartNodeId, tree]);
 
-  // Live Node Power Delta calculation on hover
-  const hoveredPower: NodePowerDelta | null = useMemo(() => {
-    if (hoveredNodeId === null) return null;
+  // Live Node Power Delta calculation on hover (computed in background Web Worker to keep Canvas 60fps)
+  const [hoveredPower, setHoveredPower] = useState<NodePowerDelta | null>(null);
+  useEffect(() => {
+    if (hoveredNodeId === null) {
+      setHoveredPower(null);
+      return;
+    }
     const node = tree.nodes[hoveredNodeId];
-    if (!node || node.kind === 'start' || node.kind === 'mastery') return null;
-    return computeNodePower(build, hoveredNodeId, calc);
-  }, [hoveredNodeId, tree, build, calc]);
+    if (!node || node.kind === 'start' || node.kind === 'mastery') {
+      setHoveredPower(null);
+      return;
+    }
+    let cancelled = false;
+    setHoveredPower((prev) => (prev?.nodeId === hoveredNodeId ? prev : null));
+    void computeNodePowerInWorker(build, hoveredNodeId, locale)
+      .then((delta) => {
+        if (!cancelled) setHoveredPower(delta);
+      })
+      .catch(() => {
+        if (!cancelled) setHoveredPower(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hoveredNodeId, tree, build, locale]);
 
   const hoverPathNodeCount = previewPathSet.size;
   const hoverEhpDeltaPct =

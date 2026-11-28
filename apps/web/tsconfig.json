@@ -4,7 +4,11 @@
     "jsx": "react-jsx",
     "noEmit": true,
     "declaration": false,
-    "declarationMap": false
+    "declarationMap": false,
+    "paths": {
+      "@webpob/calc/diagnostics": ["../../packages/calc/src/diagnostics.ts"],
+      "@webpob/calc/localItem": ["../../packages/calc/src/localItem.ts"]
+    }
   },
   "include": ["src", "vite.config.ts"]
 }

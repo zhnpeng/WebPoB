@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Copy, Gauge, Plus, Search, Sparkles, Star, Trash2, X, Zap } from 'lucide-react';
 import type { EquipmentSlotId, GemDefinition, Locale, WeaponSetId } from '@webpob/core';
 import { getGemsForGame, getRuleset } from '@webpob/data';
-import { calculateBuild, rankSupportGemsForGroup } from '@webpob/calc';
+import type { RankedSupportRecommendation } from '@webpob/calc';
 import { getSlotLabel, isChineseLocale, localizeStatLine, localizeText, t, uiText } from '@webpob/i18n';
 import { useWebPobStore } from '../store/useWebPobStore';
 import { searchGemsCatalog, type GemCategoryFilter } from '../utils/gemSearch';
+import { calculateBatchInWorker, rankSupportGemsInWorker } from '../workers/calcWorkerClient';
 
 const GEM_COLOR_BADGE: Record<string, string> = {
   red: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
@@ -326,15 +327,31 @@ export function SkillsTab() {
   const [optimizerGroupId, setOptimizerGroupId] = useState<string | null>(null);
   void treeRevision;
 
-  const rankedSupports = useMemo(() => {
-    if (!optimizerGroupId) return [];
-    return rankSupportGemsForGroup(build, optimizerGroupId, 8);
-  }, [build, optimizerGroupId]);
+  const [rankedSupports, setRankedSupports] = useState<RankedSupportRecommendation[]>([]);
+  useEffect(() => {
+    if (!optimizerGroupId) {
+      setRankedSupports([]);
+      return;
+    }
+    let cancelled = false;
+    void rankSupportGemsInWorker(build, optimizerGroupId, 8, locale)
+      .then((items) => {
+        if (!cancelled) setRankedSupports(items);
+      })
+      .catch(() => {
+        if (!cancelled) setRankedSupports([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [build, optimizerGroupId, locale]);
+
   const gemsCatalog = getGemsForGame(build.game);
 
-  // Live standalone DPS per skill group (evaluates each group as the main skill group)
-  const groupDps = useMemo(() => {
-    const map = new Map<string, number>();
+  // Live standalone DPS per skill group (evaluates each group in background Web Worker)
+  const [groupDps, setGroupDps] = useState<Map<string, number>>(() => new Map());
+  useEffect(() => {
+    const batch: Array<{ key: string; build: typeof build }> = [];
     for (const group of build.skills) {
       if (!group.enabled) continue;
       const hasActive = group.gems.some((gi) => {
@@ -343,11 +360,29 @@ export function SkillsTab() {
         return Boolean(def && def.category === 'active' && !def.isAuraOrBuff);
       });
       if (!hasActive) continue;
-      const result = calculateBuild({ ...build, mainSkillGroupId: group.id });
-      map.set(group.id, result.offence.totalDps);
+      batch.push({ key: group.id, build: { ...build, mainSkillGroupId: group.id } });
     }
-    return map;
-  }, [build]);
+    if (batch.length === 0) {
+      setGroupDps(new Map());
+      return;
+    }
+    let cancelled = false;
+    void calculateBatchInWorker(batch, locale)
+      .then((outputs) => {
+        if (cancelled) return;
+        const nextMap = new Map<string, number>();
+        for (const [groupId, out] of Object.entries(outputs)) {
+          nextMap.set(groupId, out.offence.totalDps);
+        }
+        setGroupDps(nextMap);
+      })
+      .catch(() => {
+        if (!cancelled) setGroupDps(new Map());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [build, gemsCatalog, locale]);
 
   const fullDpsBreakdown = useMemo(() => {
     const fullDps = calc.offence.fullDps ?? 0;
