@@ -437,8 +437,9 @@ export function resolveActiveSkillPartAndStats(
     } else if (/(?:5th|fifth)/i.test(partNameLower)) {
       sequenceDamageMultiplier = 11;
     }
-  } else if (skillKey === 'tempest flurry') {
-    // PoE 2 Quarterstaff combo sequence (1st/2nd normal, 3rd double-hit, 4th final slam, or sequence average)
+  } else if (skillKey === 'tempest flurry' && !selectedPart?.attackDamageMultiplierPct) {
+    // Synthetic / uncompiled fallback for PoE 2 Quarterstaff combo sequence when official PoB 2 part
+    // `attackDamageMultiplierPct` (`am = 140 / 90 / 421`) is absent.
     if (/(?:4th|fourth|final)/i.test(partNameLower) || partIndex === 3) {
       sequenceDamageMultiplier = 1.5;
     } else if (/(?:3rd|third)/i.test(partNameLower) || partIndex === 2) {
@@ -1648,9 +1649,12 @@ export function evaluatePersistentBuffAndStanceSkills(
       // PoE 1 Stances & Herald of Agony
       if (game === 'poe1') {
         if (lower === 'blood and sand') {
-          const stancePart = gem.skillPart ?? group.skillPart ?? 1;
+          const explicitPart = gem.skillPart ?? group.skillPart;
+          const isSandStance =
+            explicitPart === 2 ||
+            (explicitPart === undefined && Boolean(playerDb.getEvalContext().conditions.SandStance));
           const stanceBonus = 5 + Math.min(10, Math.max(0, level - 1) * 2); // Lv6 -> 15%
-          if (stancePart === 2) {
+          if (isSandStance) {
             activeStance = 'Sand';
             playerDb.setCondition('SandStance', true);
             playerDb.setCondition('BloodStance', false);
@@ -1696,8 +1700,12 @@ export function evaluatePersistentBuffAndStanceSkills(
         }
 
         if (lower === 'flesh and stone') {
-          const stancePart = gem.skillPart ?? group.skillPart ?? 1;
-          if (stancePart === 2) {
+          const explicitPart = gem.skillPart ?? group.skillPart;
+          const isSandStance =
+            explicitPart === 2 ||
+            (explicitPart === undefined && Boolean(playerDb.getEvalContext().conditions.SandStance));
+          if (isSandStance) {
+            // PoB 1 Data/Skills/act_str.lua:4443-4498: Sand Stance -10%..-(9+floor((lv+1)/2))% less Damage Taken from Hits (-19% at Lv20)
             activeStance = 'Sand';
             playerDb.setCondition('SandStance', true);
             playerDb.setCondition('BloodStance', false);
@@ -1705,21 +1713,22 @@ export function evaluatePersistentBuffAndStanceSkills(
             addPlayerMod({
               name: 'DamageTaken',
               type: 'MORE',
-              value: -(11 + Math.min(10, Math.floor(level / 2))),
+              value: -(9 + Math.floor((level + 1) / 2)),
               flags: 0,
               keywordFlags: 0,
               source: 'Flesh and Stone (Sand Stance)',
             });
           } else {
+            // PoB 1 Data/Skills/act_str.lua:4440-4498: Blood Stance 10%..(10+floor(lv/2))% MORE Physical Damage Taken by Hits (20% at Lv20)
             activeStance = 'Blood';
             playerDb.setCondition('BloodStance', true);
             playerDb.setCondition('SandStance', false);
-            const physTaken = 11 + Math.min(10, Math.floor(level / 2));
+            const physTakenMore = 10 + Math.floor(level / 2);
             addEnemyMod({
               name: 'PhysicalDamageTaken',
-              type: 'INC',
-              value: physTaken,
-              flags: 0,
+              type: 'MORE',
+              value: physTakenMore,
+              flags: ModFlag.Hit,
               keywordFlags: 0,
               source: 'Flesh and Stone (Blood Stance)',
             });
