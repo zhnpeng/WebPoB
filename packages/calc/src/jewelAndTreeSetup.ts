@@ -203,13 +203,24 @@ export function getJewelRadiusPx(
 function resolveJewelRadiusLabel(jewel: Item, game: GameId): JewelRadiusLabel {
   const allLines = [...jewel.implicits, ...jewel.explicits].map(stripPobTags);
 
-  // 1. Explicit upgrade mod on PoE 2 Time-Lost jewels: "Upgrades Radius to Very Large"
+  // 1. Explicit upgrade mod on PoE 2 Time-Lost jewels: "Upgrades Radius to Very Large" / ZH "将范围升级为极大型"
   for (const line of allLines) {
     const m = line.match(
       /^Upgrades Radius to (Small|Medium|Large|Very Large|Massive)$/i,
     );
     if (m) {
       return normalizeRadiusLabel(m[1]!);
+    }
+    const mZh = line.match(/^将范围升级为(小型|中型|大型|极大型|巨型)$/);
+    if (mZh) {
+      const zhMap: Record<string, JewelRadiusLabel> = {
+        小型: 'Small',
+        中型: 'Medium',
+        大型: 'Large',
+        极大型: 'Very Large',
+        巨型: 'Massive',
+      };
+      return zhMap[mZh[1]!] ?? 'Medium';
     }
   }
 
@@ -232,10 +243,10 @@ function resolveJewelRadiusLabel(jewel: Item, game: GameId): JewelRadiusLabel {
   if (lowerName === 'undying hate') {
     return 'Very Large';
   }
-  if (lowerName === 'against the darkness') {
+  if (lowerName === 'against the darkness' || lowerName === '抗衡黑暗') {
     return 'Large';
   }
-  if (lowerBase.includes('time-lost')) {
+  if (lowerBase.includes('time-lost') || lowerBase.includes('失落的')) {
     return game === 'poe2' ? 'Medium' : 'Large';
   }
   if (

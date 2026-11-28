@@ -62,6 +62,17 @@ function resolveRadiusLabelFromItem(
       /^Upgrades Radius to (Small|Medium|Large|Very Large|Massive)$/i,
     );
     if (m) return normalizeRadiusLabel(m[1]!);
+    const mZh = line.match(/^将范围升级为(小型|中型|大型|极大型|巨型)$/);
+    if (mZh) {
+      const zhMap: Record<string, JewelRadiusLabel> = {
+        小型: 'Small',
+        中型: 'Medium',
+        大型: 'Large',
+        极大型: 'Very Large',
+        巨型: 'Massive',
+      };
+      return zhMap[mZh[1]!] ?? defaultLabel;
+    }
   }
   if (item.rawText) {
     const m = item.rawText.match(

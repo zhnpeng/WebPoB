@@ -1630,5 +1630,36 @@ describe('PoE 2 The Adorned Sinister Sockets & Undying Hate Conquered Passives',
         expect.stringMatching(/increased maximum Energy Shield/i),
       ]),
     );
+
+    // Chinese "将范围升级为极大型" upgrades PoE 2 Time-Lost radius from Medium (1150px) to Very Large (1800px)
+    const farTree: PassiveTreeData = {
+      game: 'poe2',
+      version: '0_5',
+      bounds: { minX: -2000, maxX: 2000, minY: -2000, maxY: 2000 },
+      nodes: {
+        1: mkNode(1, 'Jewel Socket', 'jewel', 0, 0, []),
+        2: mkNode(2, 'Far Notable', 'notable', 1500, 0, ['10% increased Damage']),
+      },
+      groups: {},
+      classStartNodeIds: {},
+    };
+    const zhVeryLargeJewel = mkItem({
+      id: 'j-timelost-zh-vl',
+      name: '精魂光芒',
+      baseName: '失落的翡翠',
+      rarity: 'RARE',
+      explicits: [
+        '将范围升级为极大型',
+        'Notable Passive Skills in Radius also grant 8% increased Critical Strike Chance',
+      ],
+    });
+    const farRes = evaluateRadiusAndDistanceJewels(
+      [{ nodeId: 1, jewel: zhVeryLargeJewel }],
+      farTree,
+      new Set([1, 2]),
+      1,
+    );
+    expect(farRes.details[0]?.radiusLabel).toBe('Very Large');
+    expect(farRes.addedStatLines.flatMap((e) => e.lines)).toContain('8% increased Critical Strike Chance');
   });
 });
