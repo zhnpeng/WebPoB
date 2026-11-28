@@ -447,5 +447,32 @@ Implicits: 1
     const gcBuild = xmlToBuild(groupCountMercXml);
     expect(gcBuild.skills[0]!.gems[0]!.count).toBe(7);
     expect(gcBuild.skills[1]!.source).toBe('Mercenary');
+
+    // Wave 5B: Equipped PoE 1 Diamond/Bismuth/Amethyst Flasks populate Master Distiller Have*Flask conditions
+    const distillerXml = `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding>
+  <Build className="Ranger" ascendClassName="Pathfinder" level="95" mainSocketGroup="1" />
+  <Tree activeSpec="1"><Spec title="Default" nodes="1" /></Tree>
+  <Skills><Skill enabled="true"><Gem nameSpec="Arc" level="20" quality="0" enabled="true" /></Skill></Skills>
+  <Items activeItemSet="1">
+    <Item id="1">
+Rarity: MAGIC
+Diamond Flask
+    </Item>
+    <Item id="2">
+Rarity: MAGIC
+Bismuth Flask
+    </Item>
+    <ItemSet id="1">
+      <Slot name="Flask 1" itemId="1" />
+      <Slot name="Flask 2" itemId="2" />
+    </ItemSet>
+  </Items>
+  <Config />
+</PathOfBuilding>`;
+    const distillerBuild = xmlToBuild(distillerXml);
+    expect(distillerBuild.config.rawInputs?.conditionHaveDiamondFlask).toBe(true);
+    expect(distillerBuild.config.rawInputs?.conditionHaveBismuthFlask).toBe(true);
+    expect(distillerBuild.config.rawInputs?.conditionHaveAmethystFlask).toBeUndefined();
   });
 });

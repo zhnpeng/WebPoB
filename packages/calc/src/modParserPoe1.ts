@@ -2051,6 +2051,59 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
     pattern: /^You cannot have more than (\d+) Summoned Totems of the same type$/i,
     build: (m, src) => [mkMod('ActiveTotemLimit', 'MAX', Number(m[1]), src)],
   },
+  // Wave 5B: Pathfinder Master Distiller (upstream PoB1 ModParser.lua:3017-3028)
+  {
+    pattern: /^If Diamond Flask Charges are consumed, (\d+)% increased Critical Strike Chance$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritChance', 'INC', Number(m[1]), src),
+        tags: [
+          { type: 'SkillType' as const, skillType: 'Triggered', neg: true },
+          { type: 'SkillType' as const, skillType: 'Channel', neg: true },
+          { type: 'Condition' as const, var: 'HaveDiamondFlask' },
+        ],
+      },
+    ],
+  },
+  {
+    pattern: /^If Diamond Flask Charges are consumed, \+(\d+)% to Critical Strike Multiplier$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritMultiplier', 'BASE', Number(m[1]), src),
+        tags: [
+          { type: 'SkillType' as const, skillType: 'Triggered', neg: true },
+          { type: 'SkillType' as const, skillType: 'Channel', neg: true },
+          { type: 'Condition' as const, var: 'HaveDiamondFlask' },
+        ],
+      },
+    ],
+  },
+  {
+    pattern: /^If Bismuth Flask Charges are consumed, Penetrate (\d+)% Elemental Resistances$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('ElementalPenetration', 'BASE', Number(m[1]), src),
+        tags: [
+          { type: 'SkillType' as const, skillType: 'Triggered', neg: true },
+          { type: 'SkillType' as const, skillType: 'Channel', neg: true },
+          { type: 'Condition' as const, var: 'HaveBismuthFlask' },
+        ],
+      },
+    ],
+  },
+  {
+    pattern: /^If Amethyst Flask Charges are consumed, (\d+)% of Physical Damage as Extra Chaos Damage$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('PhysicalDamageGainAsChaos', 'BASE', Number(m[1]), src),
+        tags: [
+          { type: 'SkillType' as const, skillType: 'Triggered', neg: true },
+          { type: 'SkillType' as const, skillType: 'Channel', neg: true },
+          { type: 'Condition' as const, var: 'HaveAmethystFlask' },
+        ],
+      },
+    ],
+  },
 ];
 
 /**

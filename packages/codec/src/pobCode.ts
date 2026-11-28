@@ -1627,6 +1627,21 @@ export function xmlToBuild(xml: string): Build {
     rawInputs.multiplierActiveMines = mainMineCount;
   }
 
+  if (game === 'poe1') {
+    for (const fSlot of ['Flask 1', 'Flask 2', 'Flask 3', 'Flask 4', 'Flask 5'] as const) {
+      const fItemId = equipped[fSlot];
+      const fItem = fItemId ? items[fItemId] : undefined;
+      const base = fItem?.baseName?.trim().toLowerCase() ?? '';
+      if (base === 'diamond flask' && rawInputs.conditionHaveDiamondFlask === undefined) {
+        rawInputs.conditionHaveDiamondFlask = true;
+      } else if (base === 'bismuth flask' && rawInputs.conditionHaveBismuthFlask === undefined) {
+        rawInputs.conditionHaveBismuthFlask = true;
+      } else if (base === 'amethyst flask' && rawInputs.conditionHaveAmethystFlask === undefined) {
+        rawInputs.conditionHaveAmethystFlask = true;
+      }
+    }
+  }
+
   if (Object.keys(rawInputs).length > 0) {
     config.rawInputs = rawInputs;
   }

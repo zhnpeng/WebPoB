@@ -1372,4 +1372,36 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       parseModLine('Chaos Damage taken does not bypass Energy Shield during effect', 'Item: Coruscating Elixir'),
     ).toEqual([expect.objectContaining({ name: 'ChaosDamageDoesNotBypassES', type: 'FLAG', value: true })]);
   });
+
+  it('Wave 5B: Pathfinder Master Distiller (Diamond/Bismuth/Amethyst Flask Charges consumed)', () => {
+    expect(
+      parseModLine('If Diamond Flask Charges are consumed, 250% increased Critical Strike Chance', 'Tree: Master Distiller'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'CritChance',
+        type: 'INC',
+        value: 250,
+        tags: [
+          { type: 'SkillType', skillType: 'Triggered', neg: true },
+          { type: 'SkillType', skillType: 'Channel', neg: true },
+          { type: 'Condition', var: 'HaveDiamondFlask' },
+        ],
+      }),
+    ]);
+    expect(
+      parseModLine('If Diamond Flask Charges are consumed, +100% to Critical Strike Multiplier', 'Tree: Master Distiller'),
+    ).toEqual([
+      expect.objectContaining({ name: 'CritMultiplier', type: 'BASE', value: 100 }),
+    ]);
+    expect(
+      parseModLine('If Bismuth Flask Charges are consumed, Penetrate 30% Elemental Resistances', 'Tree: Master Distiller'),
+    ).toEqual([
+      expect.objectContaining({ name: 'ElementalPenetration', type: 'BASE', value: 30 }),
+    ]);
+    expect(
+      parseModLine('If Amethyst Flask Charges are consumed, 47% of Physical Damage as Extra Chaos Damage', 'Tree: Master Distiller'),
+    ).toEqual([
+      expect.objectContaining({ name: 'PhysicalDamageGainAsChaos', type: 'BASE', value: 47 }),
+    ]);
+  });
 });
