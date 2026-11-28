@@ -11582,13 +11582,19 @@ function computeGroupOffence(
     const impaleResist = skillDb.flag('IgnoreEnemyImpalePhysicalDamageReduction', flags, kwFlags)
       ? 0
       : Math.min(0.75, Math.max(0, impaleBasePdr + impaleArmourPdr));
-    const impalePhysTakenInc =
-      enemyGlobalDmgTakenInc +
-      groupEnemyDb.sum('INC', ['PhysicalDamageTaken', 'ReflectedDamageTaken'], flags, kwFlags);
-    const impalePhysTakenMore =
-      enemyGlobalDmgTakenMore *
-      groupEnemyDb.more('PhysicalDamageTaken', flags, kwFlags) *
-      groupEnemyDb.more('ReflectedDamageTaken', flags, kwFlags);
+    // Upstream PoB1 CalcOffence.lua:5670-5672: Impale reflected damage taken uses `ModFlag.Hit` only
+    // (excludes Attack/Melee-scoped modifiers like Intimidated's +10% Attack Damage Taken).
+    const impalePhysTakenInc = groupEnemyDb.sum(
+      'INC',
+      ['DamageTaken', 'PhysicalDamageTaken', 'ReflectedDamageTaken'],
+      ModFlag.Hit,
+      0,
+    );
+    const impalePhysTakenMore = groupEnemyDb.more(
+      ['DamageTaken', 'PhysicalDamageTaken', 'ReflectedDamageTaken'],
+      ModFlag.Hit,
+      0,
+    );
     const impaleEnemyFactor =
       (1 - impaleResist) * Math.max(0, 1 + impalePhysTakenInc / 100) * impalePhysTakenMore;
     const impaleDmgMod = impaleHitDamageMod * impaleEnemyFactor * (impaleChance / 100);

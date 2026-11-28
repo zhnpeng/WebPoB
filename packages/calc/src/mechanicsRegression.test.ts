@@ -2483,4 +2483,58 @@ describe('Mechanism-Layer Regression Suite (PoE 1 & PoE 2)', () => {
       expect(outRed.offence.averageHit).toBeGreaterThan(outBlue.offence.averageHit);
     });
   });
+
+  describe('Wave 5I: Impale Reflected Damage Uses ModFlag.Hit Only (No Intimidate Double-Dip)', () => {
+    it('does not apply Intimidated (+10% Attack Damage Taken) to reflected Impale DPS', () => {
+      const base = createSamplePoe1Build();
+      const sword = makeWeapon({
+        id: 'impale_sword',
+        name: 'Pure Phys Sword',
+        baseName: 'Jewelled Foil',
+        slotType: 'Weapon 1',
+        weaponStats: {
+          weaponType: 'Sword',
+          twoHanded: false,
+          physicalMin: 200,
+          physicalMax: 400,
+          attacksPerSecond: 1.6,
+          critChance: 5,
+        },
+      });
+      const common: Build = {
+        ...base,
+        items: { ...base.items, [sword.id]: sword },
+        equipped: { ...base.equipped, 'Weapon 1': sword.id },
+        skills: [
+          {
+            id: 'sg_impale',
+            label: 'Impale Cyclone',
+            enabled: true,
+            gems: [{ instanceId: 'g1', gemId: 'poe1_cyclone', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_impale',
+        config: {
+          ...base.config,
+          enemyArmour: 0,
+          enemyIntimidated: false,
+          customMods: '100% chance to Impale Enemies on Hit with Attacks',
+        },
+      };
+      const outPlain = calculateBuild(common);
+      const outIntimidated = calculateBuild({
+        ...common,
+        config: {
+          ...common.config,
+          enemyIntimidated: true,
+        },
+      });
+      // Hit DPS increases by +10% from Intimidated, while reflected Impale DPS (totalDps - hitDps) stays unchanged
+      const plainImpale = outPlain.offence.totalDps - outPlain.offence.hitDps;
+      const intimImpale = outIntimidated.offence.totalDps - outIntimidated.offence.hitDps;
+      expect(outIntimidated.offence.hitDps).toBeGreaterThan(outPlain.offence.hitDps * 1.05);
+      expect(plainImpale).toBeGreaterThan(0);
+      expect(intimImpale).toBeCloseTo(plainImpale, 1);
+    });
+  });
 });
