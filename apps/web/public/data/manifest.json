@@ -6,6 +6,13 @@
     "poe1": {
       "latestTreeVersion": "3_30",
       "trees": {
+        "3_22": "poe1-tree-3_22.json",
+        "3_25": "poe1-tree-3_25.json",
+        "3_26": "poe1-tree-3_26.json",
+        "3_27": "poe1-tree-3_27.json",
+        "3_28": "poe1-tree-3_28.json",
+        "3_28_alternate": "poe1-tree-3_28_alternate.json",
+        "3_29": "poe1-tree-3_29.json",
         "3_30": "poe1-tree-3_30.json"
       },
       "classes": "poe1-classes.json",
@@ -13,6 +20,7 @@
       "bases": "poe1-bases.json",
       "uniques": "poe1-uniques.json",
       "clusters": "poe1-clusters.json",
+      "timelessJewels": "poe1-timeless-jewels.json",
       "ascendancyArt": "ascendancy-art.json",
       "i18n": {
         "zh-TW": "poe1-i18n-zh-TW.json"
@@ -21,12 +29,18 @@
     "poe2": {
       "latestTreeVersion": "0_5",
       "trees": {
+        "0_1": "poe2-tree-0_1.json",
+        "0_2": "poe2-tree-0_2.json",
+        "0_3": "poe2-tree-0_3.json",
+        "0_4": "poe2-tree-0_4.json",
         "0_5": "poe2-tree-0_5.json"
       },
       "classes": "poe2-classes.json",
       "gems": "poe2-gems.json",
       "bases": "poe2-bases.json",
       "uniques": "poe2-uniques.json",
+      "timelessJewels": "poe2-timeless-jewels.json",
+      "runes": "poe2-runes.json",
       "ascendancyArt": "ascendancy-art.json",
       "i18n": {
         "zh-TW": "poe2-i18n-zh-TW.json"

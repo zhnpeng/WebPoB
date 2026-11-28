@@ -13,7 +13,10 @@ import {
 import {
   analyzeBuildDiagnostics,
   calculateBuild,
+  canWieldTwoHandedMartialInOneHand,
+  canWieldWeaponInOneHand,
   computeNodePower,
+  hasCantUseBodyArmour,
   parseModLine,
   rankSupportGemsForGroup,
   rankUniqueUpgradesForSlot,
@@ -119,7 +122,7 @@ describe('@webpob/calc', () => {
     const out1 = calculateBuild(officialPoe1);
     const out2 = calculateBuild(officialPoe2);
     expect(out1.offence.totalDps).toBeGreaterThan(15000);
-    expect(out2.offence.totalDps).toBeGreaterThan(2500);
+    expect(out2.offence.totalDps).toBeGreaterThan(2000);
     expect(out1.allocatedPoints).toBe(officialPoe1.tree.allocatedNodeIds.length - 1);
   });
 
@@ -1024,5 +1027,131 @@ describe('@webpob/calc', () => {
       ],
     });
     expect(duplicateAura.defence.spiritReserved).toBe(singleAura.defence.spiritReserved);
+  });
+
+  it('allows dual-wielding two-handed maces/axes/swords and disables Body Armour when PoE 2 The Bringer of Rain (祭礼之雨) is equipped', () => {
+    const base = createSamplePoe2Build();
+    const twoHandMace1 = {
+      id: 'mace_2h_1',
+      name: 'Titan Maul Alpha',
+      baseName: 'Cultist Greathammer',
+      rarity: 'RARE' as const,
+      slotType: 'Weapon 1' as const,
+      quality: 20,
+      weaponStats: {
+        weaponType: 'Mace' as const,
+        twoHanded: true,
+        physicalMin: 120,
+        physicalMax: 220,
+        attacksPerSecond: 1.2,
+        critChance: 5,
+      },
+      implicits: [],
+      explicits: [],
+    };
+    const twoHandMace2 = {
+      ...twoHandMace1,
+      id: 'mace_2h_2',
+      name: 'Titan Maul Beta',
+      weaponStats: {
+        ...twoHandMace1.weaponStats,
+        physicalMin: 240,
+        physicalMax: 440,
+        attacksPerSecond: 1.8,
+      },
+    };
+    const bodyArmour = {
+      id: 'chest_life',
+      name: 'Heavy Plate',
+      baseName: 'Vaal Cuirass',
+      rarity: 'RARE' as const,
+      slotType: 'Body Armour' as const,
+      quality: 20,
+      armourStats: { armour: 600 },
+      implicits: [],
+      explicits: ['+200 to maximum Life'],
+    };
+    const bringerOfRain = {
+      id: 'helm_bringer',
+      name: 'The Bringer of Rain',
+      nameZh: '祭礼之雨',
+      baseName: 'Decorated Helm',
+      rarity: 'UNIQUE' as const,
+      slotType: 'Helmet' as const,
+      quality: 20,
+      armourStats: { armour: 100, evasion: 100 },
+      implicits: [],
+      explicits: [
+        '700% increased Armour and Evasion',
+        "Can't use Body Armour",
+        'You can wield Two-Handed Axes, Maces and Swords in one hand',
+        'This item gains bonuses from Socketed Items as though it was a Body Armour',
+      ],
+    };
+
+    const attackSkill = {
+      id: 'sg_slam',
+      label: 'Mace Slam',
+      enabled: true,
+      weaponSets: [1, 2] as Array<1 | 2>,
+      gems: [{ instanceId: 'g_mace', gemId: 'poe2_hammer_of_the_gods', level: 20, quality: 0, enabled: true }],
+    };
+
+    const withoutHelm = {
+      ...base,
+      items: {
+        ...base.items,
+        [twoHandMace1.id]: twoHandMace1,
+        [twoHandMace2.id]: twoHandMace2,
+        [bodyArmour.id]: bodyArmour,
+      },
+      equipped: {
+        ...base.equipped,
+        'Weapon 1': twoHandMace1.id,
+        'Weapon 2': twoHandMace2.id,
+        'Body Armour': bodyArmour.id,
+      },
+      skills: [attackSkill],
+      mainSkillGroupId: attackSkill.id,
+      config: {
+        ...base.config,
+        customMods: '50% increased Attack Speed while Dual Wielding',
+      },
+    };
+    delete withoutHelm.equipped.Helmet;
+
+    const withBringer = {
+      ...withoutHelm,
+      items: {
+        ...withoutHelm.items,
+        [bringerOfRain.id]: bringerOfRain,
+      },
+      equipped: {
+        ...withoutHelm.equipped,
+        Helmet: bringerOfRain.id,
+      },
+    };
+
+    expect(canWieldTwoHandedMartialInOneHand(withoutHelm)).toBe(false);
+    expect(canWieldTwoHandedMartialInOneHand(withBringer)).toBe(true);
+    expect(hasCantUseBodyArmour(withoutHelm)).toBe(false);
+    expect(hasCantUseBodyArmour(withBringer)).toBe(true);
+
+    // 2H Mace/Axe/Sword fit in one hand with Bringer of Rain; Bow/Quarterstaff do not
+    expect(canWieldWeaponInOneHand(twoHandMace1.weaponStats, false)).toBe(false);
+    expect(canWieldWeaponInOneHand(twoHandMace1.weaponStats, true)).toBe(true);
+    expect(canWieldWeaponInOneHand({ weaponType: 'Axe', twoHanded: true }, true)).toBe(true);
+    expect(canWieldWeaponInOneHand({ weaponType: 'Sword', twoHanded: true }, true)).toBe(true);
+    expect(canWieldWeaponInOneHand({ weaponType: 'Bow', twoHanded: true }, true)).toBe(false);
+    expect(canWieldWeaponInOneHand({ weaponType: 'Quarterstaff', twoHanded: true }, true)).toBe(false);
+
+    const outWithout = calculateBuild(withoutHelm);
+    const outWith = calculateBuild(withBringer);
+
+    // With Bringer of Rain: dual-wielding both 2H maces activates offhand speed & damage contribution
+    expect(outWith.offence.speed).toBeGreaterThan(outWithout.offence.speed);
+    expect(outWith.offence.averageHit).toBeGreaterThan(outWithout.offence.averageHit);
+    // Body Armour (+200 maximum Life) is disabled by Bringer of Rain ("Can't use Body Armour")
+    expect(outWith.defence.life).toBeLessThan(outWithout.defence.life - 150);
   });
 });

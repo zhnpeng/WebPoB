@@ -1036,4 +1036,185 @@ describe('evaluatePoe2UnbakedSocketedRunes', () => {
     expect(db.sum('BASE', 'Dex')).toBe(15);
     expect(db.sum('BASE', 'Int')).toBe(15);
   });
+
+  it('skips rune re-expansion when {enchant}{rune} is baked in implicits or explicits and filters out Rune: None', () => {
+    // 1. Anvil Maul with baked {enchant}{rune}50% + two Greater Iron Runes
+    const anvilMaul = mkItem({
+      id: 'anvil-1',
+      name: 'Rune Ram',
+      baseName: 'Anvil Maul',
+      slotType: 'Weapon 1',
+      weaponStats: {
+        physicalMin: 101,
+        physicalMax: 136,
+        attacksPerSecond: 1.05,
+        critChance: 5,
+        weaponType: 'Mace',
+        twoHanded: true,
+      },
+      implicits: ['{enchant}{rune}50% increased Physical Damage'],
+      explicits: ['110% increased Physical Damage'],
+      rawText: [
+        'Sockets: S S',
+        'Rune: Greater Iron Rune',
+        'Rune: Greater Iron Rune',
+        'Implicits: 1',
+        '{enchant}{rune}50% increased Physical Damage',
+      ].join('\n'),
+    });
+    expect(hasBakedRuneImplicits(anvilMaul, 'Weapon 1')).toBe(true);
+    const anvilRes = evaluatePoe2UnbakedSocketedRunes(
+      [{ slot: 'Weapon 1', item: anvilMaul }],
+      'poe2',
+    );
+    expect(anvilRes.addedStatLines).toHaveLength(0);
+    expect(anvilRes.details[0]?.skippedEntireItemReason).toBe('already-baked-rune-implicits');
+
+    // 2. Baked {rune} inside explicits (no rawText) must also prevent double-counting
+    const explicitBaked = mkItem({
+      id: 'exp-rune-1',
+      name: 'Runed Helmet',
+      baseName: 'Greathelm',
+      slotType: 'Helmet',
+      explicits: ['{enchant}{rune}+14% to Cold Resistance'],
+    }) as Item & { runes?: string[] };
+    explicitBaked.runes = ['Greater Glacial Rune', 'None'];
+    expect(extractRawRuneNames(explicitBaked)).toEqual(['Greater Glacial Rune']);
+    expect(hasBakedRuneImplicits(explicitBaked, 'Helmet')).toBe(true);
+    const expRes = evaluatePoe2UnbakedSocketedRunes(
+      [{ slot: 'Helmet', item: explicitBaked }],
+      'poe2',
+    );
+    expect(expRes.addedStatLines).toHaveLength(0);
+
+    // 3. Empty `Rune: None` slots must be stripped by extractRawRuneNames
+    const emptySockets = mkItem({
+      id: 'empty-runes',
+      name: 'Razor Quarterstaff',
+      baseName: 'Razor Quarterstaff',
+      slotType: 'Weapon 1',
+      rawText: ['Sockets: S S S S', 'Rune: None', 'Rune: None', 'Rune: None', 'Rune: None'].join('\n'),
+    });
+    expect(extractRawRuneNames(emptySockets)).toEqual([]);
+  });
+
+  it("scales Darkness Enthroned (Belt as Gloves/Helmet + Socketed Augment Items effect), Runeseeker's Call (Runic Fork + 200% Rune effect), and preserves Bringer of Rain", () => {
+    const datasetRunes: import('@webpob/core').Poe2RunesDataset = {
+      game: 'poe2',
+      runes: {
+        "Fenumus' Rune of Spinning": {
+          gloves: { type: 'Rune', localMod: false, isLocalBaked: false, lines: ['8% increased Cast Speed'] },
+        },
+        "Atziri's Soul Core of Alacrity": {
+          gloves: {
+            type: 'SoulCore',
+            localMod: false,
+            isLocalBaked: false,
+            lines: ['1% increased Skill Speed for each Corrupted Item Equipped'],
+          },
+        },
+        "Saqawal's Rune of the Sky": {
+          wand: {
+            type: 'Rune',
+            localMod: false,
+            isLocalBaked: false,
+            lines: ['Gain 5% of Damage as Extra Damage of all Elements'],
+          },
+        },
+        'Legacy of Lifesprig': {
+          wand: { type: 'Rune', localMod: false, isLocalBaked: false, lines: ['+2 to Level of all Spell Skills'] },
+        },
+        'Perfect Glacial Rune': {
+          wand: {
+            type: 'Rune',
+            localMod: false,
+            isLocalBaked: false,
+            lines: ['Gain 12% of Damage as Extra Cold Damage'],
+          },
+        },
+        'Perfect Iron Rune': {
+          'body armour': {
+            type: 'Rune',
+            localMod: false,
+            isLocalBaked: false,
+            lines: ['+45 to maximum Life'],
+          },
+          helmet: {
+            type: 'Rune',
+            localMod: false,
+            isLocalBaked: false,
+            lines: ['+20 to maximum Life'],
+          },
+        },
+      },
+    };
+
+    // 1. Darkness Enthroned (Belt impersonating Gloves with 100% increased effect of Socketed Augment Items -> 2x)
+    const darknessGloves = mkItem({
+      id: 'darkness-gloves',
+      name: 'Darkness Enthroned',
+      baseName: 'Fine Belt',
+      slotType: 'Belt',
+      explicits: [
+        '100% increased effect of Socketed Augment Items',
+        'This item gains bonuses from Socketed Items as though it was Gloves',
+      ],
+      rawText: [
+        'Sockets: S S',
+        "Rune: Fenumus' Rune of Spinning",
+        "Rune: Atziri's Soul Core of Alacrity",
+      ].join('\n'),
+    });
+    const dgRes = evaluatePoe2UnbakedSocketedRunes(
+      [{ slot: 'Belt', item: darknessGloves }],
+      'poe2',
+      { datasetRunes },
+    );
+    expect(dgRes.addedStatLines[0]?.lines).toEqual([
+      '16% increased Cast Speed',
+      '2% increased Skill Speed for each Corrupted Item Equipped',
+    ]);
+
+    // 2. Runeseeker's Call (Runemastered Runic Fork = Wand base, 200% increased effect of Socketed Runes -> 3x)
+    const runeseeker = mkItem({
+      id: 'runeseeker',
+      name: "Runeseeker's Call",
+      baseName: 'Runemastered Runic Fork',
+      slotType: 'Weapon 1',
+      explicits: ['Only Runes can be Socketed in this item', '200% increased effect of Socketed Runes'],
+      rawText: [
+        'Sockets: S S S',
+        'Rune: Legacy of Lifesprig',
+        'Rune: Perfect Glacial Rune',
+        "Rune: Saqawal's Rune of the Sky",
+      ].join('\n'),
+    });
+    expect(classifyPoe2RuneSlotCategory('Weapon 1', runeseeker)).toBe('caster');
+    const rsRes = evaluatePoe2UnbakedSocketedRunes(
+      [{ slot: 'Weapon 1', item: runeseeker }],
+      'poe2',
+      { datasetRunes },
+    );
+    expect(rsRes.addedStatLines[0]?.lines).toEqual([
+      '+6 to Level of all Spell Skills',
+      'Gain 36% of Damage as Extra Cold Damage',
+      'Gain 15% of Damage as Extra Damage of all Elements',
+    ]);
+
+    // 3. The Bringer of Rain (Helmet impersonating Body Armour) preserved cleanly
+    const bringer = mkItem({
+      id: 'bringer',
+      name: 'The Bringer of Rain',
+      baseName: 'Decorated Helm',
+      slotType: 'Helmet',
+      explicits: ['This item gains bonuses from Socketed Items as though it was a Body Armour'],
+      rawText: ['Sockets: S', 'Rune: Perfect Iron Rune'].join('\n'),
+    });
+    const brRes = evaluatePoe2UnbakedSocketedRunes(
+      [{ slot: 'Helmet', item: bringer }],
+      'poe2',
+      { datasetRunes },
+    );
+    expect(brRes.addedStatLines[0]?.lines).toEqual(['+45 to maximum Life']);
+  });
 });

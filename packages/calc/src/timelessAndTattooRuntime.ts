@@ -262,8 +262,12 @@ export interface TimelessJewelResult {
   supremeOstentation: boolean;
   /** Extra % of Maximum Life gained as Extra Maximum Energy Shield from Corrupted Soul (15 when active). */
   lifeGainAsEsPct: number;
-  /** True when PoE 2 Vorana's Circular Teaching disables Strength's inherent Life bonus. */
+  /** True when PoE 2 Vorana's Black Scythe Training / Circular Teaching disables Strength's inherent Life bonus. */
   noStrLifeBonus: boolean;
+  /** True when PoE 2 Medved's Circular Teachings disables Dexterity's inherent Accuracy bonus. */
+  noDexAccuracyBonus?: boolean;
+  /** True when PoE 2 Olroth's Knightly Tenets disables Intelligence's inherent Mana bonus. */
+  noIntManaBonus?: boolean;
   /** Active Power of Purpose conversion descriptor (80% Mana -> 2x Armour), if active. */
   powerOfPurpose: { manaConvertedPct: number; armourMultiplier: number } | null;
   /** Total Devotion accumulated from Militant Faith jewels. */
@@ -275,10 +279,12 @@ export interface TimelessJewelResult {
 }
 
 export interface EvaluateTimelessJewelsOptions {
-  /** Optional external LUT lookup (e.g. from `createCompactTimelessLutLookup`). */
+  /** Optional external LUT lookup (e.g. from `createCompactTimelessLutLookup` or `createBinaryDatasetTimelessLutLookup`). */
   lutLookup?: TimelessLutLookup;
   /** Explicit game override (defaults to `tree.game`). */
   game?: GameId;
+  /** When true, uses exact PoB1/PoB2 `smallNodeEffects` (+2/+4 Str/Dex on smalls only, LUT-driven Militant Faith notable Devotion, PoE 1 Kalguur +1%/+2% Ward). */
+  useOfficialSmallNodeRules?: boolean;
 }
 
 function defaultLutModeForJewel(jewelType: string): 'add' | 'replace' {
@@ -360,6 +366,90 @@ export function createCompactTimelessLutLookup(
   };
 }
 
+interface BinaryDatasetJewelDesc {
+  name: string;
+  file: string;
+  minSeed: number;
+  maxSeed: number;
+  seedStep?: number;
+  numSeeds: number;
+  numNodes: number;
+  localToGlobal?: Record<string, number>;
+}
+
+interface BinaryDatasetPassiveEntry {
+  id: string;
+  dn?: string;
+  sd?: string[];
+  ks?: boolean;
+  kind?: 'addition' | 'replace';
+}
+
+/**
+ * Creates an O(1) `TimelessLutLookup` backed by `poe1-timeless-jewels.json` metadata
+ * and inflated `timeless/poe1-*.bin` raw `Uint8Array` buffers (`nodeIdx * numSeeds + seedIdx`).
+ */
+export function createBinaryDatasetTimelessLutLookup(
+  dataset: import('@webpob/core').TimelessJewelDataset | null | undefined,
+  getBuffer: (file: string) => Uint8Array | null,
+): TimelessLutLookup | undefined {
+  if (!dataset || typeof dataset !== 'object') return undefined;
+  const rawNodes = (dataset as { reachableNodeIds?: unknown }).reachableNodeIds;
+  const rawJewels = (dataset as { jewels?: Record<string, BinaryDatasetJewelDesc> }).jewels;
+  const rawPassives = (dataset as { legionPassives?: Record<string, BinaryDatasetPassiveEntry> })
+    .legionPassives;
+  if (!Array.isArray(rawNodes) || !rawJewels || !rawPassives) return undefined;
+
+  const nodeIdToIndex = new Map<number, number>();
+  rawNodes.forEach((nid, idx) => {
+    if (typeof nid === 'number') nodeIdToIndex.set(nid, idx);
+  });
+
+  const jewelsByName = new Map<string, BinaryDatasetJewelDesc>();
+  for (const desc of Object.values(rawJewels)) {
+    if (desc?.name && desc.file) {
+      jewelsByName.set(desc.name.trim().toLowerCase(), desc);
+    }
+  }
+
+  return {
+    lookupNode(jewelType, seed, nodeId): TimelessLutNodeEntry | null {
+      const desc = jewelsByName.get(jewelType.trim().toLowerCase());
+      if (!desc) return null;
+      const nodeIdx = nodeIdToIndex.get(nodeId);
+      if (nodeIdx === undefined || nodeIdx < 0 || nodeIdx >= desc.numNodes) return null;
+      const step = desc.seedStep && desc.seedStep > 0 ? desc.seedStep : 1;
+      if (seed < desc.minSeed || seed > desc.maxSeed) return null;
+      const offset = seed - desc.minSeed;
+      if (offset % step !== 0) return null;
+      const seedIdx = Math.floor(offset / step);
+      if (seedIdx < 0 || seedIdx >= desc.numSeeds) return null;
+
+      const buf = getBuffer(desc.file);
+      if (!buf) return null;
+      const byteIndex = nodeIdx * desc.numSeeds + seedIdx;
+      if (byteIndex < 0 || byteIndex >= buf.length) return null;
+
+      const localId = buf[byteIndex]!;
+      const globalId = desc.localToGlobal?.[String(localId)] ?? localId;
+      const passive = rawPassives[String(globalId)];
+      if (!passive) return null;
+
+      const mode: 'add' | 'replace' =
+        passive.kind === 'replace'
+          ? 'replace'
+          : passive.kind === 'addition'
+            ? 'add'
+            : defaultLutModeForJewel(jewelType);
+      return {
+        mode,
+        stats: Array.isArray(passive.sd) ? [...passive.sd] : [],
+        name: passive.dn,
+      };
+    },
+  };
+}
+
 interface TimelessConquerorSpec {
   keystoneName: string;
   descriptionLines: string[];
@@ -367,6 +457,8 @@ interface TimelessConquerorSpec {
   supremeOstentation?: boolean;
   lifeGainAsEsPct?: number;
   noStrLifeBonus?: boolean;
+  noDexAccuracyBonus?: boolean;
+  noIntManaBonus?: boolean;
   powerOfPurpose?: { manaConvertedPct: number; armourMultiplier: number };
 }
 
@@ -647,13 +739,50 @@ function getConquerorKeystoneSpec(
         };
       }
       if (c === 'medved') {
+        if (game === 'poe2') {
+          return {
+            keystoneName: 'Circular Teachings',
+            descriptionLines: [
+              'Gain no inherent bonus from Dexterity',
+              '1% increased Armour per 2 Dexterity',
+            ],
+            noDexAccuracyBonus: true,
+            buildMods: (src) => [
+              mkMod('CircularTeachings', 'FLAG', true, src),
+              mkMod('NoDexAccuracyBonus', 'FLAG', true, src),
+              mkMod('Armour', 'INC', 1, src, 0, 0, [
+                { type: 'PerStat', stat: 'Dex', div: 2 },
+              ]),
+            ],
+          };
+        }
         return {
           keystoneName: 'Unbreaking',
-          descriptionLines: ['Unbreaking'],
-          buildMods: (src) => [mkMod('Unbreaking', 'FLAG', true, src)],
+          descriptionLines: ['40% less Ward', 'Ward has a 60% chance to not Break'],
+          buildMods: (src) => [
+            mkMod('Unbreaking', 'FLAG', true, src),
+            mkMod('Ward', 'MORE', -40, src),
+          ],
         };
       }
       if (c === 'olroth') {
+        if (game === 'poe2') {
+          return {
+            keystoneName: 'Knightly Tenets',
+            descriptionLines: [
+              'Gain no inherent bonus from Intelligence',
+              '1% increased Evasion Rating per 2 Intelligence',
+            ],
+            noIntManaBonus: true,
+            buildMods: (src) => [
+              mkMod('KnightlyTenets', 'FLAG', true, src),
+              mkMod('NoIntManaBonus', 'FLAG', true, src),
+              mkMod('Evasion', 'INC', 1, src, 0, 0, [
+                { type: 'PerStat', stat: 'Int', div: 2 },
+              ]),
+            ],
+          };
+        }
         return {
           keystoneName: 'Knightly Vow',
           descriptionLines: ['Knightly Vow'],
@@ -816,14 +945,20 @@ function evaluateDevotionLine(
   }
   const mBrand = scaledLine.match(/^(\d+)% increased Brand Damage$/i);
   if (mBrand) {
-    outMods.push(mkMod('BrandDamage', 'INC', Number(mBrand[1]), source));
+    outMods.push({
+      ...mkMod('Damage', 'INC', Number(mBrand[1]), source),
+      tags: [{ type: 'SkillType', skillType: 'Brand' }],
+    });
     return;
   }
   const mChannel = scaledLine.match(
     /^(\d+)% increased (?:Channelling Damage|Damage with Channelling Skills)$/i,
   );
   if (mChannel) {
-    outMods.push(mkMod('ChannellingDamage', 'INC', Number(mChannel[1]), source));
+    outMods.push({
+      ...mkMod('Damage', 'INC', Number(mChannel[1]), source),
+      tags: [{ type: 'Condition', var: 'Channelling' }],
+    });
     return;
   }
   const mManaEff = scaledLine.match(/^(\d+)% increased Mana Cost Efficiency$/i);
@@ -864,6 +999,7 @@ export function evaluateTimelessJewels(
 ): TimelessJewelResult {
   const game = options?.game ?? tree.game;
   const lutLookup = options?.lutLookup;
+  const officialSmalls = Boolean(options?.useOfficialSmallNodeRules);
 
   const addedStatLines: Array<{ source: string; lines: string[] }> = [];
   const addedMods: Mod[] = [];
@@ -874,6 +1010,8 @@ export function evaluateTimelessJewels(
   let supremeOstentation = false;
   let lifeGainAsEsPct = 0;
   let noStrLifeBonus = false;
+  let noDexAccuracyBonus = false;
+  let noIntManaBonus = false;
   let powerOfPurpose: { manaConvertedPct: number; armourMultiplier: number } | null = null;
   let totalDevotion = 0;
 
@@ -934,6 +1072,8 @@ export function evaluateTimelessJewels(
             lifeGainAsEsPct += conquerorSpec.lifeGainAsEsPct;
           }
           if (conquerorSpec.noStrLifeBonus) noStrLifeBonus = true;
+          if (conquerorSpec.noDexAccuracyBonus) noDexAccuracyBonus = true;
+          if (conquerorSpec.noIntManaBonus) noIntManaBonus = true;
           if (conquerorSpec.powerOfPurpose) {
             powerOfPurpose = { ...conquerorSpec.powerOfPurpose };
           }
@@ -960,18 +1100,26 @@ export function evaluateTimelessJewels(
         }
       }
     } else if (parsed.jewelType === 'Glorious Vanity') {
-      if (lutLookup?.lookupNode) {
-        for (const node of [...smalls, ...notables]) {
+      // Passives in radius are Conquered by the Vaal: ALL smalls and notables are replaced
+      for (const node of [...smalls, ...notables]) {
+        suppressedNodeIds.add(node.id);
+        if (lutLookup?.lookupNode) {
           const hit = lutLookup.lookupNode(parsed.jewelType, parsed.seed, node.id);
           if (hit) {
             lutHits++;
-            if (hit.mode === 'replace') suppressedNodeIds.add(node.id);
             lutLines.push(...hit.stats);
           }
         }
       }
     } else if (parsed.jewelType === 'Lethal Pride') {
-      const bonusStr = smalls.length * 2 + notables.length * 4;
+      let bonusStr = 0;
+      if (officialSmalls) {
+        for (const s of smalls) {
+          bonusStr += isAttributeTravelSmallNode(s) ? 2 : 4;
+        }
+      } else {
+        bonusStr = smalls.length * 2 + notables.length * 4;
+      }
       if (bonusStr > 0) {
         addedStatLines.push({
           source: jewelSrc,
@@ -989,7 +1137,14 @@ export function evaluateTimelessJewels(
         }
       }
     } else if (parsed.jewelType === 'Brutal Restraint') {
-      const bonusDex = smalls.length * 2 + notables.length * 4;
+      let bonusDex = 0;
+      if (officialSmalls) {
+        for (const s of smalls) {
+          bonusDex += isAttributeTravelSmallNode(s) ? 2 : 4;
+        }
+      } else {
+        bonusDex = smalls.length * 2 + notables.length * 4;
+      }
       if (bonusDex > 0) {
         addedStatLines.push({
           source: jewelSrc,
@@ -1016,20 +1171,25 @@ export function evaluateTimelessJewels(
         }
       }
       for (const n of notables) {
-        jewelDevotion += 10;
         if (lutLookup?.lookupNode) {
           const hit = lutLookup.lookupNode(parsed.jewelType, parsed.seed, n.id);
           if (hit) {
             lutHits++;
             if (hit.mode === 'replace') suppressedNodeIds.add(n.id);
+            let notableDevFromLut = 0;
             for (const st of hit.stats) {
               const mDev = stripPobTags(st).match(/^\+(\d+) to Devotion$/i);
-              if (!mDev) {
+              if (mDev) {
+                notableDevFromLut += Number(mDev[1]);
+              } else {
                 lutLines.push(st);
               }
             }
+            jewelDevotion += officialSmalls ? notableDevFromLut : 10;
+            continue;
           }
         }
+        jewelDevotion += 10;
       }
       if (lutLookup?.lookupNode) {
         for (const s of smalls) {
@@ -1068,6 +1228,18 @@ export function evaluateTimelessJewels(
         }
       }
     } else if (parsed.jewelType === 'Heroic Tragedy') {
+      if (officialSmalls && game === 'poe1') {
+        let bonusWardInc = 0;
+        for (const s of smalls) {
+          bonusWardInc += isAttributeTravelSmallNode(s) ? 1 : 2;
+        }
+        if (bonusWardInc > 0) {
+          addedStatLines.push({
+            source: jewelSrc,
+            lines: [`${bonusWardInc}% increased Ward`],
+          });
+        }
+      }
       if (lutLookup?.lookupNode) {
         for (const node of [...smalls, ...notables]) {
           const hit = lutLookup.lookupNode(parsed.jewelType, parsed.seed, node.id);
@@ -1112,6 +1284,8 @@ export function evaluateTimelessJewels(
     supremeOstentation,
     lifeGainAsEsPct,
     noStrLifeBonus,
+    ...(noDexAccuracyBonus ? { noDexAccuracyBonus: true } : {}),
+    ...(noIntManaBonus ? { noIntManaBonus: true } : {}),
     powerOfPurpose,
     totalDevotion,
     replacedKeystones,
@@ -1483,6 +1657,10 @@ export interface Poe2UnbakedRunesResult {
 export interface EvaluatePoe2UnbakedRunesOptions {
   /** Optional external lookup to override or extend `POE2_RUNE_CATALOG`. */
   runesLookup?: Poe2RunesLookup;
+  /** Optional full `poe2-runes.json` dataset (`305` Runes, Soul Cores, Idols, Abyssal Eyes). */
+  datasetRunes?: import('@webpob/core').Poe2RunesDataset | null;
+  /** Whether Shaman Bonded modifiers are unlocked globally. */
+  allowBonded?: boolean;
 }
 
 /**
@@ -1874,16 +2052,71 @@ export const POE2_RUNE_CATALOG: Readonly<Record<string, Poe2RuneDef>> = {
   },
 };
 
+function normalizeRuneStatTemplate(raw: string): string {
+  return stripPobTags(raw)
+    .toLowerCase()
+    .replace(/^(?:bonded|羁绊)\s*[:：]\s*/i, '')
+    .replace(/[+-]?\d+(?:\.\d+)?/g, '#')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /**
- * Returns true if the item already has baked `{rune}` / `(rune)` implicit lines,
+ * Returns true if the item already has baked `{rune}` / `(rune)` implicit lines OR untagged
+ * PoE 2 `0.1`–`0.4` pre-baked rune implicits (`Bonded:` or matching stat templates),
  * meaning unbaked `Rune:` header synthesis MUST be skipped to prevent double-counting.
  */
-export function hasBakedRuneImplicits(item: Item): boolean {
-  for (const line of item.implicits) {
-    if (/\{rune\}|\(rune\)|（符文）/i.test(line)) return true;
+export function hasBakedRuneImplicits(
+  item: Item,
+  slot?: EquipmentSlotId | string,
+  datasetRunes?: import('@webpob/core').Poe2RunesDataset | null,
+): boolean {
+  if ((item as Item & { __poe2RunesRefreshed?: boolean }).__poe2RunesRefreshed) {
+    return false;
+  }
+  for (const line of [...item.implicits, ...item.explicits]) {
+    if (/\{rune\}|\(rune\)|（符文）|^\s*(?:Bonded|羁绊)\s*[:：]/i.test(line)) return true;
   }
   if (item.rawText && /\{rune\}|\(rune\)|（符文）/i.test(item.rawText)) {
     return true;
+  }
+  if (item.implicits.length === 0) return false;
+
+  const runesFound = extractRawRuneNames(item);
+  if (runesFound.length === 0) return false;
+  if (item.implicits.length < runesFound.length && item.implicits.length <= 1) {
+    return false;
+  }
+
+  const slotCategory = classifyPoe2RuneSlotCategory(slot ?? 'Body Armour', item);
+  const dsMap = buildCaseInsensitiveRuneMap(datasetRunes);
+  const candidateKeys = resolveDatasetRuneCandidateKeys(slot ?? 'Body Armour', item, slotCategory);
+  const implicitTemplates = new Set(item.implicits.map(normalizeRuneStatTemplate));
+
+  for (const rawRuneName of runesFound) {
+    const lowerName = rawRuneName.trim().toLowerCase();
+    const dsEntry = dsMap?.get(lowerName);
+    if (dsEntry) {
+      for (const k of candidateKeys) {
+        const sub = dsEntry.slots[k];
+        if (!sub) continue;
+        for (const l of [...(sub.lines ?? []), ...(sub.bonded ?? [])]) {
+          if (implicitTemplates.has(normalizeRuneStatTemplate(l))) {
+            return true;
+          }
+        }
+        break;
+      }
+    }
+    const fb = POE2_RUNE_CATALOG[lowerName];
+    const fbSub = fb?.[slotCategory];
+    if (fbSub) {
+      for (const l of fbSub.stats) {
+        if (implicitTemplates.has(normalizeRuneStatTemplate(l))) {
+          return true;
+        }
+      }
+    }
   }
   return false;
 }
@@ -1897,7 +2130,7 @@ export function extractRawRuneNames(item: Item): string[] {
   if (Array.isArray(itemWithRunes.runes) && itemWithRunes.runes.length > 0) {
     for (const r of itemWithRunes.runes) {
       const trimmed = r.trim();
-      if (trimmed) out.push(trimmed);
+      if (trimmed && !/^none$/i.test(trimmed)) out.push(trimmed);
     }
     return out;
   }
@@ -1906,9 +2139,22 @@ export function extractRawRuneNames(item: Item): string[] {
   let m: RegExpExecArray | null;
   while ((m = re.exec(item.rawText)) !== null) {
     const name = m[1]!.trim();
-    if (name) out.push(name);
+    if (name && !/^none$/i.test(name)) out.push(name);
   }
   return out;
+}
+
+function extractImpersonatedRuneSlotKey(item: Item): string | null {
+  for (const raw of [...item.implicits, ...item.explicits]) {
+    const line = stripPobTags(raw);
+    const m = line.match(
+      /gains bonuses from Socketed Items as though it (?:was|were) (?:a |an )?(Body Armour|Helmet|Gloves|Boots|Shield|Buckler|Focus|Wand|Staff|Sceptre|Bow|Crossbow|Quarterstaff|Spear|Talisman|Flail|One Hand Mace|Two Hand Mace|Martial Weapon|Weapon)\b/i,
+    );
+    if (m) {
+      return m[1]!.trim().toLowerCase();
+    }
+  }
+  return null;
 }
 
 /**
@@ -1918,6 +2164,27 @@ export function classifyPoe2RuneSlotCategory(
   slot: EquipmentSlotId | string,
   item: Item,
 ): Poe2RuneSlotCategory {
+  const impersonated = extractImpersonatedRuneSlotKey(item);
+  if (impersonated) {
+    if (impersonated === 'sceptre') return 'sceptre';
+    if (impersonated === 'wand' || impersonated === 'staff') return 'caster';
+    if (
+      impersonated === 'weapon' ||
+      impersonated === 'martial weapon' ||
+      impersonated === 'bow' ||
+      impersonated === 'crossbow' ||
+      impersonated === 'quarterstaff' ||
+      impersonated === 'spear' ||
+      impersonated === 'talisman' ||
+      impersonated === 'flail' ||
+      impersonated === 'one hand mace' ||
+      impersonated === 'two hand mace'
+    ) {
+      return 'weapon';
+    }
+    return 'armour';
+  }
+
   if (
     slot === 'Helmet' ||
     slot === 'Body Armour' ||
@@ -1942,8 +2209,14 @@ export function classifyPoe2RuneSlotCategory(
   if (
     wt === 'Wand' ||
     wt === 'Staff' ||
-    /\bwand\b/i.test(base) ||
-    (/\bstaff\b|\bstaves\b/i.test(base) && !/quarterstaff/i.test(base))
+    /\b(?:wand|runic fork)\b/i.test(base) ||
+    (/\bstaff\b|\bstaves\b/i.test(base) && !/quarterstaff/i.test(base)) ||
+    ((slot === 'Weapon 1' || slot === 'Weapon 1 Swap') &&
+      !item.weaponStats &&
+      !item.armourStats &&
+      !/\b(?:bow|crossbow|quarterstaff|mace|hammer|maul|club|spear|sword|axe|claw|dagger|flail|talisman)\b/i.test(
+        base,
+      ))
   ) {
     return 'caster';
   }
@@ -1991,7 +2264,7 @@ function getSocketedEffectMultipliers(item: Item): {
       continue;
     }
     m = line.match(
-      /^(\d+)% increased effect of Socketed (?:Runes and Soul Cores|Items)$/i,
+      /^(\d+)% increased effect of Socketed (?:Runes and Soul Cores|Augment Items|Items)$/i,
     );
     if (m) {
       runePct += Number(m[1]);
@@ -2049,10 +2322,166 @@ function translateUnparsedRuneStatLine(
   return null;
 }
 
+interface DatasetRuneSubEntry {
+  type?: string;
+  localMod?: boolean;
+  isLocalBaked?: boolean;
+  lines?: string[];
+  bonded?: string[];
+}
+
+function resolveDatasetRuneCandidateKeys(
+  slot: EquipmentSlotId | string,
+  item: Item,
+  slotCategory: Poe2RuneSlotCategory,
+): string[] {
+  const keys: string[] = [];
+  const baseLower = item.baseName.trim().toLowerCase();
+  const wt = item.weaponStats?.weaponType;
+  const twoHanded = Boolean(item.weaponStats?.twoHanded);
+
+  const impersonated = extractImpersonatedRuneSlotKey(item);
+  if (impersonated) {
+    if (impersonated === 'martial weapon') {
+      keys.push('weapon', 'martial weapon wand or staff');
+    } else if (impersonated === 'buckler') {
+      keys.push('buckler', 'shield');
+    } else if (impersonated === 'wand' || impersonated === 'staff') {
+      keys.push(impersonated, 'caster', 'martial weapon wand or staff');
+    } else if (impersonated === 'sceptre') {
+      keys.push('sceptre', 'caster');
+    } else {
+      keys.push(impersonated);
+    }
+  }
+
+  if (slot === 'Helmet') {
+    if (!keys.includes('helmet')) keys.push('helmet');
+  }
+  else if (slot === 'Body Armour') keys.push('body armour');
+  else if (slot === 'Gloves') keys.push('gloves');
+  else if (slot === 'Boots') keys.push('boots');
+  else if (slot === 'Weapon 2' || slot === 'Weapon 2 Swap') {
+    if (/\bfocus\b/.test(baseLower)) keys.push('focus');
+    else if (/\bbuckler\b/.test(baseLower)) keys.push('buckler', 'shield');
+    else if (item.armourStats || /\bshield\b/.test(baseLower)) keys.push('shield');
+  }
+
+  if (/\bsceptre\b/.test(baseLower) || slotCategory === 'sceptre') {
+    keys.push('sceptre', 'caster');
+  } else if (wt === 'Wand' || /\b(?:wand|runic fork)\b/.test(baseLower)) {
+    keys.push('wand', 'caster', 'martial weapon wand or staff');
+  } else if (
+    (wt === 'Staff' || /\bstaff\b|\bstaves\b/.test(baseLower)) &&
+    !/quarterstaff/.test(baseLower)
+  ) {
+    keys.push('staff', 'caster', 'martial weapon wand or staff');
+  } else if (wt === 'Quarterstaff' || /quarterstaff|warstaff/.test(baseLower)) {
+    keys.push('quarterstaff', 'weapon', 'martial weapon wand or staff');
+  } else if (wt === 'Bow' || /\bbow\b/.test(baseLower)) {
+    keys.push('bow', 'weapon', 'martial weapon wand or staff');
+  } else if (wt === 'Crossbow' || /crossbow/.test(baseLower)) {
+    keys.push('crossbow', 'weapon', 'martial weapon wand or staff');
+  } else if (/\bspear\b/.test(baseLower)) {
+    keys.push('spear', 'weapon', 'martial weapon wand or staff');
+  } else if (/\btalisman\b/.test(baseLower)) {
+    keys.push('talisman', 'weapon', 'martial weapon wand or staff');
+  } else if (/\bflail\b/.test(baseLower)) {
+    keys.push('flail', 'weapon', 'martial weapon wand or staff');
+  } else if (wt === 'Mace' || /\bmace\b|\bhammer\b|\bmaul\b|\bclub\b/.test(baseLower)) {
+    keys.push(twoHanded ? 'two hand mace' : 'one hand mace', 'weapon', 'martial weapon wand or staff');
+  } else if (slotCategory === 'caster') {
+    keys.push('wand', 'caster', 'staff', 'martial weapon wand or staff', 'weapon');
+  } else if (slotCategory === 'weapon') {
+    keys.push('weapon', 'martial weapon wand or staff');
+  }
+
+  if (!keys.includes(slotCategory)) {
+    keys.push(slotCategory);
+  }
+  if (slotCategory === 'armour' && !keys.includes('armour')) {
+    keys.push('armour');
+  }
+  return keys;
+}
+
+function buildCaseInsensitiveRuneMap(
+  dataset: import('@webpob/core').Poe2RunesDataset | null | undefined,
+): Map<string, { canonicalName: string; slots: Record<string, DatasetRuneSubEntry> }> | null {
+  if (!dataset || typeof dataset !== 'object' || !dataset.runes || typeof dataset.runes !== 'object') {
+    return null;
+  }
+  const map = new Map<string, { canonicalName: string; slots: Record<string, DatasetRuneSubEntry> }>();
+  for (const [name, val] of Object.entries(dataset.runes)) {
+    if (val && typeof val === 'object') {
+      map.set(name.trim().toLowerCase(), {
+        canonicalName: name,
+        slots: val as Record<string, DatasetRuneSubEntry>,
+      });
+    }
+  }
+  return map;
+}
+
+/**
+ * Resolves ONLY local-baked rune stat lines (`16% increased Armour, Evasion and Energy Shield`,
+ * `18% increased Physical Damage`, `Adds 13 to 16 Fire Damage`, etc.) for a PoE 2 item whose
+ * local stats have NOT been precomputed in headers (`!item.localStatsPrecomputed`), so
+ * `resolveItemEffectiveStats` includes socketed Iron/Tempered/Elemental Runes in local weapon & armour calculations.
+ */
+export function resolvePoe2ItemLocalRuneLines(
+  slot: EquipmentSlotId | string,
+  item: Item,
+  datasetRunes?: import('@webpob/core').Poe2RunesDataset | null,
+): string[] {
+  if (item.localStatsPrecomputed || hasBakedRuneImplicits(item, slot, datasetRunes)) return [];
+  const runesFound = extractRawRuneNames(item);
+  if (runesFound.length === 0) return [];
+
+  const slotCategory = classifyPoe2RuneSlotCategory(slot, item);
+  const { runeMult, soulCoreMult } = getSocketedEffectMultipliers(item);
+  const dsMap = buildCaseInsensitiveRuneMap(datasetRunes);
+  const candidateKeys = resolveDatasetRuneCandidateKeys(slot, item, slotCategory);
+  const out: string[] = [];
+
+  for (const rawRuneName of runesFound) {
+    const lowerName = rawRuneName.trim().toLowerCase();
+    const dsEntry = dsMap?.get(lowerName);
+    if (dsEntry) {
+      let sub: DatasetRuneSubEntry | undefined;
+      for (const k of candidateKeys) {
+        if (dsEntry.slots[k]) {
+          sub = dsEntry.slots[k];
+          break;
+        }
+      }
+      if (sub && sub.isLocalBaked && Array.isArray(sub.lines)) {
+        const isSoulCore = sub.type === 'SoulCore' || /soul core/i.test(dsEntry.canonicalName);
+        const mult = isSoulCore ? soulCoreMult : runeMult;
+        for (const l of sub.lines) {
+          out.push(mult !== 1 ? scaleStatLineNumeric(l, mult) : l);
+        }
+      }
+      continue;
+    }
+
+    const fallback = POE2_RUNE_CATALOG[lowerName];
+    const fbSub = fallback?.[slotCategory];
+    if (fbSub?.isLocalDefenceOrPhys) {
+      const mult = fallback?.isSoulCore ? soulCoreMult : runeMult;
+      for (const l of fbSub.stats) {
+        out.push(mult !== 1 ? scaleStatLineNumeric(l, mult) : l);
+      }
+    }
+  }
+  return out;
+}
+
 /**
  * Resolves PoE 2 unbaked `Rune: <Name>` / `Soul Core of <Name>` header lines on equipped items
  * when `item.implicits` does NOT already contain `{rune}` lines, while skipping local
- * defence/physical runes (`Iron Rune`, `Tempered Rune`) already reflected in item header stats.
+ * defence/physical runes (`Iron Rune`, `Tempered Rune`, weapon flat elemental runes) handled
+ * by item headers or `resolvePoe2ItemLocalRuneLines`.
  */
 export function evaluatePoe2UnbakedSocketedRunes(
   equippedItems: ReadonlyArray<{ slot: EquipmentSlotId | string; item: Item }>,
@@ -2067,6 +2496,7 @@ export function evaluatePoe2UnbakedSocketedRunes(
     return { addedStatLines, addedMods, details };
   }
 
+  const dsMap = buildCaseInsensitiveRuneMap(options?.datasetRunes);
   const lookupRune = (rawName: string): Poe2RuneDef | null => {
     const ext = options?.runesLookup?.lookupRune?.(rawName);
     if (ext) return ext;
@@ -2079,8 +2509,8 @@ export function evaluatePoe2UnbakedSocketedRunes(
 
     const slotCategory = classifyPoe2RuneSlotCategory(slot, item);
 
-    // Never double-count items that already have `{rune}` / `(rune)` implicit lines baked in!
-    if (hasBakedRuneImplicits(item)) {
+    // Never double-count items that already have `{rune}` / `(rune)` or pre-baked implicit lines!
+    if (hasBakedRuneImplicits(item, slot, options?.datasetRunes)) {
       details.push({
         slot,
         itemName: item.name,
@@ -2104,6 +2534,9 @@ export function evaluatePoe2UnbakedSocketedRunes(
         (item.weaponStats.physicalMin > 0 || item.weaponStats.physicalMax > 0),
     );
     const { runeMult, soulCoreMult } = getSocketedEffectMultipliers(item);
+    const candidateKeys = resolveDatasetRuneCandidateKeys(slot, item, slotCategory);
+    const hasFoxIdolOnItem = runesFound.some((r) => r.trim().toLowerCase() === 'fox idol');
+    const allowItemBonded = Boolean(options?.allowBonded || hasFoxIdolOnItem);
 
     const itemStatLines: string[] = [];
     const appliedRunes: string[] = [];
@@ -2111,6 +2544,61 @@ export function evaluatePoe2UnbakedSocketedRunes(
     const src = `PoE 2 Rune (${slot}): ${item.name}`;
 
     for (const rawRuneName of runesFound) {
+      const lowerName = rawRuneName.trim().toLowerCase();
+      const dsEntry = !options?.runesLookup ? dsMap?.get(lowerName) : undefined;
+      if (dsEntry) {
+        let sub: DatasetRuneSubEntry | undefined;
+        for (const k of candidateKeys) {
+          if (dsEntry.slots[k]) {
+            sub = dsEntry.slots[k];
+            break;
+          }
+        }
+        if (!sub) {
+          skippedRunes.push({
+            name: rawRuneName,
+            reason: `unsupported-slot-category:${slotCategory}`,
+          });
+          continue;
+        }
+
+        const isIdol = sub.type === 'Idol';
+        const includeBonded = Boolean(
+          options?.allowBonded || (hasFoxIdolOnItem && isIdol),
+        );
+        const bondedLines = includeBonded && Array.isArray(sub.bonded) ? sub.bonded : [];
+
+        if (sub.isLocalBaked && bondedLines.length === 0) {
+          skippedRunes.push({
+            name: rawRuneName,
+            reason: 'local-baked-handled-in-local-item',
+          });
+          continue;
+        }
+
+        const isSoulCore = sub.type === 'SoulCore' || /soul core/i.test(dsEntry.canonicalName);
+        const mult = isSoulCore ? soulCoreMult : runeMult;
+        const linesToApply = [
+          ...(sub.isLocalBaked ? [] : (sub.lines ?? [])),
+          ...bondedLines,
+        ];
+        if (linesToApply.length === 0) continue;
+
+        appliedRunes.push(dsEntry.canonicalName);
+        for (const rawStat of linesToApply) {
+          const effectiveLine =
+            mult !== 1 ? scaleStatLineNumeric(rawStat, mult) : rawStat;
+          const directMods = translateUnparsedRuneStatLine(effectiveLine, src);
+          if (directMods && directMods.length > 0) {
+            addedMods.push(...directMods);
+          } else {
+            itemStatLines.push(effectiveLine);
+          }
+        }
+        void allowItemBonded;
+        continue;
+      }
+
       const def = lookupRune(rawRuneName);
       if (!def) {
         skippedRunes.push({ name: rawRuneName, reason: 'unknown-rune' });

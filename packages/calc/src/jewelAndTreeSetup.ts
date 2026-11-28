@@ -7,6 +7,7 @@ import type {
   PassiveTreeData,
 } from '@webpob/core';
 import { normalizeStatLineToEn } from '@webpob/i18n';
+import { POE1_EXPANSION_SOCKETS, isClusterJewelItem } from './clusterAndReservation.js';
 import { parseModLines } from './modParser.js';
 
 // ---------------------------------------------------------------------------
@@ -39,7 +40,10 @@ export interface RadiusAndDistanceJewelDetail {
     | 'light-of-meaning'
     | 'might-of-the-meek'
     | 'split-personality'
-    | 'attr-conversion';
+    | 'attr-conversion'
+    | 'resist-conversion'
+    | 'transcendent'
+    | 'from-nothing';
   radiusLabel?: JewelRadiusLabel;
   radiusPx?: number;
   nodesInRadius?: number;
@@ -231,7 +235,13 @@ function resolveJewelRadiusLabel(jewel: Item, game: GameId): JewelRadiusLabel {
     lowerName === 'brute force solution' ||
     lowerName === 'careful planning' ||
     lowerName === 'fertile mind' ||
-    lowerName === 'inertia'
+    lowerName === 'inertia' ||
+    lowerName === 'lethal pride' ||
+    lowerName === 'brutal restraint' ||
+    lowerName === 'militant faith' ||
+    lowerName === 'elegant hubris' ||
+    lowerName === 'glorious vanity' ||
+    /\b(?:red|green|blue)\s+(?:dream|nightmare)\b/i.test(lowerName)
   ) {
     return 'Large';
   }
@@ -411,6 +421,7 @@ export function resolveActiveSocketedJewels(
     }
   }
 
+  const isFullTree = Object.keys(_tree.nodes).length > 50;
   const results: ActiveSocketedJewel[] = [];
   for (const [nodeIdStr, itemId] of Object.entries(socketed)) {
     const nodeId = Number(nodeIdStr);
@@ -425,6 +436,47 @@ export function resolveActiveSocketedJewels(
       !activeTreeNodes.has(nodeId)
     ) {
       continue;
+    }
+
+    // If this socket exists directly on the passive tree, it MUST be allocated to be active
+    if (_tree.nodes[nodeId] && !activeTreeNodes.has(nodeId)) {
+      continue;
+    }
+
+    // In PoE 1 full passive trees, filter out unallocated / orphaned nested expansion sockets and stale socket IDs
+    if (build.game === 'poe1' && isFullTree && !_tree.nodes[nodeId] && nodeId < 65536) {
+      const expInfo = POE1_EXPANSION_SOCKETS[nodeId];
+      if (!expInfo) {
+        continue;
+      }
+      // Walk up to outer Large socket and verify it is allocated on the tree
+      let outerSocketId = nodeId;
+      let curExp: (typeof POE1_EXPANSION_SOCKETS)[number] | undefined = expInfo;
+      while (curExp?.parentSocketId !== undefined) {
+        outerSocketId = curExp.parentSocketId;
+        curExp = POE1_EXPANSION_SOCKETS[outerSocketId];
+      }
+      if (_tree.nodes[outerSocketId] && !activeTreeNodes.has(outerSocketId)) {
+        continue;
+      }
+      // Nested Medium/Small expansion sockets only exist when their parent Cluster Jewel is actually socketed (and large enough to have sub-sockets)
+      if (expInfo.parentSocketId !== undefined) {
+        const directParentId = socketed[expInfo.parentSocketId];
+        const directParentItem = directParentId ? build.items[directParentId] : undefined;
+        let hasParentCluster = Boolean(
+          directParentItem &&
+            isClusterJewelItem(directParentItem) &&
+            !(expInfo.socketSize === 0 && /small cluster/i.test(directParentItem.baseName)),
+        );
+        if (!hasParentCluster && expInfo.socketSize === 0 && expInfo.mediumSocketIndex === 0 && !directParentItem) {
+          const outerItemId = socketed[outerSocketId];
+          const outerItem = outerItemId ? build.items[outerItemId] : undefined;
+          hasParentCluster = Boolean(outerItem && isClusterJewelItem(outerItem));
+        }
+        if (!hasParentCluster) {
+          continue;
+        }
+      }
     }
 
     const isVoicesOrVirtual = !activeTreeNodes.has(nodeId);
@@ -493,39 +545,63 @@ function scaleStatLineDelta(line: string, mult: number): string | null {
   return anyNonZero ? out : null;
 }
 
+function joinWrappedJewelLines(rawLines: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const raw of rawLines) {
+    const clean = stripPobTags(raw);
+    if (!clean) continue;
+    if (out.length > 0 && /^[a-z]/.test(clean)) {
+      out[out.length - 1] = `${out[out.length - 1]} ${clean}`;
+    } else {
+      out.push(clean);
+    }
+  }
+  return out;
+}
+
 /**
  * Computes `The Adorned` global scaling and PoE 2 Prefix/Suffix effect scaling for a jewel.
  */
 export function computeJewelEffectScale(
   jewel: Item,
   allJewels: readonly Item[],
-  _game: GameId,
+  game: GameId,
 ): JewelEffectScale {
   let prefixPct = 0;
   let suffixPct = 0;
 
-  // 1. Local Prefix/Suffix effect modifiers on this jewel
-  const ownLines = [...jewel.implicits, ...jewel.explicits].map(stripPobTags);
-  for (const line of ownLines) {
-    let m = line.match(/^(\d+)% increased Effect of Prefixes$/i);
-    if (m) {
-      prefixPct += Number(m[1]);
-      continue;
-    }
-    m = line.match(/^(\d+)% reduced Effect of Prefixes$/i);
-    if (m) {
-      prefixPct -= Number(m[1]);
-      continue;
-    }
-    m = line.match(/^(\d+)% increased Effect of Suffixes$/i);
-    if (m) {
-      suffixPct += Number(m[1]);
-      continue;
-    }
-    m = line.match(/^(\d+)% reduced Effect of Suffixes$/i);
-    if (m) {
-      suffixPct -= Number(m[1]);
-      continue;
+  // 1. Local Prefix/Suffix effect modifiers on this jewel.
+  // In PoE 2 (`Classes/Item.lua:1649`), non-crafted in-game item copies (`rawText` present without
+  // `Crafted: true`, `Prefix:`/`Prefixes:`, or `{tags:...}`) already have Prefix/Suffix magnitude baked into explicit numbers.
+  const applyLocalAffixMagnitude =
+    game !== 'poe2' ||
+    !jewel.rawText ||
+    /^\s*(?:Crafted\s*:\s*true|Prefix(?:es)?\s*:)/im.test(jewel.rawText) ||
+    /\{tags:/i.test(jewel.rawText);
+
+  const ownLines = joinWrappedJewelLines([...jewel.implicits, ...jewel.explicits]);
+  if (applyLocalAffixMagnitude) {
+    for (const line of ownLines) {
+      let m = line.match(/^(\d+)% increased Effect of Prefixes$/i);
+      if (m) {
+        prefixPct += Number(m[1]);
+        continue;
+      }
+      m = line.match(/^(\d+)% reduced Effect of Prefixes$/i);
+      if (m) {
+        prefixPct -= Number(m[1]);
+        continue;
+      }
+      m = line.match(/^(\d+)% increased Effect of Suffixes$/i);
+      if (m) {
+        suffixPct += Number(m[1]);
+        continue;
+      }
+      m = line.match(/^(\d+)% reduced Effect of Suffixes$/i);
+      if (m) {
+        suffixPct -= Number(m[1]);
+        continue;
+      }
     }
   }
 
@@ -534,10 +610,10 @@ export function computeJewelEffectScale(
   let adornedRarePct = 0;
 
   for (const other of allJewels) {
-    const lines = [...other.implicits, ...other.explicits].map(stripPobTags);
+    const lines = joinWrappedJewelLines([...other.implicits, ...other.explicits]);
     for (const line of lines) {
       const m = line.match(
-        /^(\d+)% increased Effect of Jewel Socket Passive Skills containing Corrupted (Magic|Rare|Magic or Rare) Jewels$/i,
+        /^(\d+)% increased Effect of (?:Jewel Socket Passive Skills containing|Socketed) Corrupted (Magic|Rare|Magic or Rare) Jewels$/i,
       );
       if (!m) continue;
       const pct = Number(m[1]);
@@ -609,6 +685,9 @@ function isPrefixSuffixEffectMetaLine(line: string): boolean {
   );
 }
 
+/** Tracks line arrays already produced by `scaleJewelModLines` so `evaluateRadiusAndDistanceJewels` never double-scales. */
+const preScaledJewelLineArrays = new WeakSet<readonly string[]>();
+
 /**
  * Applies `computeJewelEffectScale` (The Adorned + Prefix/Suffix effect) to all implicits & explicits
  * of a jewel, returning scaled stat lines ready for `parseModLines`.
@@ -617,8 +696,16 @@ export function scaleJewelModLines(
   jewel: Item,
   allJewels: readonly Item[],
   game: GameId,
+  socketEffectPct = 0,
 ): { implicits: string[]; explicits: string[]; scale: JewelEffectScale } {
-  const scale = computeJewelEffectScale(jewel, allJewels, game);
+  const baseScale = computeJewelEffectScale(jewel, allJewels, game);
+  const scale: JewelEffectScale =
+    socketEffectPct !== 0
+      ? {
+          ...baseScale,
+          globalScale: Math.max(0, baseScale.globalScale * (1 + socketEffectPct / 100)),
+        }
+      : baseScale;
   const { prefixScale, suffixScale, globalScale } = scale;
 
   const implicits = jewel.implicits.map((line) => {
@@ -627,7 +714,10 @@ export function scaleJewelModLines(
   });
 
   if (prefixScale === 1 && suffixScale === 1 && globalScale === 1) {
-    return { implicits, explicits: [...jewel.explicits], scale };
+    const explicits = [...jewel.explicits];
+    preScaledJewelLineArrays.add(implicits);
+    preScaledJewelLineArrays.add(explicits);
+    return { implicits, explicits, scale };
   }
 
   // Determine prefix/suffix split index among non-meta explicit lines
@@ -653,6 +743,8 @@ export function scaleJewelModLines(
     return totalMult === 1 ? line : scaleStatLineNumeric(line, totalMult);
   });
 
+  preScaledJewelLineArrays.add(implicits);
+  preScaledJewelLineArrays.add(explicits);
   return { implicits, explicits, scale };
 }
 
@@ -673,10 +765,11 @@ export function computeSplitPersonalityDistance(
   activeTreeNodes: Set<number>,
   classStartNodeId: number,
   socketNodeId: number,
+  extraAdjacency?: ReadonlyMap<number, readonly number[]>,
 ): number {
   if (socketNodeId === classStartNodeId) return 0;
   const startNode = tree.nodes[socketNodeId];
-  if (!startNode) return 0;
+  if (!startNode && !extraAdjacency?.has(socketNodeId)) return 0;
 
   const dist = new Map<number, number>();
   dist.set(socketNodeId, 0);
@@ -686,18 +779,23 @@ export function computeSplitPersonalityDistance(
   while (head < queue.length) {
     const curId = queue[head++]!;
     const curNode = tree.nodes[curId];
-    if (!curNode) continue;
     const nextDist = (dist.get(curId) ?? 0) + 1;
+    const neighbors = extraAdjacency?.get(curId)
+      ? [...(curNode?.adjacent ?? []), ...(extraAdjacency.get(curId) ?? [])]
+      : (curNode?.adjacent ?? []);
 
-    for (const adjId of curNode.adjacent) {
+    for (const adjId of neighbors) {
       if (adjId === classStartNodeId) {
         return Math.max(0, nextDist - 1);
       }
       if (dist.has(adjId)) continue;
       if (!activeTreeNodes.has(adjId)) continue;
       const adjNode = tree.nodes[adjId];
-      if (!adjNode) continue;
-      if (adjNode.kind === 'mastery' || adjNode.kind === 'start') continue;
+      if (adjNode) {
+        if (adjNode.kind === 'mastery' || adjNode.kind === 'start') continue;
+      } else if (!extraAdjacency?.has(adjId)) {
+        continue;
+      }
 
       dist.set(adjId, nextDist);
       queue.push(adjId);
@@ -720,7 +818,7 @@ function getAllocatedNodesInRadius(
     if (id === socketNode.id) continue;
     const node = tree.nodes[id];
     if (!node) continue;
-    if (node.kind === 'mastery' || node.kind === 'start') continue;
+    if (node.kind === 'mastery' || node.kind === 'start' || node.ascendancyId) continue;
     const dx = node.x - socketNode.x;
     const dy = node.y - socketNode.y;
     if (dx * dx + dy * dy <= rSq) {
@@ -737,32 +835,307 @@ const ATTR_NAME_TO_MOD: Record<string, 'Str' | 'Dex' | 'Int'> = {
   intelligence: 'Int',
 };
 
+const RESIST_ELEM_TO_MOD: Record<string, 'FireResist' | 'ColdResist' | 'LightningResist'> = {
+  fire: 'FireResist',
+  cold: 'ColdResist',
+  lightning: 'LightningResist',
+};
+
+interface RadiusResistConversionSpec {
+  srcResistMod: 'FireResist' | 'ColdResist' | 'LightningResist';
+  dstName: string;
+  dstType: 'BASE' | 'INC';
+  factor: number;
+}
+
+/**
+ * Matches PoB 1 `Modules/ModParser.lua:6299-6331` Dream / Nightmare / Foulborn radius jewel conversions:
+ * `"Passives granting (Fire|Cold|Lightning) Resistance or all Elemental Resistances in Radius also grant <Target> at <N>% of its value"`
+ */
+function parseRadiusResistConversionLine(line: string): RadiusResistConversionSpec | null {
+  const m = line.match(
+    /^Passives granting (Fire|Cold|Lightning) Resistance or all Elemental Resistances in Radius also grant (.+?) at (\d+)% of its value$/i,
+  );
+  if (!m) return null;
+  const srcResistMod = RESIST_ELEM_TO_MOD[m[1]!.toLowerCase()];
+  const target = m[2]!.trim().toLowerCase();
+  const pct = Number(m[3]);
+  if (!srcResistMod || !Number.isFinite(pct) || pct <= 0) return null;
+  const factor = pct / 100;
+
+  if (/^increased maximum life$/i.test(target)) {
+    return { srcResistMod, dstName: 'Life', dstType: 'INC', factor };
+  }
+  if (/^increased maximum energy shield$/i.test(target)) {
+    return { srcResistMod, dstName: 'EnergyShield', dstType: 'INC', factor };
+  }
+  if (/^increased maximum mana$/i.test(target)) {
+    return { srcResistMod, dstName: 'Mana', dstType: 'INC', factor };
+  }
+  if (/^chance to block(?: attack damage)?$/i.test(target)) {
+    return { srcResistMod, dstName: 'BlockChance', dstType: 'BASE', factor };
+  }
+  if (/^chance to block spells?(?: damage)?$/i.test(target)) {
+    return { srcResistMod, dstName: 'SpellBlockChance', dstType: 'BASE', factor };
+  }
+  if (/^chance to suppress spell damage$/i.test(target)) {
+    return { srcResistMod, dstName: 'SpellSuppressionChance', dstType: 'BASE', factor };
+  }
+  if (/^chance to dodge attacks?(?: hits)?$/i.test(target)) {
+    return { srcResistMod, dstName: 'AttackDodgeChance', dstType: 'BASE', factor };
+  }
+  if (/^fire damage converted to chaos damage$/i.test(target)) {
+    return { srcResistMod, dstName: 'FireDamageConvertToChaos', dstType: 'BASE', factor };
+  }
+  if (/^cold damage converted to chaos damage$/i.test(target)) {
+    return { srcResistMod, dstName: 'ColdDamageConvertToChaos', dstType: 'BASE', factor };
+  }
+  if (/^lightning damage converted to chaos damage$/i.test(target)) {
+    return { srcResistMod, dstName: 'LightningDamageConvertToChaos', dstType: 'BASE', factor };
+  }
+  return null;
+}
+
+function isPoe2AttributeTravelSmall(node: PassiveNode): boolean {
+  if (node.kind !== 'small' || node.ascendancyId) return false;
+  if (node.stats.length === 1) {
+    const st = node.stats[0]!.trim();
+    if (/^\+\d+\s+to\s+(?:Strength|Dexterity|Intelligence|any Attribute)$/i.test(st)) {
+      return true;
+    }
+  }
+  return node.name.en.trim().toLowerCase() === 'attribute';
+}
+
+function getAllNodesInRadius(
+  socketNode: PassiveNode,
+  tree: PassiveTreeData,
+  radiusPx: number,
+): PassiveNode[] {
+  const rSq = radiusPx * radiusPx;
+  const out: PassiveNode[] = [];
+  for (const node of Object.values(tree.nodes)) {
+    if (node.id === socketNode.id) continue;
+    if (node.kind === 'mastery' || node.kind === 'start' || node.kind === 'jewel' || node.ascendancyId) continue;
+    const dx = node.x - socketNode.x;
+    const dy = node.y - socketNode.y;
+    if (dx * dx + dy * dy <= rSq) {
+      out.push(node);
+    }
+  }
+  return out;
+}
+
+interface TimelessSmallAttrAdjustment {
+  replaceBaseAttrs?: boolean;
+  addStr?: number;
+  addDex?: number;
+}
+
+type Poe1TimelessSmallFaction = 'karui' | 'maraketh' | 'templar' | 'eternal';
+
+function detectPoe1TimelessSmallFaction(
+  jewel: Item,
+  lines: readonly string[],
+): Poe1TimelessSmallFaction | null {
+  const lowerName = jewel.name.trim().toLowerCase();
+  if (lowerName === 'lethal pride') return 'karui';
+  if (lowerName === 'brutal restraint') return 'maraketh';
+  if (lowerName === 'militant faith') return 'templar';
+  if (lowerName === 'elegant hubris') return 'eternal';
+  for (const line of lines) {
+    if (
+      /^Passives in radius are Conquered by the Karui$/i.test(line) ||
+      /^Commanded leadership over \d+ warriors under\b/i.test(line)
+    ) {
+      return 'karui';
+    }
+    if (
+      /^Passives in radius are Conquered by the Maraketh$/i.test(line) ||
+      /^Denoted service of \d+ dekhara in the akhara of\b/i.test(line)
+    ) {
+      return 'maraketh';
+    }
+    if (
+      /^Passives in radius are Conquered by the Templars$/i.test(line) ||
+      /^Carved to glorify \d+ new faithful converted by High Templar\b/i.test(line)
+    ) {
+      return 'templar';
+    }
+    if (
+      /^Passives in radius are Conquered by the Eternal Empire$/i.test(line) ||
+      /^Commissioned \d+ coins to commemorate\b/i.test(line)
+    ) {
+      return 'eternal';
+    }
+  }
+  return null;
+}
+
+function isPoe1AttributeSmallPassive(node: PassiveNode): boolean {
+  const nameLower = node.name.en.trim().toLowerCase();
+  if (nameLower === 'strength' || nameLower === 'dexterity' || nameLower === 'intelligence') {
+    return true;
+  }
+  if (node.stats.length === 1) {
+    return /^\+10 to (?:Strength|Dexterity|Intelligence)$/i.test(node.stats[0]!.trim());
+  }
+  return false;
+}
+
+/**
+ * Computes PoE 1 Timeless Jewel deterministic small-passive attribute changes (`PassiveSpec.lua:1410-1429`)
+ * across BOTH allocated and unallocated passives in Large radius so overlapping radius jewels
+ * (e.g. `Transcendent Flesh` + `Lethal Pride`, `Transcendent Spirit` + `Brutal Restraint`) observe
+ * exact conquered small-node attributes.
+ */
+function buildTimelessSmallAttrMap(
+  jewels: ReadonlyArray<{ nodeId: number; jewel: Item }>,
+  tree: PassiveTreeData,
+  nodeOverrides?: Readonly<Record<number, { name?: string; stats?: string[] }>>,
+): Map<number, TimelessSmallAttrAdjustment> {
+  const map = new Map<number, TimelessSmallAttrAdjustment>();
+  if (tree.game !== 'poe1') return map;
+
+  for (const { nodeId, jewel } of jewels) {
+    const socketNode = tree.nodes[nodeId];
+    if (!socketNode) continue;
+    const rawLines = joinWrappedJewelLines([...jewel.implicits, ...jewel.explicits]);
+    const faction = detectPoe1TimelessSmallFaction(jewel, rawLines);
+    if (!faction) continue;
+
+    const radiusPx = getJewelRadiusPx('Large', 'poe1', tree.version);
+    const nodesInRadius = getAllNodesInRadius(socketNode, tree, radiusPx);
+    for (const n of nodesInRadius) {
+      if (n.kind !== 'small') continue;
+      const isAttrOrTattoo = nodeOverrides?.[n.id] != null || isPoe1AttributeSmallPassive(n);
+      if (faction === 'karui') {
+        map.set(n.id, { addStr: isAttrOrTattoo ? 2 : 4 });
+      } else if (faction === 'maraketh') {
+        map.set(n.id, { addDex: isAttrOrTattoo ? 2 : 4 });
+      } else if (faction === 'templar') {
+        if (isAttrOrTattoo) {
+          map.set(n.id, { replaceBaseAttrs: true });
+        }
+      } else if (faction === 'eternal') {
+        map.set(n.id, { replaceBaseAttrs: true });
+      }
+    }
+  }
+
+  return map;
+}
+
+/**
+ * Exact PoB 1 `ModParser.lua:6504` `getPerStat` scaling: `math.floor((value * attrSum) / div)`.
+ * Returns `null` when every scaled numeric value truncates to `0`.
+ */
+function scaleStatLinePerDiv(line: string, attrSum: number, div: number): string | null {
+  if (attrSum <= 0 || div <= 0) return null;
+  let anyNonZero = false;
+  const out = line.replace(
+    /([+-]?)(\d+(?:\.\d+)?)/g,
+    (_full, sign: string, numStr: string) => {
+      const val = Number(numStr);
+      const dotIdx = numStr.indexOf('.');
+      if (dotIdx === -1) {
+        const scaled = Math.floor((val * attrSum) / div + 1e-9);
+        if (scaled !== 0) anyNonZero = true;
+        return `${sign}${scaled}`;
+      }
+      const decimals = numStr.length - dotIdx - 1;
+      const factor = Math.pow(10, decimals);
+      const scaled = Math.floor((val * attrSum * factor) / div + 1e-9) / factor;
+      if (scaled !== 0) anyNonZero = true;
+      return `${sign}${scaled}`;
+    },
+  );
+  return anyNonZero ? out : null;
+}
+
+function sumBaseAttributeOnNodes(
+  nodes: readonly PassiveNode[],
+  attr: 'Str' | 'Dex' | 'Int',
+  nodeOverrides?: Readonly<Record<number, { name?: string; stats?: string[] }>>,
+  timelessSmallAttrs?: ReadonlyMap<number, TimelessSmallAttrAdjustment>,
+): number {
+  let total = 0;
+  for (const n of nodes) {
+    const timelessAdj = timelessSmallAttrs?.get(n.id);
+    if (!timelessAdj?.replaceBaseAttrs) {
+      const ovStats = nodeOverrides?.[n.id]?.stats;
+      const stats = ovStats && ovStats.length > 0 ? ovStats : n.stats;
+      const mods = parseModLines(stats, `Tree: ${n.name.en}`);
+      for (const mod of mods) {
+        if (mod.name === attr && mod.type === 'BASE' && typeof mod.value === 'number') {
+          total += mod.value;
+        }
+      }
+    }
+    if (attr === 'Str' && timelessAdj?.addStr) {
+      total += timelessAdj.addStr;
+    } else if (attr === 'Dex' && timelessAdj?.addDex) {
+      total += timelessAdj.addDex;
+    }
+  }
+  return total;
+}
+
 /**
  * Evaluates all radius-based and distance-based jewels:
- * - PoE 2 `Time-Lost` Jewels & `Against the Darkness`
- *   - `Notable Passive Skills in Radius also grant <ModLine>`
- *   - `Small Passive Skills in Radius also grant <ModLine>`
- *   - `X% increased Effect of Notable/Small Passive Skills in Radius`
+ * - PoE 2 `Time-Lost` Jewels & `Against the Darkness` (with `The Adorned` / Prefix-Suffix scaling)
+ * - PoE 2 `From Nothing` (`Passives in Radius of <Keystone> can be Allocated without being connected`)
  * - PoE 1 `The Light of Meaning` (`Passive Skills in Radius also grant <ModLine>`)
  * - PoE 1 `Might of the Meek` (`50% increased Effect of non-Keystone Passive Skills in Radius` + suppresses Notables in radius)
+ * - PoE 1 `Unnatural Instinct` & `Elegant Hubris`
+ * - PoE 1 `Tempered` & `Transcendent` Flesh / Mind / Spirit (per-Attribute on Allocated/Unallocated Passives in Radius)
  * - PoE 1 `Split Personality` (BFS distance `D` from `classStartNodeId`, scaling explicit stats by `1 + 0.25 * D` via delta)
  * - PoE 1 Attribute Conversion Jewels (`Fluid Motion`, `Brute Force Solution`, `Careful Planning`, `Fertile Mind`, `Inertia`)
+ * - PoE 1 Dream / Nightmare / Foulborn Resistance Conversion Jewels (`Foulborn The Red Dream`, `The Red/Green/Blue Nightmare`, etc.)
  */
 export function evaluateRadiusAndDistanceJewels(
   jewels: ReadonlyArray<{ nodeId: number; jewel: Item }>,
   tree: PassiveTreeData,
   activeTreeNodes: Set<number>,
   classStartNodeId: number,
+  extraAdjacency?: ReadonlyMap<number, readonly number[]>,
+  nodeOverrides?: Readonly<Record<number, { name?: string; stats?: string[] }>>,
 ): RadiusAndDistanceJewelResult {
   const addedStatLines: Array<{ source: string; lines: string[] }> = [];
   const addedMods: Mod[] = [];
   const suppressedNodeIds = new Set<number>();
   const details: RadiusAndDistanceJewelDetail[] = [];
+  const allJewelItems = jewels.map((entry) => entry.jewel);
+  const timelessSmallAttrs = buildTimelessSmallAttrMap(jewels, tree, nodeOverrides);
 
   for (const { nodeId, jewel } of jewels) {
     const socketNode = tree.nodes[nodeId];
-    const allLines = [...jewel.implicits, ...jewel.explicits].map(stripPobTags);
     const lowerName = jewel.name.toLowerCase();
+
+    // Ensure Corrupted Magic/Rare Time-Lost & radius jewels receive The Adorned / Prefix-Suffix scaling
+    // when caller hasn't already pre-scaled via scaleJewelModLines (WeakSet guards against double-scaling).
+    let effectiveImplicits = jewel.implicits;
+    let effectiveExplicits = jewel.explicits;
+    if (
+      lowerName !== 'split personality' &&
+      !preScaledJewelLineArrays.has(jewel.implicits) &&
+      !preScaledJewelLineArrays.has(jewel.explicits)
+    ) {
+      let socketEffectPct = 0;
+      if (socketNode) {
+        for (const st of socketNode.stats ?? []) {
+          const mSockEff = st.match(
+            /^(\d+)% increased Effect of (?:bonuses gained from |the )?Socketed Jewel$/i,
+          );
+          if (mSockEff) socketEffectPct += Number(mSockEff[1]);
+        }
+      }
+      const scaled = scaleJewelModLines(jewel, allJewelItems, tree.game, socketEffectPct);
+      effectiveImplicits = scaled.implicits;
+      effectiveExplicits = scaled.explicits;
+    }
+
+    const allLines = joinWrappedJewelLines([...effectiveImplicits, ...effectiveExplicits]);
 
     // --- A. Split Personality (BFS shortest-path distance scaling) ---
     let splitPctPerNode = 0;
@@ -779,12 +1152,13 @@ export function evaluateRadiusAndDistanceJewels(
       splitPctPerNode = 25;
     }
 
-    if (splitPctPerNode > 0 && socketNode) {
+    if (splitPctPerNode > 0 && (socketNode || extraAdjacency?.has(nodeId))) {
       const dist = computeSplitPersonalityDistance(
         tree,
         activeTreeNodes,
         classStartNodeId,
         nodeId,
+        extraAdjacency,
       );
       if (dist > 0) {
         const mult = 1 + (splitPctPerNode / 100) * dist;
@@ -825,6 +1199,7 @@ export function evaluateRadiusAndDistanceJewels(
     // Detect whether this jewel has any radius mechanics
     const notableAlsoGrants: string[] = [];
     const smallAlsoGrants: string[] = [];
+    const attrAlsoGrants: string[] = [];
     const allAlsoGrants: string[] = [];
     let notableEffectPct = 0;
     let smallEffectPct = 0;
@@ -833,7 +1208,16 @@ export function evaluateRadiusAndDistanceJewels(
     let disablesAllocatedSmalls = false;
     let grantsUnallocatedSmalls = false;
     let eternalHubrisConquered = false;
+    let fromNothingKeystone: string | null = null;
     const attrConversions: Array<{ from: 'Str' | 'Dex' | 'Int'; to: 'Str' | 'Dex' | 'Int' }> = [];
+    const resistConversions: RadiusResistConversionSpec[] = [];
+    const transcendentLines: Array<{
+      statPrefix: string;
+      div: number;
+      attr: 'Str' | 'Dex' | 'Int';
+      allocated: boolean;
+      negativeSelfAttr?: { amt: number; targetAttr: 'Str' | 'Dex' | 'Int' };
+    }> = [];
 
     for (const line of allLines) {
       let m = line.match(/^Notable Passive Skills in Radius also grant\s+(.+)$/i);
@@ -846,21 +1230,26 @@ export function evaluateRadiusAndDistanceJewels(
         smallAlsoGrants.push(m[1]!.trim());
         continue;
       }
+      m = line.match(/^Attribute Passive Skills in Radius also grant\s+(.+)$/i);
+      if (m) {
+        attrAlsoGrants.push(m[1]!.trim());
+        continue;
+      }
       m = line.match(/^Passive Skills in Radius also grant\s+(.+)$/i);
       if (m) {
         allAlsoGrants.push(m[1]!.trim());
         continue;
       }
-      m = line.match(
-        /^(\d+)% increased Effect of Notable Passive Skills in Radius$/i,
-      );
+      m =
+        line.match(/^(\d+)% increased Effect of Notable Passive Skills in Radius$/i) ??
+        line.match(/^Notable Passive Skills in Radius have (\d+)% increased Effect$/i);
       if (m) {
         notableEffectPct += Number(m[1]);
         continue;
       }
-      m = line.match(
-        /^(\d+)% increased Effect of Small Passive Skills in Radius$/i,
-      );
+      m =
+        line.match(/^(\d+)% increased Effect of Small Passive Skills in Radius$/i) ??
+        line.match(/^Small Passive Skills in Radius have (\d+)% increased Effect$/i);
       if (m) {
         smallEffectPct += Number(m[1]);
         continue;
@@ -889,6 +1278,13 @@ export function evaluateRadiusAndDistanceJewels(
         continue;
       }
       m = line.match(
+        /^Passives in Radius of (.+?) can be Allocated without being connected to your tree$/i,
+      );
+      if (m) {
+        fromNothingKeystone = m[1]!.trim();
+        continue;
+      }
+      m = line.match(
         /^(Strength|Dexterity|Intelligence) from Passives in Radius is Transformed to (Strength|Dexterity|Intelligence)$/i,
       );
       if (m) {
@@ -899,11 +1295,42 @@ export function evaluateRadiusAndDistanceJewels(
         }
         continue;
       }
+      // PoE 1 Dream / Nightmare / Foulborn resistance-in-radius conversions (`ModParser.lua:6299-6331`)
+      const resistConv = parseRadiusResistConversionLine(line);
+      if (resistConv) {
+        resistConversions.push(resistConv);
+        continue;
+      }
+      // PoE 1 Tempered / Transcendent Flesh, Mind, Spirit
+      m = line.match(
+        /^(.+?)\s+(?:per|for every)\s+(\d+)\s+(Strength|Dexterity|Intelligence)\s+(?:on|from)\s+(Allocated|Unallocated)\s+Passives?(?:\s+Skills?)?\s+in\s+Radius$/i,
+      );
+      if (m) {
+        const statPrefix = m[1]!.trim();
+        const div = Number(m[2]);
+        const attr = ATTR_NAME_TO_MOD[m[3]!.toLowerCase()];
+        const allocated = m[4]!.toLowerCase() === 'allocated';
+        if (attr && div > 0) {
+          const negAttrMatch = statPrefix.match(/^-(\d+)\s+(Strength|Dexterity|Intelligence)$/i);
+          const negTarget = negAttrMatch ? ATTR_NAME_TO_MOD[negAttrMatch[2]!.toLowerCase()] : undefined;
+          transcendentLines.push({
+            statPrefix,
+            div,
+            attr,
+            allocated,
+            ...(negAttrMatch && negTarget
+              ? { negativeSelfAttr: { amt: Number(negAttrMatch[1]), targetAttr: negTarget } }
+              : {}),
+          });
+        }
+        continue;
+      }
     }
 
     const hasRadiusEffect =
       notableAlsoGrants.length > 0 ||
       smallAlsoGrants.length > 0 ||
+      attrAlsoGrants.length > 0 ||
       allAlsoGrants.length > 0 ||
       notableEffectPct > 0 ||
       smallEffectPct > 0 ||
@@ -912,7 +1339,10 @@ export function evaluateRadiusAndDistanceJewels(
       disablesAllocatedSmalls ||
       grantsUnallocatedSmalls ||
       eternalHubrisConquered ||
-      attrConversions.length > 0;
+      fromNothingKeystone !== null ||
+      attrConversions.length > 0 ||
+      resistConversions.length > 0 ||
+      transcendentLines.length > 0;
 
     if (!hasRadiusEffect) continue;
 
@@ -926,13 +1356,24 @@ export function evaluateRadiusAndDistanceJewels(
     );
 
     const notables = inRadius.filter((n) => n.kind === 'notable');
-    const smalls = inRadius.filter((n) => n.kind === 'small');
+    const allSmalls = inRadius.filter((n) => n.kind === 'small');
+    // Official PoB 2 ModParser.lua:7155,7171: PoE 2 Time-Lost / Against the Darkness Small Passive mods
+    // exclude attribute travel nodes (`not node.isAttribute`).
+    const smalls =
+      tree.game === 'poe2'
+        ? allSmalls.filter((n) => !isPoe2AttributeTravelSmall(n))
+        : allSmalls;
+    const attrSmalls =
+      tree.game === 'poe2'
+        ? allSmalls.filter((n) => isPoe2AttributeTravelSmall(n))
+        : [];
     const nonJewelPassives = inRadius.filter((n) => n.kind !== 'jewel');
 
     // --- B. PoE 2 Time-Lost & Against the Darkness ---
     if (
       notableAlsoGrants.length > 0 ||
       smallAlsoGrants.length > 0 ||
+      attrAlsoGrants.length > 0 ||
       notableEffectPct > 0 ||
       smallEffectPct > 0
     ) {
@@ -945,6 +1386,11 @@ export function evaluateRadiusAndDistanceJewels(
       }
       for (const grantLine of smallAlsoGrants) {
         for (let i = 0; i < smalls.length; i++) {
+          lines.push(grantLine);
+        }
+      }
+      for (const grantLine of attrAlsoGrants) {
+        for (let i = 0; i < attrSmalls.length; i++) {
           lines.push(grantLine);
         }
       }
@@ -985,6 +1431,76 @@ export function evaluateRadiusAndDistanceJewels(
         nodesInRadius: inRadius.length,
         notablesInRadius: notables.length,
         smallsInRadius: smalls.length,
+      });
+    }
+
+    // --- B2. PoE 2 From Nothing (disconnected keystone-radius allocation marker) ---
+    if (fromNothingKeystone !== null) {
+      const ksKey = fromNothingKeystone.toLowerCase();
+      const ksNode = Object.values(tree.nodes).find(
+        (n) => n.kind === 'keystone' && n.name.en.trim().toLowerCase() === ksKey,
+      );
+      const ksAllocated = ksNode
+        ? getAllocatedNodesInRadius(ksNode, tree, activeTreeNodes, radiusPx)
+        : [];
+      details.push({
+        nodeId,
+        jewelName: jewel.name,
+        kind: 'from-nothing',
+        radiusLabel,
+        radiusPx,
+        nodesInRadius: ksAllocated.length,
+        notablesInRadius: ksAllocated.filter((n) => n.kind === 'notable').length,
+        smallsInRadius: ksAllocated.filter((n) => n.kind === 'small').length,
+      });
+    }
+
+    // --- B3. PoE 1 Tempered / Transcendent Flesh, Mind, Spirit ---
+    if (transcendentLines.length > 0) {
+      const allRadiusNodes = getAllNodesInRadius(socketNode, tree, radiusPx);
+      const allocRadiusNodes = allRadiusNodes.filter((n) => activeTreeNodes.has(n.id));
+      const unallocRadiusNodes = allRadiusNodes.filter((n) => !activeTreeNodes.has(n.id));
+      const statLinesOut: string[] = [];
+      const src = `Transcendent Jewel (${nodeId}): ${jewel.name}`;
+
+      for (const entry of transcendentLines) {
+        const pool = entry.allocated ? allocRadiusNodes : unallocRadiusNodes;
+        const attrSum = sumBaseAttributeOnNodes(pool, entry.attr, nodeOverrides, timelessSmallAttrs);
+        if (attrSum <= 0) continue;
+        if (entry.negativeSelfAttr) {
+          const scaledAmt = Math.floor((entry.negativeSelfAttr.amt * attrSum) / entry.div + 1e-9);
+          if (scaledAmt <= 0) continue;
+          addedMods.push({
+            name: entry.negativeSelfAttr.targetAttr,
+            type: 'BASE',
+            value: -scaledAmt,
+            flags: 0,
+            keywordFlags: 0,
+            source: src,
+          });
+        } else {
+          // Exact PoB 1 ModParser.lua:6504 `getPerStat`: `math.floor(attrSum * (value / div))`
+          const scaledLine = scaleStatLinePerDiv(entry.statPrefix, attrSum, entry.div);
+          if (scaledLine) {
+            statLinesOut.push(scaledLine);
+          }
+        }
+      }
+
+      if (statLinesOut.length > 0) {
+        addedStatLines.push({
+          source: src,
+          lines: statLinesOut,
+        });
+      }
+
+      details.push({
+        nodeId,
+        jewelName: jewel.name,
+        kind: 'transcendent',
+        radiusLabel,
+        radiusPx,
+        nodesInRadius: allRadiusNodes.length,
       });
     }
 
@@ -1087,6 +1603,9 @@ export function evaluateRadiusAndDistanceJewels(
       for (const { from, to } of attrConversions) {
         let totalFrom = 0;
         for (const n of nonJewelPassives) {
+          // PoB1 ModParser.lua:25: do not convert attribute stats from tattooed nodes
+          const ov = nodeOverrides?.[n.id];
+          if (ov && ov.stats && ov.stats.length > 0) continue;
           const mods = parseModLines(n.stats, `Tree: ${n.name.en}`);
           for (const mod of mods) {
             if (
@@ -1124,6 +1643,50 @@ export function evaluateRadiusAndDistanceJewels(
         nodeId,
         jewelName: jewel.name,
         kind: 'attr-conversion',
+        radiusLabel,
+        radiusPx,
+        nodesInRadius: nonJewelPassives.length,
+      });
+    }
+
+    // --- F. PoE 1 Dream / Nightmare / Foulborn Resistance-in-Radius Conversions ---
+    // Matches PoB 1 `Modules/ModParser.lua:18-30` (`getSimpleConv`):
+    // evaluates `Math.floor(mod.value * factor)` per matching BASE resist mod on each allocated passive
+    // (including Tattoo overrides such as `Tattoo of the Ngamahu Firewalker` `+6% to Fire Resistance`!).
+    if (resistConversions.length > 0) {
+      const src = `Jewel Resist Conversion (${nodeId}): ${jewel.name}`;
+      for (const conv of resistConversions) {
+        let totalConverted = 0;
+        for (const n of nonJewelPassives) {
+          const ovStats = nodeOverrides?.[n.id]?.stats;
+          const stats = ovStats && ovStats.length > 0 ? ovStats : n.stats;
+          const mods = parseModLines(stats, `Tree: ${n.name.en}`);
+          for (const mod of mods) {
+            if (
+              (mod.name === conv.srcResistMod || mod.name === 'ElementalResist') &&
+              mod.type === 'BASE' &&
+              typeof mod.value === 'number' &&
+              mod.value > 0
+            ) {
+              totalConverted += Math.floor(mod.value * conv.factor);
+            }
+          }
+        }
+        if (totalConverted > 0) {
+          addedMods.push({
+            name: conv.dstName,
+            type: conv.dstType,
+            value: totalConverted,
+            flags: 0,
+            keywordFlags: 0,
+            source: src,
+          });
+        }
+      }
+      details.push({
+        nodeId,
+        jewelName: jewel.name,
+        kind: 'resist-conversion',
         radiusLabel,
         radiusPx,
         nodesInRadius: nonJewelPassives.length,

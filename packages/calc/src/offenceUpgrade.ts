@@ -39,8 +39,14 @@ export interface Poe2CritOptions {
   enemyExtraCritIncPct?: number;
   /** Lucky Crit Chance: p_eff = 1 - (1 - p)^2. */
   luckyCrit?: boolean;
-  /** Garukhan's Resolve Bifurcated Crit: rolls crit twice, doubling bonus when both succeed. */
+  /** Pre-accuracy / pre-lucky / pre-bifurcate critical chance cap % (e.g. Garukhan's Resolve 50%). */
+  critChanceCap?: number;
+  /** Optional attack accuracy hit chance % applied before Lucky & Bifurcate (PoB2 CalcOffence.lua:3897). */
+  accuracyHitChancePct?: number;
+  /** Garukhan's Resolve / Tangletongue Bifurcated Crit: rolls crit twice, doubling bonus when both succeed. */
   bifurcatedCrit?: boolean;
+  /** Oracle "Forced Outcome": Inevitable Critical Hits (rerolls non-crits with 30% roll-down penalty). */
+  inevitableCrits?: boolean;
   /** Skill cannot deal critical strikes (Resolute Technique, Elemental Overload, etc.). */
   neverCrit?: boolean;
   /** Critical strikes deal no extra damage. */
@@ -113,20 +119,47 @@ export function computePoe2CritMultiplier(opts: Poe2CritOptions): Poe2CritResult
   }
   const baseCritChance = Math.max(0, resolvedBaseCrit + (opts.flatAddedBaseCrit ?? 0));
 
-  // 2. Scale crit chance by INC and MORE, clamp to [0, 100]
+  // 2. Scale crit chance by INC and MORE, apply CritChanceCap & AccuracyHitChance before Lucky/Bifurcate (PoB2 CalcOffence.lua:3886-3908)
   const incMult = Math.max(0, 1 + (opts.incCritChancePct ?? 0) / 100);
   const moreMult = Math.max(0, opts.moreCritChanceMult ?? 1);
-  const preLuckyCritChance = clamp(baseCritChance * incMult * moreMult, 0, 100);
+  const rawCritChance = Math.round(baseCritChance * incMult * moreMult * 100) / 100;
+  const cappedCritChance =
+    opts.critChanceCap !== undefined
+      ? clamp(Math.min(rawCritChance, opts.critChanceCap), 0, 100)
+      : clamp(rawCritChance, 0, 100);
+  const preLuckyCritChance =
+    opts.accuracyHitChancePct !== undefined
+      ? clamp(cappedCritChance * (opts.accuracyHitChancePct / 100), 0, 100)
+      : cappedCritChance;
 
   // 3. Apply Lucky Crit: p_eff = 1 - (1 - p)^2
   const preBifurcateCritChance = opts.luckyCrit
     ? (1 - Math.pow(1 - preLuckyCritChance / 100, 2)) * 100
     : preLuckyCritChance;
 
-  // 4. Apply Bifurcated Crit (Garukhan's Resolve): rolls crit twice
-  const effectiveCritChance = opts.bifurcatedCrit
+  // 4. Apply Bifurcated Crit (Garukhan's Resolve / Tangletongue): rolls crit twice
+  const preInevitableCritChance = opts.bifurcatedCrit
     ? (1 - Math.pow(1 - preBifurcateCritChance / 100, 2)) * 100
     : preBifurcateCritChance;
+
+  let inevitableMoreMult = 1;
+  let effectiveCritChance = preInevitableCritChance;
+  let critBifurcates = 1;
+
+  // 4b. Oracle "Forced Outcome" Inevitable Critical Hits (PoB2 CalcOffence.lua L3909-3934)
+  if (opts.inevitableCrits && preInevitableCritChance > 0) {
+    const p = preInevitableCritChance / 100;
+    const q = 1 - p;
+    let critBonusMultiplier =
+      1 * p + 0.7 * q * p + 0.4 * Math.pow(q, 2) * p + 0.1 * Math.pow(q, 3) * p;
+    if (opts.bifurcatedCrit) {
+      critBonusMultiplier = (critBonusMultiplier * 2 * preBifurcateCritChance) / preInevitableCritChance;
+      critBifurcates = 1 + (preBifurcateCritChance * preBifurcateCritChance) / (100 * preInevitableCritChance);
+    }
+    const lessCritBonus = Math.round((1 - critBonusMultiplier) * -100);
+    inevitableMoreMult = Math.max(0, 1 + lessCritBonus / 100);
+    effectiveCritChance = 100;
+  }
 
   // 5. Compute PoE 2 Critical Damage Bonus (base +100%, scaled by INC and MORE)
   if (opts.noCritMultiplier) {
@@ -146,17 +179,16 @@ export function computePoe2CritMultiplier(opts: Poe2CritOptions): Poe2CritResult
 
   const rawBaseBonus = 100 + (opts.flatBonusPct ?? 0);
   const bonusIncMult = Math.max(0, 1 + (opts.incBonusPct ?? 0) / 100);
-  const bonusMoreMult = Math.max(0, opts.moreBonusMult ?? 1);
+  const bonusMoreMult = Math.max(0, (opts.moreBonusMult ?? 1) * inevitableMoreMult);
   const baseBonusPct =
     opts.overrideBonusPct !== undefined
       ? Math.max(0, opts.overrideBonusPct)
       : Math.max(0, rawBaseBonus * bonusIncMult * bonusMoreMult);
 
   let effectiveBonusPct = baseBonusPct;
-  let critBifurcates = 1;
 
   // Bifurcated Crit conditional double-crit bonus (PoB2 CalcOffence.lua L3994-4014)
-  if (opts.bifurcatedCrit && effectiveCritChance > 0) {
+  if (opts.bifurcatedCrit && !opts.inevitableCrits && effectiveCritChance > 0) {
     const bifurcateMultiChance = (preBifurcateCritChance * preBifurcateCritChance) / 100;
     const conditionalBifurcateChance = bifurcateMultiChance / effectiveCritChance;
     critBifurcates = 1 + conditionalBifurcateChance;
@@ -475,6 +507,106 @@ const POE1_SPELL_DOT_LV20_BASE: Record<
     canHit: false,
     maxStages: 20,
   },
+  'blight of contagion': {
+    type: 'Chaos',
+    lv20Dps: 315.4,
+    spellDmgApplies: true,
+    canHit: false,
+    maxStages: 6,
+  },
+  'blight of atrophy': {
+    type: 'Chaos',
+    lv20Dps: 315.4,
+    spellDmgApplies: true,
+    canHit: false,
+    maxStages: 6,
+  },
+  bane: {
+    type: 'Chaos',
+    lv20Dps: 1243.45,
+    spellDmgApplies: true,
+    canHit: false,
+  },
+  'bane of condemnation': {
+    type: 'Chaos',
+    lv20Dps: 1685.3,
+    spellDmgApplies: true,
+    canHit: false,
+  },
+  contagion: {
+    type: 'Chaos',
+    lv20Dps: 336.52,
+    spellDmgApplies: true,
+    canHit: false,
+  },
+  'contagion of subsiding': {
+    type: 'Chaos',
+    lv20Dps: 2017.32,
+    spellDmgApplies: true,
+    canHit: false,
+  },
+  'contagion of transference': {
+    type: 'Chaos',
+    lv20Dps: 1117.7,
+    spellDmgApplies: true,
+    canHit: false,
+  },
+  'vaal blight': {
+    type: 'Chaos',
+    lv20Dps: 962.52,
+    spellDmgApplies: true,
+    canHit: false,
+  },
+  'vaal blight of contagion': {
+    type: 'Chaos',
+    lv20Dps: 962.52,
+    spellDmgApplies: true,
+    canHit: false,
+  },
+  'vaal blight of atrophy': {
+    type: 'Chaos',
+    lv20Dps: 962.52,
+    spellDmgApplies: true,
+    canHit: false,
+  },
+  'scorching ray': {
+    type: 'Fire',
+    lv20Dps: 914.03,
+    spellDmgApplies: true,
+    canHit: false,
+    maxStages: 8,
+  },
+  'scorching ray of immolation': {
+    type: 'Fire',
+    lv20Dps: 2744,
+    spellDmgApplies: true,
+    canHit: false,
+  },
+  'searing bond': {
+    type: 'Fire',
+    lv20Dps: 4430.6,
+    spellDmgApplies: true,
+    canHit: false,
+  },
+  'searing bond of detonation': {
+    type: 'Fire',
+    lv20Dps: 2977.7,
+    spellDmgApplies: true,
+    canHit: false,
+  },
+  'death aura': {
+    type: 'Chaos',
+    lv20Dps: 765,
+    spellDmgApplies: false,
+    canHit: false,
+  },
+  'wintertide brand': {
+    type: 'Cold',
+    lv20Dps: 342,
+    spellDmgApplies: true,
+    canHit: false,
+    maxStages: 20,
+  },
   vortex: {
     type: 'Cold',
     lv20Dps: 2376.4,
@@ -502,6 +634,8 @@ export interface SkillSpecialDamageOptions {
   maxLife?: number;
   /** Player maximum Energy Shield (for Righteous Fire, Forbidden Rite, Ephemeral Edge). */
   maxEs?: number;
+  /** Player maximum Mana (for Righteous Fire of Arcane Devotion). */
+  maxMana?: number;
   /** Skill stages / stacks / energy / blood charges. */
   stages?: number;
   /** Whether Winter Orb is actively channelling (doubles fire frequency). */
@@ -516,6 +650,10 @@ export interface SkillSpecialDamageOptions {
   ephemeralEdgePct?: number;
   /** Optional exact base DoT DPS override (e.g. from gem level table). */
   baseDotOverride?: number;
+  /** When true, official `poe{1,2}-gems.json` `cmods`/`sdata` are already injected, so skip static stage approximations that would double-count. */
+  hasCompiledSkillMods?: boolean;
+  /** When true, `skillData` already contains non-ailment base DoT (`*Dot`), so skip static `POE1_SPELL_DOT_LV20_BASE`. */
+  hasSkillDotData?: boolean;
 }
 
 export interface SkillSpecialDamageResult {
@@ -616,7 +754,7 @@ export function computeSkillSpecialDamage(
     return res;
   }
 
-  // PoE 1 Righteous Fire
+  // PoE 1 Righteous Fire (3.23+: pure 70% of Max Life + Max ES, no flat base; cannot hit or ignite)
   if (key === 'righteous fire' && game === 'poe1') {
     const life = Math.max(0, opts.maxLife ?? 0);
     const es = Math.max(0, opts.maxEs ?? 0);
@@ -626,6 +764,34 @@ export function computeSkillSpecialDamage(
     res.canIgnite = false;
     // PoB1 act_int.lua: 20% more Spell Damage at Lv1, +1% per level -> 39% at Lv20, 40% at Lv21
     res.buffSpellMorePct = 20 + (gemLevel - 1);
+    return res;
+  }
+
+  // PoE 1 Righteous Fire of Arcane Devotion (70% of Max Mana, Spell Damage applies to DoT; cannot hit or ignite)
+  if (key === 'righteous fire of arcane devotion' && game === 'poe1') {
+    const mana = Math.max(0, opts.maxMana ?? 0);
+    res.baseDotDps.Fire = opts.baseDotOverride ?? 0.7 * mana;
+    res.canHit = false;
+    res.canIgnite = false;
+    res.spellDmgAppliesToDot = true;
+    return res;
+  }
+
+  // PoE 1 Vaal Righteous Fire variants (sacrifices 60% of Life+ES / Mana, deals 158% of sacrificed as Fire DoT)
+  if (
+    (key === 'vaal righteous fire' || key === 'vaal righteous fire of arcane devotion') &&
+    game === 'poe1'
+  ) {
+    const pool =
+      key === 'vaal righteous fire of arcane devotion'
+        ? Math.max(0, opts.maxMana ?? 0)
+        : Math.max(0, opts.maxLife ?? 0) + Math.max(0, opts.maxEs ?? 0);
+    // PoB1 act_int.lua Lv20: percentSacrificed = 0.6, RFMultiplier = 1.58 (1.20 + 0.02 * (lv - 1))
+    const rfMult = 1.2 + (gemLevel - 1) * 0.02;
+    res.baseDotDps.Fire = opts.baseDotOverride ?? 0.6 * rfMult * pool;
+    res.canHit = false;
+    res.canIgnite = false;
+    res.spellDmgAppliesToDot = key === 'vaal righteous fire of arcane devotion';
     return res;
   }
 
@@ -642,30 +808,48 @@ export function computeSkillSpecialDamage(
     return res;
   }
 
-  // PoE 1 Spell DoT skills (Exsanguinate, Reap, Corrupting Fever, Essence Drain, Blight, Vortex, Cold Snap)
+  // PoE 1 Spell DoT skills (Exsanguinate, Reap, Corrupting Fever, Essence Drain, Blight, Bane, Wintertide Brand, Vortex, Cold Snap)
   const dotProfile = POE1_SPELL_DOT_LV20_BASE[key];
   if (dotProfile && game === 'poe1') {
-    const levelScale = Math.pow(1.115, gemLevel - 20);
-    const baseDps = opts.baseDotOverride ?? dotProfile.lv20Dps * levelScale;
-    res.baseDotDps[dotProfile.type] = baseDps;
-    res.spellDmgAppliesToDot = dotProfile.spellDmgApplies;
     res.canHit = dotProfile.canHit;
+    res.spellDmgAppliesToDot = dotProfile.spellDmgApplies;
+    if (!opts.hasSkillDotData) {
+      const levelScale = Math.pow(1.115, gemLevel - 20);
+      const baseDps = opts.baseDotOverride ?? dotProfile.lv20Dps * levelScale;
+      res.baseDotDps[dotProfile.type] = baseDps;
 
-    if (key === 'exsanguinate') {
-      const stages = clamp(Math.floor(opts.stages ?? 3), 1, dotProfile.maxStages ?? 3);
-      res.dotMoreMult = stages; // +100% more DoT per stage after first -> 3x at 3 stages
-    } else if (key === 'reap') {
-      const bloodCharges = clamp(Math.floor(opts.stages ?? 5), 0, dotProfile.maxStages ?? 5);
-      // 15% more Damage per Blood Charge (applies to both hit and DoT)
-      const chargeMult = 1 + 0.15 * bloodCharges;
-      res.hitMoreMult = chargeMult;
-      res.dotMoreMult = chargeMult;
-    } else if (key === 'corrupting fever') {
-      const stages = clamp(Math.floor(opts.stages ?? 10), 1, dotProfile.maxStages ?? 10);
-      res.dotMoreMult = stages; // +100% more DoT per stack after first -> 10x at 10 stacks
-    } else if (key === 'blight') {
-      const stages = clamp(Math.floor(opts.stages ?? 20), 1, dotProfile.maxStages ?? 20);
-      res.dotMoreMult = stages;
+      if (!opts.hasCompiledSkillMods) {
+        if (key === 'exsanguinate') {
+          const stages = clamp(Math.floor(opts.stages ?? 3), 1, dotProfile.maxStages ?? 3);
+          res.dotMoreMult = stages; // +100% more DoT per stage after first -> 3x at 3 stages
+        } else if (key === 'reap') {
+          const bloodCharges = clamp(Math.floor(opts.stages ?? 5), 0, dotProfile.maxStages ?? 5);
+          // 15% more Damage per Blood Charge (applies to both hit and DoT)
+          const chargeMult = 1 + 0.15 * bloodCharges;
+          res.hitMoreMult = chargeMult;
+          res.dotMoreMult = chargeMult;
+        } else if (key === 'corrupting fever') {
+          const stages = clamp(Math.floor(opts.stages ?? 10), 1, dotProfile.maxStages ?? 10);
+          res.dotMoreMult = stages; // +100% more DoT per stack after first -> 10x at 10 stacks
+        } else if (key === 'blight') {
+          const stages = clamp(Math.floor(opts.stages ?? 20), 1, dotProfile.maxStages ?? 20);
+          res.dotMoreMult = stages;
+        }
+      }
+      return res;
+    }
+  }
+
+  if (opts.hasCompiledSkillMods) {
+    // Only keep dynamic pool/charge mechanics not expressed as static cmods (RF, FR, DD, Ephemeral Edge, Flicker cooldown bypass)
+    if (key === 'flicker strike') {
+      if (game === 'poe1') {
+        res.bypassCooldown = opts.hasChargeBypass ?? true;
+      } else {
+        const pc = Math.max(0, Math.floor(opts.powerCharges ?? 0));
+        res.bypassCooldown = true;
+        res.hitRateMoreMult = pc > 0 ? 1 + 2 * pc : 1;
+      }
     }
     return res;
   }
@@ -729,6 +913,8 @@ export interface EffectiveEnemyResistanceOptions {
   curseReductionPct?: number;
   /** Resistance penetration % (positive value, e.g. 15 penetrates 15% resist on hits). */
   penetrationPct?: number;
+  /** PoE 2 minimum resistance reachable via penetration (undefined for PoE 1; 0 for PoE 2, -50 for Leopold's Applause). */
+  minPenRes?: number;
   /** Enemy max resistance cap (default 75). */
   maxResistCap?: number;
   /** Enemy minimum resistance floor (default -200). */
@@ -803,8 +989,17 @@ export function computeEffectiveEnemyResistance(
     : 0;
   const inverted = invertChance > 0;
 
-  const normalRes = clamp(res - pen, minFloor, maxCap);
-  const invertedRes = clamp(-res - pen, minFloor, maxCap);
+  const applyPen = (baseR: number): number => {
+    const cappedR = clamp(baseR, minFloor, maxCap);
+    if (opts.minPenRes !== undefined) {
+      return cappedR > opts.minPenRes
+        ? clamp(Math.max(opts.minPenRes, cappedR - pen), minFloor, maxCap)
+        : cappedR;
+    }
+    return clamp(cappedR - pen, minFloor, maxCap);
+  };
+  const normalRes = applyPen(res);
+  const invertedRes = applyPen(-res);
 
   const normalMult = (100 - normalRes) / 100;
   const invertedMult = (100 - invertedRes) / 100;

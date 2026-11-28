@@ -129,7 +129,34 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
   },
   {
     pattern: /^Removes all mana$/i,
-    build: (_, src) => [mkMod('BloodMagic', 'FLAG', true, src)],
+    build: (_, src) => [mkMod('BloodMagic', 'FLAG', true, src), mkMod('Mana', 'OVERRIDE', 0, src)],
+  },
+  {
+    pattern: /^Dexterity provides no inherent bonus to Evasion Rating$/i,
+    build: (_, src) => [mkMod('NoDexEvasionBonus', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^(\d+)% more Attack Damage if Accuracy Rating is higher than Maximum Life$/i,
+    build: (m, src) => [
+      mkMod('PreciseTechnique', 'FLAG', true, src),
+      mkMod('PreciseTechniqueMorePct', 'BASE', Number(m[1]), src),
+    ],
+  },
+  {
+    pattern: /^You can inflict Bleeding on an Enemy up to 8 times$/i,
+    build: (_, src) => [mkMod('CrimsonDance', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Your Bleeding does not deal extra Damage while the Enemy is moving and cannot be Aggravated$/i,
+    build: (_, src) => [mkMod('CrimsonDance', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Cannot Evade enemy Attacks$/i,
+    build: (_, src) => [mkMod('CannotEvade', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^(\d+)% increased Action Speed$/i,
+    build: (m, src) => [mkMod('ActionSpeed', 'INC', Number(m[1]), src)],
   },
   {
     pattern: /^(\d+)% less (?:maximum )?Energy Shield$/i,
@@ -372,6 +399,10 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
       return [mkMod(`${stat}PerAttr:${capFirst(m[4]!)}`, 'BASE', Number(m[1]) / Number(m[3]), src)];
     },
   },
+  {
+    pattern: /^Dexterity provides no (?:inherent )?bonus to Evasion Rating$/i,
+    build: (_m, src) => [mkMod('NoDexBonusToEvasion', 'FLAG', true, src)],
+  },
 
   // =========================================================================
   // 4. Weapon & Conditional Combat
@@ -538,15 +569,39 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
   },
   {
     pattern: /^(\d+)% increased (Trap|Mine|Totem|Brand|Channelling|Retaliation) Damage$/i,
-    build: (m, src) => [mkMod(`${capFirst(m[2]!)}Damage`, 'INC', Number(m[1]), src, 0, elementKeywordFlag(m[2]))],
+    build: (m, src) => {
+      const kind = m[2]!.toLowerCase();
+      const val = Number(m[1]);
+      if (kind === 'totem') return [mkMod('Damage', 'INC', val, src, 0, KeywordFlag.Totem)];
+      if (kind === 'trap') return [mkMod('Damage', 'INC', val, src, 0, KeywordFlag.Trap)];
+      if (kind === 'mine') return [mkMod('Damage', 'INC', val, src, 0, KeywordFlag.Mine)];
+      if (kind === 'channelling') {
+        return [{ ...mkMod('Damage', 'INC', val, src), tags: [{ type: 'Condition', var: 'Channelling' }] }];
+      }
+      return [{ ...mkMod('Damage', 'INC', val, src), tags: [{ type: 'SkillType', skillType: capFirst(kind) }] }];
+    },
   },
   {
     pattern: /^(Retaliation|Channelling|Brand|Totem|Trap|Mine) Skills deal (\d+)% increased Damage$/i,
-    build: (m, src) => [mkMod(`${capFirst(m[1]!)}Damage`, 'INC', Number(m[2]), src, 0, elementKeywordFlag(m[1]))],
+    build: (m, src) => {
+      const kind = m[1]!.toLowerCase();
+      const val = Number(m[2]);
+      if (kind === 'totem') return [mkMod('Damage', 'INC', val, src, 0, KeywordFlag.Totem)];
+      if (kind === 'trap') return [mkMod('Damage', 'INC', val, src, 0, KeywordFlag.Trap)];
+      if (kind === 'mine') return [mkMod('Damage', 'INC', val, src, 0, KeywordFlag.Mine)];
+      if (kind === 'channelling') {
+        return [{ ...mkMod('Damage', 'INC', val, src), tags: [{ type: 'Condition', var: 'Channelling' }] }];
+      }
+      return [{ ...mkMod('Damage', 'INC', val, src), tags: [{ type: 'SkillType', skillType: capFirst(kind) }] }];
+    },
   },
   {
-    pattern: /^Exerted Attacks deal (\d+)% increased Damage$/i,
-    build: (m, src) => [mkMod('ExertedAttackDamage', 'INC', Number(m[1]), src, ModFlag.Attack)],
+    pattern: /^Exerted Attacks deal (\d+)% (increased|more|less) Damage$/i,
+    build: (m, src) => {
+      const kind = m[2]!.toLowerCase();
+      const val = kind === 'less' ? -Number(m[1]) : Number(m[1]);
+      return [mkMod('ExertIncrease', kind === 'increased' ? 'INC' : 'MORE', val, src, ModFlag.Attack)];
+    },
   },
   {
     pattern: /^Minions deal (\d+)% increased Damage while you are affected by a Herald$/i,
@@ -594,12 +649,47 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
     build: (m, src) => [mkMod(`PhysicalDamageGainAs${capFirst(m[2]!)}`, 'BASE', Number(m[1]), src, ModFlag.Wand)],
   },
   {
-    pattern: /^Socketed Skills deal (\d+)% more (Attack |Spell |Elemental )?Damage$/i,
+    pattern: /^Socketed (?:Gems|Skills) deal Double Damage$/i,
+    build: (_, src) => [{ ...mkMod('DoubleDamageChance', 'BASE', 100, src), tags: [{ type: 'SocketedIn' }] }],
+  },
+  {
+    pattern: /^Socketed Vaal (?:Gems|Skills) (?:deal|have) (\d+)% (more|less) Damage$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'MORE', (m[2]!.toLowerCase() === 'less' ? -1 : 1) * Number(m[1]), src),
+        tags: [{ type: 'SocketedIn' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Socketed (?:Gems|Skills) deal (\d+)% (more|less) (Elemental |Attack |Spell |Physical |Fire |Cold |Lightning |Chaos |Melee |Projectile |Area )?Damage( over Time)?$/i,
     build: (m, src) => {
-      const kind = (m[2] ?? '').trim().toLowerCase();
-      if (kind === 'elemental') return [mkMod('ElementalDamage', 'MORE', Number(m[1]), src)];
-      const flag = kind === 'attack' ? ModFlag.Attack : kind === 'spell' ? ModFlag.Spell : 0;
-      return [mkMod('Damage', 'MORE', Number(m[1]), src, flag)];
+      const val = (m[2]!.toLowerCase() === 'less' ? -1 : 1) * Number(m[1]);
+      const kind = (m[3] ?? '').trim().toLowerCase();
+      const isDot = Boolean(m[4]);
+      let statName = 'Damage';
+      let flag = isDot ? ModFlag.Dot : 0;
+      if (
+        kind === 'elemental' ||
+        kind === 'physical' ||
+        kind === 'fire' ||
+        kind === 'cold' ||
+        kind === 'lightning' ||
+        kind === 'chaos'
+      ) {
+        statName = `${capFirst(kind)}Damage`;
+      } else if (kind === 'attack') {
+        flag |= ModFlag.Attack;
+      } else if (kind === 'spell') {
+        flag |= ModFlag.Spell;
+      } else if (kind === 'melee') {
+        flag |= ModFlag.Melee;
+      } else if (kind === 'projectile') {
+        flag |= ModFlag.Projectile;
+      } else if (kind === 'area') {
+        flag |= ModFlag.Area;
+      }
+      return [{ ...mkMod(statName, 'MORE', val, src, flag), tags: [{ type: 'SocketedIn' }] }];
     },
   },
 
@@ -919,8 +1009,22 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
     build: (m, src) => [mkMod('ElementalAilmentDuration', 'INC', Number(m[1]), src)],
   },
   {
-    pattern: /^(\d+)% increased Effect of (Non-Damaging Ailments|Chill|Shock|Lightning Ailments|Cold Ailments|Fire Ailments|your Marks|Herald Buffs on you|Consecrated Ground you create|Arcane Surge on you|Onslaught on you|Buffs granted by your Golems)$/i,
-    build: (m, src) => [mkMod(`EffectOf:${m[2]!.replace(/\s+/g, '')}`, 'INC', Number(m[1]), src)],
+    pattern: /^(\d+)% increased Effect of (Non-Damaging Ailments|Chill|Shock|Lightning Ailments|Cold Ailments|Fire Ailments|your Marks?(?: Skills)?|Marks?(?: Skills)?|Herald Buffs on you|Consecrated Ground you create|Arcane Surge on you|Onslaught on you|Buffs granted by your Golems)$/i,
+    build: (m, src) => {
+      const raw = m[2]!.toLowerCase();
+      let statName: string;
+      if (raw.includes('mark')) statName = 'MarkEffect';
+      else if (raw === 'arcane surge on you') statName = 'ArcaneSurgeEffect';
+      else if (raw === 'consecrated ground you create') statName = 'ConsecratedGroundEffect';
+      else if (raw === 'buffs granted by your golems') statName = 'GolemBuffEffect';
+      else if (raw === 'herald buffs on you') statName = 'HeraldBuffEffect';
+      else if (raw === 'onslaught on you') statName = 'OnslaughtEffect';
+      else if (raw === 'shock' || raw === 'lightning ailments') statName = 'ShockEffect';
+      else if (raw === 'chill' || raw === 'cold ailments') statName = 'ChillEffect';
+      else if (raw === 'fire ailments') statName = 'FireAilmentEffect';
+      else statName = 'NonDamagingAilmentEffect';
+      return [mkMod(statName, 'INC', Number(m[1]), src)];
+    },
   },
 
   // =========================================================================
@@ -1032,7 +1136,10 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
   },
   {
     pattern: /^\+(\d+) to maximum number of Summoned (Totems|Golems|Zombies|Skeletons|Spectres|Raging Spirits)$/i,
-    build: (m, src) => [mkMod(`Active${m[2]!.replace(/\s+/g, '')}Limit`, 'BASE', Number(m[1]), src)],
+    build: (m, src) => {
+      const singular = m[2]!.replace(/\s+/g, '').replace(/s$/i, '');
+      return [mkMod(`Active${singular}Limit`, 'BASE', Number(m[1]), src)];
+    },
   },
   {
     pattern: /^Attack Skills have \+(\d+) to maximum number of Summoned Ballista Totems$/i,

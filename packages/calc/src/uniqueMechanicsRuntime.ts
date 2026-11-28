@@ -86,6 +86,13 @@ function normalizeName(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+function getRawModsForStat(db: ModDB, statName: string): readonly Mod[] {
+  for (const [key, list] of db.entriesByPrefix(statName)) {
+    if (key === statName) return list;
+  }
+  return [];
+}
+
 function hasStatSource(
   db: ModDB,
   statName: string,
@@ -94,14 +101,67 @@ function hasStatSource(
   expectedValue?: number,
 ): boolean {
   const needle = sourceSubstr.toLowerCase();
-  return db.calcStat(statName).sources.some((s) => {
-    if (s.type !== type) return false;
-    if (!s.source.toLowerCase().includes(needle)) return false;
-    if (expectedValue !== undefined && typeof s.value === 'number') {
-      return Math.abs(s.value - expectedValue) < 1e-6;
+  return getRawModsForStat(db, statName).some((m) => {
+    if (m.type !== type) return false;
+    if (!m.source.toLowerCase().includes(needle)) return false;
+    if (expectedValue !== undefined && typeof m.value === 'number') {
+      return Math.abs(m.value - expectedValue) < 1e-6;
     }
     return true;
   });
+}
+
+/**
+ * Exact PoE 1 (3.23+) Energy Blade base lightning damage `[min, max]` by gem level 1..40,
+ * matching upstream PoB1 `Data/Skills/act_int.lua` (`skills["EnergyBlade"]`) via
+ * `calcLib.buildSkillInstanceStats`.
+ */
+const ENERGY_BLADE_BASE_LIGHTNING: ReadonlyArray<readonly [number, number]> = [
+  [2, 40], // Lv 1
+  [2, 46], // Lv 2
+  [3, 53], // Lv 3
+  [3, 60], // Lv 4
+  [4, 68], // Lv 5
+  [4, 77], // Lv 6
+  [5, 87], // Lv 7
+  [5, 98], // Lv 8
+  [6, 110], // Lv 9
+  [6, 118], // Lv 10
+  [7, 127], // Lv 11
+  [7, 136], // Lv 12
+  [8, 146], // Lv 13
+  [8, 157], // Lv 14
+  [9, 168], // Lv 15
+  [9, 180], // Lv 16
+  [10, 193], // Lv 17
+  [11, 206], // Lv 18
+  [12, 220], // Lv 19
+  [12, 235], // Lv 20
+  [13, 250], // Lv 21
+  [14, 267], // Lv 22
+  [15, 284], // Lv 23
+  [16, 303], // Lv 24
+  [17, 322], // Lv 25
+  [18, 343], // Lv 26
+  [19, 365], // Lv 27
+  [20, 387], // Lv 28
+  [22, 412], // Lv 29
+  [23, 437], // Lv 30
+  [24, 450], // Lv 31
+  [24, 464], // Lv 32
+  [25, 478], // Lv 33
+  [26, 492], // Lv 34
+  [27, 507], // Lv 35
+  [27, 522], // Lv 36
+  [28, 538], // Lv 37
+  [29, 554], // Lv 38
+  [30, 570], // Lv 39
+  [31, 587], // Lv 40
+];
+
+function getEnergyBladeBaseLightning(level: number): readonly [number, number] {
+  const clamped = Math.max(1, Math.min(ENERGY_BLADE_BASE_LIGHTNING.length, Math.round(level)));
+  return ENERGY_BLADE_BASE_LIGHTNING[clamped - 1]!;
 }
 
 function isBuildLike(
@@ -194,7 +254,7 @@ function negateNumericMods(mods: readonly Mod[]): Mod[] {
 // ============================================================================
 
 const INGENUITY_SKIP_LINE_RE =
-  /(?:Modifier magnitudes|Reflects (?:your other|opposite) Ring|^Has \d+ (?:Extra )?Sockets?$|^Grants Skill:|^Corrupted$|^Mirrored$|^Unidentified$|^Requires Level|bonuses gained from (?:your )?Equipped (?:Left |Right )?Rings?$)/i;
+  /(?:Modifier magnitudes|Reflects (?:your other|opposite) Ring|^Has \d+ (?:Extra )?Sockets?$|^Grants Skill:|^Corrupted$|^Mirrored$|^Unidentified$|^Requires Level|bonuses gained from (?:your )?(?:(?:left|right) )?Equipped (?:(?:Left|Right) )?Rings?$)/i;
 
 export interface IngenuityRingEvaluation {
   slot: 'Ring 1' | 'Ring 2';
@@ -245,7 +305,7 @@ export function evaluateIngenuityAndRingBonuses(
       }
 
       const mLeft = line.match(
-        /^(\d+)% (increased|reduced) bonuses gained from (?:your )?Equipped Left Ring$/i,
+        /^(\d+)% (increased|reduced) bonuses gained from (?:your )?(?:Equipped Left|left Equipped) Ring$/i,
       );
       if (mLeft) {
         const sign = mLeft[2]!.toLowerCase() === 'reduced' ? -1 : 1;
@@ -255,7 +315,7 @@ export function evaluateIngenuityAndRingBonuses(
       }
 
       const mRight = line.match(
-        /^(\d+)% (increased|reduced) bonuses gained from (?:your )?Equipped Right Ring$/i,
+        /^(\d+)% (increased|reduced) bonuses gained from (?:your )?(?:Equipped Right|right Equipped) Ring$/i,
       );
       if (mRight) {
         const sign = mRight[2]!.toLowerCase() === 'reduced' ? -1 : 1;
@@ -352,6 +412,136 @@ export function evaluateIngenuityAndRingBonuses(
 }
 
 // ============================================================================
+// 1b. PoE 2 Equipped Focus Bonus Scaler (e.g. Disciple of Varashta `Instruments of Power`)
+// ============================================================================
+
+const FOCUS_SCALE_SKIP_LINE_RE =
+  /^(?:\+\d+ to maximum Energy Shield$|\d+% (?:increased|reduced) (?:maximum )?Energy Shield$|Grants Skill:|Corrupted$|Mirrored$|Unidentified$|Requires Level)/i;
+
+export interface FocusScalingOptions extends ParseModOptions {
+  /** Explicit signed bonus percentage override (e.g. `-50` for Instruments of Power); defaults to `FocusEffect` / `EffectOfBonusesFromFocus` in `db` + allocated nodes. */
+  focusEffectPct?: number;
+  /** Optional allocated passive nodes to auto-detect `"N% (increased|reduced) bonuses gained from Equipped Focus"`. */
+  allocatedNodes?: readonly PassiveNode[];
+}
+
+export interface FocusScalingResult {
+  focusEffectPct: number;
+  multiplier: number;
+  slot: string | null;
+  itemName: string | null;
+  deltaLines: string[];
+  mods: Mod[];
+  appliedSources: string[];
+}
+
+/**
+ * Evaluates PoE 2 Equipped Focus bonus scaling (e.g. Disciple of Varashta `Instruments of Power`:
+ * `"50% reduced bonuses gained from Equipped Focus"`), computing PoB 2 `CalcSetup.lua:1625-1636` +
+ * `ModStore.lua:114` (`m_modf(round(value * scale, 2))`) signed deltas on the equipped Focus's
+ * non-local implicit & explicit mods and injecting them into `db` (guarded by `FocusEffectApplied`).
+ */
+export function evaluateEquippedFocusScaling(
+  equippedOrBuild: Build | ReadonlyArray<EquippedItemEntry>,
+  db: ModDB,
+  opts?: FocusScalingOptions,
+): FocusScalingResult {
+  const entries = extractEquippedEntries(equippedOrBuild);
+  let focusEffectPct =
+    opts?.focusEffectPct ?? db.sum('INC', ['FocusEffect', 'EffectOfBonusesFromFocus']);
+
+  if (opts?.focusEffectPct === undefined && focusEffectPct === 0 && opts?.allocatedNodes) {
+    for (const node of opts.allocatedNodes) {
+      for (const raw of node?.stats ?? []) {
+        for (const part of raw.split(/\r?\n/)) {
+          const line = cleanModLine(part);
+          const m = line.match(/^(\d+)% (increased|reduced) bonuses gained from Equipped Focus$/i);
+          if (m) {
+            const sign = m[2]!.toLowerCase() === 'reduced' ? -1 : 1;
+            focusEffectPct += sign * Number(m[1]);
+          }
+        }
+      }
+    }
+  }
+
+  const multiplier = Math.max(0, 1 + focusEffectPct / 100);
+  const scale = multiplier - 1;
+  const focusEntry = entries.find(
+    ({ slot, item }) =>
+      (slot === 'Weapon 2' || slot === 'Weapon 2 Swap') && /\bfocus\b/i.test(item.baseName),
+  );
+
+  if (!focusEntry || Math.abs(scale) < 1e-9 || db.flag('FocusEffectApplied')) {
+    return {
+      focusEffectPct,
+      multiplier,
+      slot: focusEntry?.slot ?? null,
+      itemName: focusEntry?.item.name ?? null,
+      deltaLines: [],
+      mods: [],
+      appliedSources: [],
+    };
+  }
+
+  const isReduction = scale < 0;
+  const signLabel = focusEffectPct >= 0 ? `+${focusEffectPct}%` : `${focusEffectPct}%`;
+  const src = `Focus Effect (${signLabel} ${focusEntry.slot}: ${focusEntry.item.name})`;
+  const deltaLines: string[] = [];
+  const mods: Mod[] = [];
+  const parseOpts: ParseModOptions = { ...opts };
+
+  for (const raw of [...focusEntry.item.implicits, ...focusEntry.item.explicits]) {
+    for (const part of raw.split(/\r?\n/)) {
+      const line = cleanModLine(part);
+      if (!line || FOCUS_SCALE_SKIP_LINE_RE.test(line)) continue;
+      let anyNonZero = false;
+      const deltaLine = line.replace(
+        /([+-]?)(\d+(?:\.\d+)?)/g,
+        (_match, sign: string, numStr: string) => {
+          const rawNum = Number(numStr);
+          const dotIdx = numStr.indexOf('.');
+          const decimals = dotIdx === -1 ? 0 : numStr.length - dotIdx - 1;
+          let delta: number;
+          if (decimals === 0) {
+            delta = Math.trunc(Math.round(rawNum * scale * 100) / 100);
+          } else {
+            const factor = Math.pow(10, decimals);
+            delta = Math.trunc(Math.round(rawNum * scale * factor * 100) / 100) / factor;
+          }
+          const mag = isReduction ? -delta : delta;
+          if (mag !== 0) anyNonZero = true;
+          return `${sign}${formatNumberTrimmed(Math.max(0, mag), decimals)}`;
+        },
+      );
+      if (!anyNonZero) continue;
+      const parsed = parseModLines([deltaLine], src, parseOpts);
+      if (parsed.length === 0) continue;
+      const finalMods = isReduction ? negateNumericMods(parsed) : parsed;
+      deltaLines.push(isReduction ? `-(${deltaLine})` : deltaLine);
+      mods.push(...finalMods);
+    }
+  }
+
+  const appliedSources: string[] = [];
+  if (mods.length > 0) {
+    db.addMods(mods);
+    db.addMod(mkMod('FocusEffectApplied', 'FLAG', true, src));
+    appliedSources.push(src);
+  }
+
+  return {
+    focusEffectPct,
+    multiplier,
+    slot: focusEntry.slot,
+    itemName: focusEntry.item.name,
+    deltaLines,
+    mods,
+    appliedSources,
+  };
+}
+
+// ============================================================================
 // 2. PoE 2 `Morior Invictus` & Socket-Count Item Modifiers
 // ============================================================================
 
@@ -364,7 +554,7 @@ export interface ItemSocketCounts {
 const PER_SOCKET_FILLED_RE =
   /^([+-]?\d+(?:\.\d+)?)(%?)\s+(.+?)\s+per Socket filled$/i;
 const PER_SOCKETED_RUNE_RE =
-  /^([+-]?\d+(?:\.\d+)?)(%?)\s+(.+?)\s+per Socketed Rune or Soul Core$/i;
+  /^([+-]?\d+(?:\.\d+)?)(%?)\s+(.+?)\s+per Socketed (?:Rune or Soul Core|Soul Core or Rune|Rune,\s*Soul Core or Idol|Augment|Item)$/i;
 const PER_EMPTY_SOCKET_RE =
   /^([+-]?\d+(?:\.\d+)?)(%?)\s+(.+?)\s+per Empty Socket$/i;
 
@@ -408,11 +598,20 @@ export function countItemSockets(item: ItemWithSocketCounts): ItemSocketCounts {
     };
   }
 
-  // 2. Count `Rune:` lines in rawText
+  // 2. Count non-empty `Rune:` lines in rawText (ignoring placeholder `Rune: None`)
   if (item.rawText) {
-    const runeMatches = item.rawText.match(/^\s*Rune\s*[:：]/gim);
-    if (runeMatches && runeMatches.length > 0) {
-      const filled = runeMatches.length;
+    const runeRe = /^\s*Rune\s*[:：]\s*(.+?)\s*$/gim;
+    let filled = 0;
+    let anyRuneHeader = false;
+    let rm: RegExpExecArray | null;
+    while ((rm = runeRe.exec(item.rawText)) !== null) {
+      anyRuneHeader = true;
+      const val = rm[1]!.trim();
+      if (val && !/^none$/i.test(val)) {
+        filled++;
+      }
+    }
+    if (anyRuneHeader) {
       const total = Math.max(socketTokens, filled);
       return {
         totalSockets: total,
@@ -1132,7 +1331,10 @@ export function evaluatePreStatBuildEnablingUniques(
         appliedSources.push(src);
         continue;
       }
-      if (/^Nearby Enemies'? Chaos Resistance is 0$/i.test(line)) {
+      if (
+        /^(?:Nearby Enemies'?|Enemies in your Presence'?s?) Chaos Resistance is 0$/i.test(line) ||
+        /^Enemies in your Presence have 0% Chaos Resistance$/i.test(line)
+      ) {
         originalSinActive = true;
         enemyChaosResistOverride = 0;
         db.addMod(mkMod('OriginalSinZeroChaosRes', 'FLAG', true, src));
@@ -1142,12 +1344,26 @@ export function evaluatePreStatBuildEnablingUniques(
         continue;
       }
 
-      // 5. Doryani's Prototype
-      if (/^Nearby Enemies have Lightning Resistance equal to yours$/i.test(line)) {
+      // 5. Doryani's Prototype (PoE 1: "Nearby Enemies...", PoE 2: "Enemies in your Presence...")
+      if (/^(?:Nearby Enemies|Enemies in your Presence) have Lightning Resistance equal to yours$/i.test(line)) {
         doryanisPrototypeActive = true;
         if (!db.flag('DoryanisPrototype')) {
           db.addMod(mkMod('DoryanisPrototype', 'FLAG', true, src));
           db.addMod(mkMod('EnemyLightningResistEqualsPlayer', 'FLAG', true, src));
+        }
+        appliedSources.push(src);
+        continue;
+      }
+
+      // 6. The Tempest Rising (PoE 1 3.25+: "You and Enemies in your Presence count as moving while affected by Elemental Ailments")
+      if (
+        /(?:Enemies(?: in your Presence)?|You and Enemies in your Presence) count as moving while affected by Elemental Ailments/i.test(
+          line,
+        ) ||
+        /Enemies affected by Elemental Ailments count as moving/i.test(line)
+      ) {
+        if (!db.flag('EnemyAffectedByEleAilmentCountsAsMoving')) {
+          db.addMod(mkMod('EnemyAffectedByEleAilmentCountsAsMoving', 'FLAG', true, src));
         }
         appliedSources.push(src);
       }
@@ -1218,6 +1434,7 @@ export function evaluatePreStatBuildEnablingUniques(
 export interface EnergyBladeTransformResult {
   active: boolean;
   twoHanded: boolean;
+  gemLevel: number;
   gemQuality: number;
   lessEsPct: number;
   postBladeEs: number;
@@ -1242,6 +1459,8 @@ export interface PostPoolUniqueContext {
   evasion: number;
   fortified?: boolean;
   playerLightningResist?: number;
+  /** Set when caller already applied `The Iron Fortress` `StrDmgBonusRatioOverride` directly to Strength's damage bonus. */
+  ironFortressRatioApplied?: boolean;
   energyBlade?: {
     active: boolean;
     twoHanded?: boolean;
@@ -1326,6 +1545,37 @@ export function evaluatePostPoolBuildEnablingUniques(
     const lowerName = normalizeName(item.name);
     const lines = collectCleanItemLines(item);
 
+    const hasPerAttrOrPerStatFromItem = (statNames: readonly string[]): boolean => {
+      for (const sn of statNames) {
+        for (const [, list] of db.entriesByPrefix(sn)) {
+          for (const m of list) {
+            if (!m.source.toLowerCase().includes(lowerName)) continue;
+            if (sn.includes('PerAttr:') || m.tags?.some((t) => t.type === 'PerStat')) {
+              return true;
+            }
+          }
+        }
+      }
+      return false;
+    };
+
+    const getExistingBaseModsFromItem = (
+      statName: string,
+    ): { total: number; count: number; flags: number } => {
+      let total = 0;
+      let count = 0;
+      let flags = 0;
+      for (const m of getRawModsForStat(db, statName)) {
+        if (m.type !== 'BASE' || typeof m.value !== 'number') continue;
+        if (!m.source.toLowerCase().includes(lowerName)) continue;
+        if (m.tags?.some((t) => t.type === 'PerStat')) continue;
+        total += m.value;
+        count += 1;
+        flags = m.flags;
+      }
+      return { total, count, flags };
+    };
+
     for (const line of lines) {
       // 1. Crown of Eyes
       const mCrown = line.match(
@@ -1360,21 +1610,38 @@ export function evaluatePostPoolBuildEnablingUniques(
       if (mFortBlock) {
         const val = Math.floor(str / Math.max(1, Number(mFortBlock[2]))) * Number(mFortBlock[1]);
         ironFortressBlockBonus += val;
-        if (val > 0 && !hasStatSource(db, 'BlockChance', 'BASE', item.name, val)) {
-          db.addMod(mkMod('BlockChance', 'BASE', val, src));
+        if (!hasPerAttrOrPerStatFromItem(['BlockChance'])) {
+          const existingBlock = getExistingBaseModsFromItem('BlockChance');
+          if (existingBlock.count > 0) {
+            const delta = val - existingBlock.total;
+            if (delta !== 0) {
+              db.addMod(mkMod('BlockChance', 'BASE', delta, `${src} (Stepped Adjustment)`));
+            }
+          } else if (
+            val > 0 &&
+            !hasPerAttrOrPerStatFromItem(['BlockChancePerAttr:Strength']) &&
+            !hasStatSource(db, 'BlockChance', 'BASE', item.name, val)
+          ) {
+            db.addMod(mkMod('BlockChance', 'BASE', val, src));
+          }
         }
         appliedSources.push(src);
         continue;
       }
       const mFortStrDmg = line.match(
-        /^Strength'?s Damage Bonus instead grants (\d+)% Melee Physical Damage per (\d+) Strength$/i,
+        /^Strength'?s Damage Bonus instead grants (\d+)% (?:increased )?Melee Physical Damage per (\d+) Strength$/i,
       );
       if (mFortStrDmg) {
         const upgradedPct = Math.floor(str / Math.max(1, Number(mFortStrDmg[2]))) * Number(mFortStrDmg[1]);
         const basePct = Math.floor(str / 10) * 2;
         const extra = Math.max(0, upgradedPct - basePct);
         ironFortressExtraMeleePhysInc += extra;
-        if (extra > 0 && !hasStatSource(db, 'PhysicalDamage', 'INC', item.name, extra)) {
+        const alreadyAppliedByStrOverride =
+          Boolean(ctx.ironFortressRatioApplied) ||
+          db.sum('BASE', 'StrDmgBonusRatioOverride') > 0 ||
+          hasStatSource(db, 'PhysicalDamage', 'INC', 'Iron Fortress') ||
+          hasStatSource(db, 'PhysicalDamage', 'INC', item.name, extra);
+        if (extra > 0 && !alreadyAppliedByStrOverride) {
           db.addMod(mkMod('PhysicalDamage', 'INC', extra, src, ModFlag.Melee));
         }
         appliedSources.push(src);
@@ -1391,11 +1658,49 @@ export function evaluatePostPoolBuildEnablingUniques(
         const cMax = Number(mAlberon[2]) * steps;
         replicaAlberonsChaosMin += cMin;
         replicaAlberonsChaosMax += cMax;
-        if (cMin > 0 && !hasStatSource(db, 'ChaosMin', 'BASE', item.name, cMin)) {
-          db.addMod(mkMod('ChaosMin', 'BASE', cMin, src, ModFlag.Attack));
-        }
-        if (cMax > 0 && !hasStatSource(db, 'ChaosMax', 'BASE', item.name, cMax)) {
-          db.addMod(mkMod('ChaosMax', 'BASE', cMax, src, ModFlag.Attack));
+        if (!hasPerAttrOrPerStatFromItem(['ChaosMin', 'ChaosMax'])) {
+          const existingMin = getExistingBaseModsFromItem('ChaosMin');
+          const existingMax = getExistingBaseModsFromItem('ChaosMax');
+          const hasPerAttrChaos = hasPerAttrOrPerStatFromItem([
+            'FlatMinPerAttr:Chaos:Strength',
+            'FlatMaxPerAttr:Chaos:Strength',
+          ]);
+          if (existingMin.count > 0 || existingMax.count > 0) {
+            // engine.ts injectAttributeScaling expands FlatMinPerAttr/FlatMaxPerAttr continuously
+            // (e.g. floor(2154 * 1.0) = 2154 instead of stepped floor(2154 / 80) * 80 = 2080).
+            // Reconcile via exact stepped delta instead of double-counting a full second copy.
+            const minDelta = cMin - existingMin.total;
+            const maxDelta = cMax - existingMax.total;
+            if (minDelta !== 0) {
+              db.addMod(
+                mkMod(
+                  'ChaosMin',
+                  'BASE',
+                  minDelta,
+                  `${src} (Stepped Adjustment)`,
+                  existingMin.count > 0 ? existingMin.flags : ModFlag.Attack,
+                ),
+              );
+            }
+            if (maxDelta !== 0) {
+              db.addMod(
+                mkMod(
+                  'ChaosMax',
+                  'BASE',
+                  maxDelta,
+                  `${src} (Stepped Adjustment)`,
+                  existingMax.count > 0 ? existingMax.flags : ModFlag.Attack,
+                ),
+              );
+            }
+          } else if (!hasPerAttrChaos) {
+            if (cMin > 0 && !hasStatSource(db, 'ChaosMin', 'BASE', item.name, cMin)) {
+              db.addMod(mkMod('ChaosMin', 'BASE', cMin, src, ModFlag.Attack));
+            }
+            if (cMax > 0 && !hasStatSource(db, 'ChaosMax', 'BASE', item.name, cMax)) {
+              db.addMod(mkMod('ChaosMax', 'BASE', cMax, src, ModFlag.Attack));
+            }
+          }
         }
         appliedSources.push(src);
         continue;
@@ -1411,7 +1716,7 @@ export function evaluatePostPoolBuildEnablingUniques(
 
       // 4. Hand of Wisdom and Action (HoWA)
       const mHowaDmg = line.match(
-        /^Adds (\d+) to (\d+) Lightning Damage to Attacks with this Weapon per (\d+) Intelligence$/i,
+        /^Adds (\d+) to (\d+) Lightning Damage to Attacks(?: with this Weapon)? per (\d+) Intelligence$/i,
       );
       if (mHowaDmg) {
         const steps = Math.floor(int / Math.max(1, Number(mHowaDmg[3])));
@@ -1419,11 +1724,13 @@ export function evaluatePostPoolBuildEnablingUniques(
         const lMax = Number(mHowaDmg[2]) * steps;
         howaLightningMin += lMin;
         howaLightningMax += lMax;
-        if (lMin > 0 && !hasStatSource(db, 'LightningMin', 'BASE', item.name, lMin)) {
-          db.addMod(mkMod('LightningMin', 'BASE', lMin, src, ModFlag.Attack));
-        }
-        if (lMax > 0 && !hasStatSource(db, 'LightningMax', 'BASE', item.name, lMax)) {
-          db.addMod(mkMod('LightningMax', 'BASE', lMax, src, ModFlag.Attack));
+        if (!hasPerAttrOrPerStatFromItem(['FlatMinPerAttr:Lightning', 'LightningMin'])) {
+          if (lMin > 0 && !hasStatSource(db, 'LightningMin', 'BASE', item.name, lMin)) {
+            db.addMod(mkMod('LightningMin', 'BASE', lMin, src, ModFlag.Attack));
+          }
+          if (lMax > 0 && !hasStatSource(db, 'LightningMax', 'BASE', item.name, lMax)) {
+            db.addMod(mkMod('LightningMax', 'BASE', lMax, src, ModFlag.Attack));
+          }
         }
         appliedSources.push(src);
         continue;
@@ -1439,25 +1746,33 @@ export function evaluatePostPoolBuildEnablingUniques(
         const fMax = Number(mBrutus[2]) * steps;
         brutusFireMin += fMin;
         brutusFireMax += fMax;
-        if (fMin > 0 && !hasStatSource(db, 'FireMin', 'BASE', item.name, fMin)) {
-          db.addMod(mkMod('FireMin', 'BASE', fMin, src, ModFlag.Attack));
-        }
-        if (fMax > 0 && !hasStatSource(db, 'FireMax', 'BASE', item.name, fMax)) {
-          db.addMod(mkMod('FireMax', 'BASE', fMax, src, ModFlag.Attack));
+        if (!hasPerAttrOrPerStatFromItem(['FlatMinPerAttr:Fire', 'FireMin'])) {
+          if (fMin > 0 && !hasStatSource(db, 'FireMin', 'BASE', item.name, fMin)) {
+            db.addMod(mkMod('FireMin', 'BASE', fMin, src, ModFlag.Attack));
+          }
+          if (fMax > 0 && !hasStatSource(db, 'FireMax', 'BASE', item.name, fMax)) {
+            db.addMod(mkMod('FireMax', 'BASE', fMax, src, ModFlag.Attack));
+          }
         }
         appliedSources.push(src);
         continue;
       }
 
-      // 6. Pillar of the Caged God & HoWA Attack Speed per Dexterity
+      // 6. Pillar of the Caged God & HoWA Attack Speed per Dexterity (PoE 1 & PoE 2 wordings)
       const mPillarPhys = line.match(
-        /^(\d+)% increased Physical Weapon Damage per (\d+) Strength$/i,
+        /^(\d+)% increased (Physical )?Weapon Damage per (\d+) Strength$/i,
       );
       if (mPillarPhys) {
-        const val = Math.floor(str / Math.max(1, Number(mPillarPhys[2]))) * Number(mPillarPhys[1]);
+        const isPhysOnly = Boolean(mPillarPhys[2]);
+        const val = Math.floor(str / Math.max(1, Number(mPillarPhys[3]))) * Number(mPillarPhys[1]);
         pillarPhysWeaponInc += val;
-        if (val > 0 && !hasStatSource(db, 'PhysicalDamage', 'INC', item.name, val)) {
-          db.addMod(mkMod('PhysicalDamage', 'INC', val, src, ModFlag.Attack));
+        const targetStat = isPhysOnly ? 'PhysicalDamage' : 'Damage';
+        if (
+          val > 0 &&
+          !hasPerAttrOrPerStatFromItem(['DamagePerAttr:Strength', 'MeleePhysicalDamagePerAttr:Strength', targetStat]) &&
+          !hasStatSource(db, targetStat, 'INC', item.name, val)
+        ) {
+          db.addMod(mkMod(targetStat, 'INC', val, src, ModFlag.Attack));
         }
         appliedSources.push(src);
         continue;
@@ -1470,41 +1785,57 @@ export function evaluatePostPoolBuildEnablingUniques(
         } else {
           howaAttackSpeedInc += val;
         }
-        if (val > 0 && !hasStatSource(db, 'Speed', 'INC', item.name, val)) {
+        if (
+          val > 0 &&
+          !hasPerAttrOrPerStatFromItem(['AttackSpeedPerAttr:Dexterity', 'Speed']) &&
+          !hasStatSource(db, 'Speed', 'INC', item.name, val)
+        ) {
           db.addMod(mkMod('Speed', 'INC', val, src, ModFlag.Attack));
         }
         appliedSources.push(src);
         continue;
       }
-      const mAoePerInt = line.match(/^(\d+)% increased Area of Effect per (\d+) Intelligence$/i);
+      const mAoePerInt = line.match(/^(\d+)% increased Area of Effect(?: for Attacks)? per (\d+) Intelligence$/i);
       if (mAoePerInt) {
         const val = Math.floor(int / Math.max(1, Number(mAoePerInt[2]))) * Number(mAoePerInt[1]);
-        if (val > 0 && !hasStatSource(db, 'AreaOfEffect', 'INC', item.name, val)) {
+        if (
+          val > 0 &&
+          !hasPerAttrOrPerStatFromItem(['AreaOfEffect']) &&
+          !hasStatSource(db, 'AreaOfEffect', 'INC', item.name, val)
+        ) {
           db.addMod(mkMod('AreaOfEffect', 'INC', val, src));
         }
         continue;
       }
 
-      // 7. Rathpith Globe
+      // 7. Rathpith Globe (PoE 1 & PoE 2 wordings)
       const mRathSpell = line.match(
-        /^(\d+)% increased Spell Damage per (\d+) Player Maximum Life$/i,
+        /^(\d+)% increased Spell Damage per (\d+) (?:Player )?Maximum Life$/i,
       );
       if (mRathSpell) {
         const val = Math.floor(life / Math.max(1, Number(mRathSpell[2]))) * Number(mRathSpell[1]);
         rathpithSpellDamageInc += val;
-        if (val > 0 && !hasStatSource(db, 'Damage', 'INC', item.name, val)) {
+        if (
+          val > 0 &&
+          !hasPerAttrOrPerStatFromItem(['Damage']) &&
+          !hasStatSource(db, 'Damage', 'INC', item.name, val)
+        ) {
           db.addMod(mkMod('Damage', 'INC', val, src, ModFlag.Spell));
         }
         appliedSources.push(src);
         continue;
       }
       const mRathCrit = line.match(
-        /^(\d+)% increased Critical Strike Chance for Spells per (\d+) Player Maximum Life$/i,
+        /^(\d+)% increased Critical (?:Strike|Hit) Chance for Spells per (\d+) (?:Player )?Maximum Life$/i,
       );
       if (mRathCrit) {
         const val = Math.floor(life / Math.max(1, Number(mRathCrit[2]))) * Number(mRathCrit[1]);
         rathpithSpellCritInc += val;
-        if (val > 0 && !hasStatSource(db, 'CritChance', 'INC', item.name, val)) {
+        if (
+          val > 0 &&
+          !hasPerAttrOrPerStatFromItem(['CritChance']) &&
+          !hasStatSource(db, 'CritChance', 'INC', item.name, val)
+        ) {
           db.addMod(mkMod('CritChance', 'INC', val, src, ModFlag.Spell));
         }
         appliedSources.push(src);
@@ -1553,8 +1884,8 @@ export function evaluatePostPoolBuildEnablingUniques(
         continue;
       }
 
-      // 10. Doryani's Prototype enemy Lightning Resistance sync
-      if (/^Nearby Enemies have Lightning Resistance equal to yours$/i.test(line)) {
+      // 10. Doryani's Prototype enemy Lightning Resistance sync (PoE 1 & PoE 2 wording)
+      if (/^(?:Nearby Enemies|Enemies in your Presence) have Lightning Resistance equal to yours$/i.test(line)) {
         if (ctx.playerLightningResist !== undefined) {
           const synced = Math.max(-200, Math.round(ctx.playerLightningResist));
           enemyLightningResistOverride = synced;
@@ -1587,13 +1918,17 @@ export function evaluatePostPoolBuildEnablingUniques(
     db.addMod(mkMod('EnemyLightningResistOverride', 'OVERRIDE', synced, "Unique: Doryani's Prototype"));
   }
 
-  // 11. Energy Blade buff transformation
+  // 11. Energy Blade buff transformation (PoE 3.23+ exact PoB1 act_int.lua / CalcOffence.lua)
   const detectedEnergyBladeSkill = (ctx.activeSkills ?? []).find(
     (s) => s.enabled !== false && normalizeName(s.name) === 'energy blade',
   );
   const energyBladeActive = Boolean(ctx.energyBlade?.active || detectedEnergyBladeSkill);
 
   if (energyBladeActive) {
+    const gemLevel = Math.max(
+      1,
+      Math.round(ctx.energyBlade?.gemLevel ?? detectedEnergyBladeSkill?.level ?? 20),
+    );
     const gemQuality = Math.max(
       0,
       ctx.energyBlade?.gemQuality ?? detectedEnergyBladeSkill?.quality ?? 0,
@@ -1605,23 +1940,40 @@ export function evaluatePostPoolBuildEnablingUniques(
           (e) => (e.slot === 'Weapon 1' || e.slot === 'Weapon 1 Swap') && e.item.weaponStats?.twoHanded,
         ),
     );
-    const lessEsPct = Math.max(0, 50 - gemQuality * 0.5);
-    const src = `Skill: Energy Blade (Q${gemQuality})`;
+    // PoE 3.23+ (act_int.lua:5118): always 50% less Maximum Energy Shield;
+    // quality grants 0.5% increased Attack Speed per 1% quality instead of reducing ES penalty.
+    const lessEsPct = 50;
+    const src = `Skill: Energy Blade (Lv${gemLevel} Q${gemQuality})`;
 
     if (!hasStatSource(db, 'EnergyShield', 'MORE', 'Energy Blade')) {
       db.addMod(mkMod('EnergyShield', 'MORE', -lessEsPct, src));
     }
 
+    const qualityAttackSpeedInc = Math.floor(gemQuality * 0.5 + 1e-9);
+    if (qualityAttackSpeedInc > 0 && !hasStatSource(db, 'Speed', 'INC', 'Energy Blade')) {
+      db.addMod(mkMod('Speed', 'INC', qualityAttackSpeedInc, src, ModFlag.Attack));
+    }
+
     const postBladeEs = Math.max(0, Math.round(energyShield * (1 - lessEsPct / 100)));
-    const scale = twoHanded ? 2 : 1;
+    const [baseLightningMin, baseLightningMax] = getEnergyBladeBaseLightning(gemLevel);
+    // ModStore.lua:571: PercentStat rounds up via math.ceil(value * stat * percent / 100)
+    const esLightningMin = postBladeEs > 0 ? Math.ceil(2 * (postBladeEs * 0.01) - 1e-9) : 0;
+    const esLightningMax = postBladeEs > 0 ? Math.ceil(40 * (postBladeEs * 0.01) - 1e-9) : 0;
+    // act_int.lua:5121 & CalcOffence.lua:573,582-583: 70% more damage with Two-Handed Weapons
+    const ebDmgInc = db.sum('INC', 'EnergyBladeDamage');
+    const ebDmgMore = db.more('EnergyBladeDamage');
+    const twoHandedMult =
+      twoHanded && !hasStatSource(db, 'EnergyBladeDamage', 'MORE', 'Energy Blade') ? 1.7 : 1;
+    const dmgMod = Math.max(0, (1 + ebDmgInc / 100) * ebDmgMore * twoHandedMult);
     const aps = twoHanded ? 1.6 : 1.7;
     const critChance = 7;
-    const lightningMin = Math.round((2 + 0.02 * postBladeEs) * scale);
-    const lightningMax = Math.round((40 + 0.4 * postBladeEs) * scale);
+    const lightningMin = Math.floor((baseLightningMin + esLightningMin) * dmgMod + 1e-9);
+    const lightningMax = Math.floor((baseLightningMax + esLightningMax) * dmgMod + 1e-9);
 
     energyBladeResult = {
       active: true,
       twoHanded,
+      gemLevel,
       gemQuality,
       lessEsPct,
       postBladeEs,
@@ -1806,8 +2158,8 @@ export function applyPoolConversionsAndKeystones(
       convertedEsToManaBase = Math.round((baseEs * convPct) / 100);
       if (convertedEsToManaBase > 0) {
         db.addMod(mkMod('Mana', 'BASE', convertedEsToManaBase, src));
+        db.addMod(mkMod('EnergyShield', 'BASE', -convertedEsToManaBase, src));
       }
-      db.addMod(mkMod('EnergyShield', 'OVERRIDE', 0, src));
       db.addMod(mkMod('Poe2EldritchBattery', 'FLAG', true, src));
       db.addMod(mkMod('Poe2EldritchBatteryApplied', 'FLAG', true, src));
     }

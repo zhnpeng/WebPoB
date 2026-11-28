@@ -558,6 +558,311 @@ describe('evaluateRadiusAndDistanceJewels', () => {
     });
     expect(res.addedStatLines[0]!.lines).toEqual(['+5 to Strength', '+5 to Intelligence']);
   });
+
+  it('scales Corrupted Magic Time-Lost Jewels via The Adorned inside evaluateRadiusAndDistanceJewels without double-scaling and excludes PoE 2 attribute travel nodes', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe2',
+      version: '0_5',
+      nodes: {
+        1: mkNode(1, 'Socket 1', 'jewel', 0, 0),
+        2: mkNode(2, 'Socket 2', 'jewel', 5000, 0),
+        10: mkNode(10, 'Heartbreaking', 'notable', 500, 0, [
+          '25% increased Critical Damage Bonus',
+          '+10 to Strength',
+        ]),
+        11: mkNode(11, 'Attribute', 'small', 300, 0, ['+5 to any Attribute']),
+        12: mkNode(12, 'Fire Damage', 'small', 400, 0, ['10% increased Fire Damage']),
+      },
+      classStartNodeIds: {},
+    };
+    const active = new Set([1, 2, 10, 11, 12]);
+
+    const adorned = mkItem({
+      id: 'adorned',
+      name: 'The Adorned',
+      baseName: 'Diamond',
+      rarity: 'UNIQUE',
+      corrupted: true,
+      explicits: [
+        '100% increased Effect of Jewel Socket Passive Skills',
+        'containing Corrupted Magic Jewels',
+      ],
+    });
+    const timeLost = mkItem({
+      id: 'tl1',
+      name: 'Potent Time-Lost Sapphire',
+      baseName: 'Time-Lost Sapphire',
+      rarity: 'MAGIC',
+      corrupted: true,
+      explicits: [
+        'Notable Passive Skills in Radius also grant 10% increased Critical Damage Bonus',
+        'Small Passive Skills in Radius also grant +2% to Fire Resistance',
+        '20% increased Effect of Notable Passive Skills in Radius',
+      ],
+    });
+
+    // Direct call (un-pre-scaled): The Adorned +100% doubles 10% -> 20%, +2% -> +4%, 20% notable effect -> 40%
+    const directRes = evaluateRadiusAndDistanceJewels(
+      [
+        { nodeId: 1, jewel: timeLost },
+        { nodeId: 2, jewel: adorned },
+      ],
+      tree,
+      active,
+      0,
+    );
+    expect(directRes.details[0]).toMatchObject({
+      kind: 'time-lost',
+      notablesInRadius: 1,
+      smallsInRadius: 1, // Attribute travel node (11) excluded in PoE 2!
+    });
+    const directLines = directRes.addedStatLines[0]!.lines;
+    expect(directLines).toContain('20% increased Critical Damage Bonus');
+    expect(directLines).toContain('+4% to Fire Resistance');
+    // Notable Heartbreaking (25% Crit Damage Bonus, +10 Str) scaled by +40% (1.4x) -> delta +10% Crit, +4 Str
+    expect(directLines).toContain('10% increased Critical Damage Bonus');
+    expect(directLines).toContain('+4 to Strength');
+
+    // Pre-scaled call (like engine.ts): MUST produce identical lines with ZERO double-scaling!
+    const preScaled = scaleJewelModLines(timeLost, [timeLost, adorned], 'poe2');
+    const preScaledRes = evaluateRadiusAndDistanceJewels(
+      [
+        {
+          nodeId: 1,
+          jewel: { ...timeLost, implicits: preScaled.implicits, explicits: preScaled.explicits },
+        },
+        { nodeId: 2, jewel: adorned },
+      ],
+      tree,
+      active,
+      0,
+    );
+    expect(preScaledRes.addedStatLines[0]!.lines).toEqual(directLines);
+  });
+
+  it('evaluates PoE 1 Transcendent Flesh / Mind per-attribute Allocated and Unallocated radius modifiers', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe1',
+      version: '3_28',
+      nodes: {
+        1: mkNode(1, 'Jewel Socket', 'jewel', 0, 0),
+        10: mkNode(10, 'Alloc Str', 'small', 400, 0, ['+10 to Strength']),
+        11: mkNode(11, 'Unalloc Str 1', 'small', 600, 0, ['+10 to Strength']),
+        12: mkNode(12, 'Unalloc Str 2', 'notable', 800, 0, ['+30 to Strength']),
+        13: mkNode(13, 'Far Str', 'small', 3000, 0, ['+30 to Strength']),
+      },
+      classStartNodeIds: {},
+    };
+    const active = new Set([1, 10]);
+
+    const tFlesh = mkItem({
+      id: 'tf',
+      name: 'Transcendent Flesh',
+      baseName: 'Crimson Jewel',
+      rarity: 'UNIQUE',
+      explicits: [
+        '-1 Strength per 1 Strength on Allocated Passives in Radius',
+        '+7% to Critical Strike Multiplier per 10 Strength on Unallocated Passives in Radius',
+        '1% additional Physical Damage Reduction per 10 Strength on Allocated Passives in Radius',
+      ],
+    });
+
+    const res = evaluateRadiusAndDistanceJewels([{ nodeId: 1, jewel: tFlesh }], tree, active, 0);
+    expect(res.details[0]).toMatchObject({ kind: 'transcendent' });
+    // Allocated in Medium radius (1440px): +10 Str -> -10 Str mod + 1% PDR
+    expect(res.addedMods).toEqual([
+      expect.objectContaining({ name: 'Str', type: 'BASE', value: -10 }),
+    ]);
+    // Unallocated in Medium radius: 10 + 30 = 40 Str -> 4 * 7% = +28% Crit Multi
+    expect(res.addedStatLines[0]!.lines).toEqual([
+      '+28% to Critical Strike Multiplier',
+      '1% additional Physical Damage Reduction',
+    ]);
+  });
+
+  it('evaluates Transcendent Flesh overlapping Lethal Pride (+4/+2 Str small passives) with exact PoB 1 getPerStat floor rounding', () => {
+    // Socket 1 = Transcendent Flesh (Medium 1440px) at (0, 0)
+    // Socket 2 = Lethal Pride (Large 1800px) at (500, 0)
+    const nodes: PassiveTreeData['nodes'] = {
+      1: mkNode(1, 'Jewel Socket', 'jewel', 0, 0),
+      2: mkNode(2, 'Jewel Socket', 'jewel', 500, 0),
+      // Unallocated Notable (+20 Str, untouched by Lethal Pride small-node rule)
+      10: mkNode(10, 'Path of the Warrior', 'notable', 300, 0, ['+20 to Strength']),
+      // Unallocated Attribute small (+10 Str base +2 Str Karui = 12 Str)
+      11: mkNode(11, 'Strength', 'small', 400, 0, ['+10 to Strength']),
+      // Unallocated non-attr small (+4 Str Karui each): 27 nodes -> 27 * 4 = 108 Str
+      // Wait: 20 + 12 + 110 -> let's construct exact 142 Str = 20 (notable) + 12 (attr small) + 27 * 4 (non-attr small) + 2 (tattooed attr small)!
+      12: mkNode(12, 'Tattooed Node', 'small', 450, 0, ['+10 to Strength']),
+      // Allocated non-attr smalls inside both radii: 6 nodes * +4 Str = 24 alloc Str -> -24 Str & +7% Life Recovery Rate
+    };
+    const active = new Set<number>([1, 2]);
+    for (let i = 0; i < 27; i++) {
+      nodes[100 + i] = mkNode(100 + i, `Life ${i}`, 'small', 200 + i * 10, 100, [
+        '5% increased maximum Life',
+      ]);
+    }
+    for (let i = 0; i < 6; i++) {
+      const id = 200 + i;
+      nodes[id] = mkNode(id, `Proj ${i}`, 'small', 200 + i * 10, -100, [
+        '8% increased Projectile Damage',
+      ]);
+      active.add(id);
+    }
+
+    const tree: PassiveTreeData = {
+      game: 'poe1',
+      version: '3_28',
+      nodes,
+      classStartNodeIds: {},
+    };
+
+    const tFlesh = mkItem({
+      id: 'tf',
+      name: 'Transcendent Flesh',
+      baseName: 'Crimson Jewel',
+      rarity: 'UNIQUE',
+      explicits: [
+        '-1 Strength per 1 Strength on Allocated Passives in Radius',
+        '+7% to Critical Strike Multiplier per 10 Strength on Unallocated Passives in Radius',
+        '3% increased Life Recovery Rate per 10 Strength on Allocated Passives in Radius',
+        '2% reduced Life Recovery Rate per 10 Strength on Unallocated Passives in Radius',
+      ],
+    });
+    const lethalPride = mkItem({
+      id: 'lp',
+      name: 'Lethal Pride',
+      baseName: 'Timeless Jewel',
+      rarity: 'UNIQUE',
+      explicits: [
+        'Commanded leadership over 14954 warriors under Kaom',
+        'Passives in radius are Conquered by the Karui',
+      ],
+    });
+
+    // Override node 12 with a non-Str Tattoo (so base Str = 0, Karui adds +2 Str for tattooed small!)
+    const nodeOverrides = {
+      12: { name: 'Tattoo of the Ngamahu Firewalker', stats: ['+6% to Fire Resistance'] },
+    };
+
+    const res = evaluateRadiusAndDistanceJewels(
+      [
+        { nodeId: 1, jewel: tFlesh },
+        { nodeId: 2, jewel: lethalPride },
+      ],
+      tree,
+      active,
+      0,
+      undefined,
+      nodeOverrides,
+    );
+
+    // Unallocated Str = 20 (notable) + (10 + 2) (Strength small) + (0 + 2) (tattooed small) + 27 * 4 (non-attr smalls) = 142
+    // PoB 1 ModParser.lua:6504 exact floor: floor(142 * 7 / 10) = +99% CritMulti, floor(142 * 2 / 10) = 28% reduced Life Recovery Rate
+    // Allocated Str = 6 * 4 = 24 -> -24 Str mod and floor(24 * 3 / 10) = 7% increased Life Recovery Rate
+    expect(res.addedMods).toEqual([
+      expect.objectContaining({ name: 'Str', type: 'BASE', value: -24 }),
+    ]);
+    expect(res.addedStatLines[0]!.lines).toEqual([
+      '+99% to Critical Strike Multiplier',
+      '7% increased Life Recovery Rate',
+      '28% reduced Life Recovery Rate',
+    ]);
+  });
+
+  it('evaluates Foulborn The Red Dream (including Ngamahu Firewalker Tattoos) and Nightmare resistance-in-radius conversions', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe1',
+      version: '3_30',
+      nodes: {
+        1: mkNode(1, 'Jewel Socket', 'jewel', 0, 0),
+        10: mkNode(10, 'Barbarism', 'notable', 600, 0, ['8% increased maximum Life', '+8% to Fire Resistance']),
+        11: mkNode(11, 'Diamond Skin', 'notable', 1600, 0, ['+15% to all Elemental Resistances']),
+        12: mkNode(12, 'Strength', 'small', 900, 0, ['+10 to Strength']),
+        13: mkNode(13, 'Out of Large Radius', 'notable', 2000, 0, ['+20% to Fire Resistance']),
+      },
+      classStartNodeIds: {},
+    };
+    const active = new Set([1, 10, 11, 12, 13]);
+    const nodeOverrides: Record<number, { name?: string; stats?: string[] }> = {
+      12: { name: 'Tattoo of the Ngamahu Firewalker', stats: ['+6% to Fire Resistance'] },
+    };
+
+    const foulbornRedDream = mkItem({
+      id: 'frd',
+      name: 'Foulborn The Red Dream',
+      baseName: 'Crimson Jewel',
+      rarity: 'UNIQUE',
+      explicits: [
+        'Gain 8% of Fire Damage as Extra Chaos Damage',
+        '{mutated}Passives granting Fire Resistance or all Elemental Resistances in Radius',
+        'also grant increased Maximum Life at 50% of its value',
+      ],
+    });
+
+    const res = evaluateRadiusAndDistanceJewels(
+      [{ nodeId: 1, jewel: foulbornRedDream }],
+      tree,
+      active,
+      0,
+      undefined,
+      nodeOverrides,
+    );
+    expect(res.details[0]).toMatchObject({
+      kind: 'resist-conversion',
+      radiusLabel: 'Large',
+      radiusPx: 1800,
+    });
+    // Per-mod Math.floor(val * 0.5): Barbarism (8->4) + Diamond Skin (15->7) + Ngamahu Tattoo (6->3) = 14% INC Life!
+    // Node 13 at 2000px (> 1800px Large radius) is excluded.
+    expect(res.addedMods).toEqual([
+      expect.objectContaining({ name: 'Life', type: 'INC', value: 14 }),
+    ]);
+
+    const blueNightmare = mkItem({
+      id: 'bn',
+      name: 'The Blue Nightmare',
+      baseName: 'Cobalt Jewel',
+      rarity: 'UNIQUE',
+      explicits: [
+        'Passives granting Lightning Resistance or all Elemental Resistances in Radius',
+        'also grant Chance to Block Spell Damage at 50% of its value',
+      ],
+    });
+    const resBlue = evaluateRadiusAndDistanceJewels(
+      [{ nodeId: 1, jewel: blueNightmare }],
+      tree,
+      active,
+      0,
+      undefined,
+      nodeOverrides,
+    );
+    // Only Diamond Skin (+15% all Ele -> floor(15*0.5) = 7% Spell Block) matches Lightning/All Ele
+    expect(resBlue.addedMods).toEqual([
+      expect.objectContaining({ name: 'SpellBlockChance', type: 'BASE', value: 7 }),
+    ]);
+
+    const greenNightmare = mkItem({
+      id: 'gn',
+      name: 'The Green Nightmare',
+      baseName: 'Viridian Jewel',
+      rarity: 'UNIQUE',
+      explicits: [
+        'Passives granting Cold Resistance or all Elemental Resistances in Radius',
+        'also grant Chance to Suppress Spell Damage at 50% of its value',
+      ],
+    });
+    const resGreen = evaluateRadiusAndDistanceJewels(
+      [{ nodeId: 1, jewel: greenNightmare }],
+      tree,
+      active,
+      0,
+      undefined,
+      nodeOverrides,
+    );
+    expect(resGreen.addedMods).toEqual([
+      expect.objectContaining({ name: 'SpellSuppressionChance', type: 'BASE', value: 7 }),
+    ]);
+  });
 });
 
 describe('applyClusterJewelAllocationFix', () => {

@@ -4889,4 +4889,74 @@ Implicits: 0
   <Notes/>
 </PathOfBuilding2>`,
   },
+  {
+    id: 'poe2_warrior_bringer_of_rain_dual_2h_mace',
+    title: 'PoE 2 — Regression: Lv.90 Warrior The Bringer of Rain (祭礼之雨) Dual-Wield 2H Maces + Disabled Body Armour',
+    game: 'poe2',
+    xml: `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding2>
+  <Build level="90" targetVersion="0_1" className="Warrior" ascendClassName="None" mainSocketGroup="1" buildName="Regression: PoE2 The Bringer of Rain Dual-Wield 2H Maces"/>
+  <Tree activeSpec="1">
+    <Spec title="Warrior" treeVersion="0_5" classId="6" classInternalId="6" ascendClassId="0" nodes="47175"/>
+  </Tree>
+  <Skills activeSkillSet="1" defaultGemQuality="0">
+    <SkillSet id="1">
+      <Skill enabled="true" mainActiveSkill="1" mainActiveSkillCalcs="1" set1="true" set2="true" label="Volcanic Fissure">
+        <Gem gemId="Metadata/Items/Gems/SkillGemVolcanicFissure" skillId="VolcanicFissurePlayer" nameSpec="Volcanic Fissure" variantId="VolcanicFissure" level="20" quality="0" enabled="true"/>
+      </Skill>
+    </SkillSet>
+  </Skills>
+  <Items activeItemSet="1">
+    <Item id="1">
+Rarity: UNIQUE
+The Bringer of Rain
+Decorated Helm
+Quality: 20
+Implicits: 0
+700% increased Armour and Evasion
++250 to Accuracy Rating
+100% increased Critical Hit Chance
+45 Life Regeneration per second
+Can't use Body Armour
+You can wield Two-Handed Axes, Maces and Swords in one hand
+This item gains bonuses from Socketed Items as though it was a Body Armour
+    </Item>
+    <Item id="2">
+Rarity: RARE
+Titan Maul Alpha
+Aberrant Sledge
+Quality: 20
+Implicits: 0
+120% increased Physical Damage
+15% increased Attack Speed
+    </Item>
+    <Item id="3">
+Rarity: RARE
+Titan Maul Beta
+Cultist Greathammer
+Quality: 20
+Implicits: 0
+140% increased Physical Damage
+20% increased Attack Speed
+    </Item>
+    <Item id="4">
+Rarity: RARE
+Disabled Chest
+Iron Cuirass
+Quality: 20
+Implicits: 0
++200 to maximum Life
++40% to Fire Resistance
+    </Item>
+    <ItemSet id="1">
+      <Slot name="Helmet" itemId="1"/>
+      <Slot name="Weapon 1" itemId="2"/>
+      <Slot name="Weapon 2" itemId="3"/>
+      <Slot name="Body Armour" itemId="4"/>
+    </ItemSet>
+  </Items>
+  <Config activeConfigSet="1"><ConfigSet id="1"/></Config>
+  <Notes/>
+</PathOfBuilding2>`,
+  },
 ];

@@ -10,8 +10,8 @@ describe('Round 2 Codec Extensions: multi-part skills, Vaal globals, PoE 2 statS
   <Tree activeSpec="1"><Spec title="Default" treeVersion="3_30" nodes="" /></Tree>
   <Skills activeSkillSet="1">
     <SkillSet id="1">
-      <Skill enabled="true" slot="Body Armour" label="Main Skill" skillPart="1" skillPartCalcs="2" source="Item:1:Body Armour">
-        <Gem nameSpec="Ice Nova of Frostbolts" level="21" quality="20" enabled="true" skillPart="1" skillPartCalcs="2" enableGlobal1="true" enableGlobal2="false" />
+      <Skill enabled="true" slot="Body Armour" label="Main Skill" skillPart="2" skillPartCalcs="1" source="Item:1:Body Armour">
+        <Gem nameSpec="Ice Nova of Frostbolts" level="21" quality="20" enabled="true" skillPartCalcs="2" enableGlobal1="true" enableGlobal2="false" />
         <Gem nameSpec="Cyclone" level="20" quality="0" enabled="true" skillPart="3" enableGlobal1="false" enableGlobal2="true" />
       </Skill>
     </SkillSet>
@@ -65,8 +65,8 @@ describe('Round 2 Codec Extensions: multi-part skills, Vaal globals, PoE 2 statS
   <Tree activeSpec="1"><Spec title="Default" treeVersion="0_5" nodes="" /></Tree>
   <Skills activeSkillSet="1">
     <SkillSet id="1">
-      <Skill enabled="true" label="Twister Setup" statSetIndex="1" statSetIndexCalcs="2" set1="true" set2="false">
-        <Gem nameSpec="Spark" level="20" quality="20" enabled="true" statSetIndex="1" statSetIndexCalcs="2" count="3" />
+      <Skill enabled="true" label="Twister Setup" statSetIndex="2" statSetIndexCalcs="1" set1="true" set2="false">
+        <Gem nameSpec="Spark" level="20" quality="20" enabled="true" statSetIndexCalcs="2" count="3" />
       </Skill>
     </SkillSet>
   </Skills>
@@ -179,5 +179,113 @@ Implicits: 1
     expect(reparsed!.catalyst).toBe('Fertile');
     expect(reparsed!.catalystQuality).toBe(20);
     expect(reparsed!.socketCount).toBe(4);
+  });
+
+  it('resolves default enemyLevel, enemyArmour & enemyEvasion per PoB 2 ConfigOptions.lua & PoB 1 CalcSetup.lua', () => {
+    // 1. PoE 2 Pinnacle default (even when character level < 82) -> enemyLevel=82, armour=8063, evasion=1175
+    const poe2Pinnacle = xmlToBuild(`<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding2>
+  <Build level="71" className="Druid" ascendClassName="Shaman" mainSocketGroup="1" />
+  <Tree activeSpec="1"><Spec treeVersion="0_5" nodes="" /></Tree>
+  <Config activeConfigSet="1"><ConfigSet id="1"></ConfigSet></Config>
+</PathOfBuilding2>`);
+    expect(poe2Pinnacle.config.enemyIsBoss).toBe('Pinnacle');
+    expect(poe2Pinnacle.config.enemyLevel).toBe(82);
+    expect(poe2Pinnacle.config.enemyArmour).toBe(8063);
+    expect(poe2Pinnacle.config.enemyEvasion).toBe(1175);
+
+    // 2. PoE 2 Normal enemy (lv77 character, no explicit enemyLevel) -> enemyLevel=77, 1.0x monster table (4053 / 853)
+    const poe2NormalLv77 = xmlToBuild(`<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding2>
+  <Build level="77" className="Warrior" ascendClassName="Smith of Kitava" mainSocketGroup="1" />
+  <Tree activeSpec="1"><Spec treeVersion="0_5" nodes="" /></Tree>
+  <Config activeConfigSet="1"><ConfigSet id="1">
+    <Input name="enemyIsBoss" string="None" />
+  </ConfigSet></Config>
+</PathOfBuilding2>`);
+    expect(poe2NormalLv77.config.enemyLevel).toBe(77);
+    expect(poe2NormalLv77.config.enemyArmour).toBe(4053);
+    expect(poe2NormalLv77.config.enemyEvasion).toBe(853);
+
+    // 3. PoE 2 Normal enemy (lv95 character -> capped at MaxEnemyLevel 85) -> 6355 / 996
+    const poe2NormalLv95 = xmlToBuild(`<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding2>
+  <Build level="95" className="Ranger" ascendClassName="Deadeye" mainSocketGroup="1" />
+  <Tree activeSpec="1"><Spec treeVersion="0_5" nodes="" /></Tree>
+  <Config activeConfigSet="1"><ConfigSet id="1">
+    <Input name="enemyIsBoss" string="None" />
+  </ConfigSet></Config>
+</PathOfBuilding2>`);
+    expect(poe2NormalLv95.config.enemyLevel).toBe(85);
+    expect(poe2NormalLv95.config.enemyArmour).toBe(6355);
+    expect(poe2NormalLv95.config.enemyEvasion).toBe(996);
+
+    // 4. PoE 2 explicit enemyLevel=64 Normal enemy -> exact 1.0x monster table (1906 / 648)
+    const poe2NormalLv64 = xmlToBuild(`<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding2>
+  <Build level="71" className="Warrior" ascendClassName="Titan" mainSocketGroup="1" />
+  <Tree activeSpec="1"><Spec treeVersion="0_5" nodes="" /></Tree>
+  <Config activeConfigSet="1"><ConfigSet id="1">
+    <Input name="enemyIsBoss" string="None" />
+    <Input name="enemyLevel" number="64" />
+  </ConfigSet></Config>
+</PathOfBuilding2>`);
+    expect(poe2NormalLv64.config.enemyLevel).toBe(64);
+    expect(poe2NormalLv64.config.enemyArmour).toBe(1906);
+    expect(poe2NormalLv64.config.enemyEvasion).toBe(648);
+
+    // 5. PoE 2 Standard Boss (Guardian) explicit enemyLevel=80 -> exact 1.0x monster table (4803 / 905)
+    const poe2BossLv80 = xmlToBuild(`<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding2>
+  <Build level="93" className="Huntress" ascendClassName="Ritualist" mainSocketGroup="1" />
+  <Tree activeSpec="1"><Spec treeVersion="0_5" nodes="" /></Tree>
+  <Config activeConfigSet="1"><ConfigSet id="1">
+    <Input name="enemyIsBoss" string="Boss" />
+    <Input name="enemyLevel" number="80" />
+  </ConfigSet></Config>
+</PathOfBuilding2>`);
+    expect(poe2BossLv80.config.enemyLevel).toBe(80);
+    expect(poe2BossLv80.config.enemyArmour).toBe(4803);
+    expect(poe2BossLv80.config.enemyEvasion).toBe(905);
+
+    // 6. PoE 1 low-level Normal enemy defaults to min(84, level); Pinnacle defaults to 84
+    const poe1Normal = xmlToBuild(`<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding>
+  <Build level="70" className="Witch" ascendClassName="Necromancer" mainSocketGroup="1" />
+  <Tree activeSpec="1"><Spec treeVersion="3_30" nodes="" /></Tree>
+  <Config activeConfigSet="1"><ConfigSet id="1">
+    <Input name="enemyIsBoss" string="None" />
+  </ConfigSet></Config>
+</PathOfBuilding>`);
+    expect(poe1Normal.config.enemyLevel).toBe(70);
+  });
+
+  it('skips removed PoE 2 v0.1 Cruel quest rewards while preserving Act 1-4 / Interlude quests and <AttributeOverride> cleanly', () => {
+    const build = xmlToBuild(`<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding2>
+  <Build level="95" className="Monk" ascendClassName="Invoker" mainSocketGroup="1" />
+  <Tree activeSpec="1">
+    <Spec treeVersion="0_1" nodes="48773,58814,59538">
+      <Overrides>
+        <AttributeOverride dexNodes="48773" intNodes="58814" strNodes="59538" />
+      </Overrides>
+    </Spec>
+  </Tree>
+  <Config activeConfigSet="1">
+    <ConfigSet id="1">
+      <Input name="questAct3CruelThe Venom Crypts" string="+5 to All Attributes" />
+      <Input name="questAct3NormalThe Venom Crypts" string="25% increased Mana Regeneration Rate" />
+      <Input name="questAct 4Halls Of The DeadNgamahu&apos;s Test" string="+5 to Strength" />
+    </ConfigSet>
+  </Config>
+</PathOfBuilding2>`);
+    expect(build.tree.attributeOverrides).toEqual({
+      48773: 'dex',
+      58814: 'int',
+      59538: 'str',
+    });
+    expect(build.config.customMods).not.toContain('+5 to All Attributes');
+    expect(build.config.customMods).toContain('25% increased Mana Regeneration Rate');
+    expect(build.config.customMods).toContain('+5 to Strength');
   });
 });

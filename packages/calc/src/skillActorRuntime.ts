@@ -958,6 +958,205 @@ function normalizeEnemyStat(mod: Mod, game: GameId = 'poe1'): Mod[] {
   return [mod];
 }
 
+const PLAYER_SCOPED_ENEMY_STATS = new Set([
+  // PoB player-side ailment duration modifiers (stored on player/skill ModDB, NOT enemyDB)
+  'EnemyIgniteDuration',
+  'EnemyBleedDuration',
+  'EnemyPoisonDuration',
+  'EnemyAilmentDuration',
+  'EnemyElementalAilmentDuration',
+  'EnemyChaosAilmentDuration',
+  'EnemyChillDuration',
+  'EnemyFreezeDuration',
+  'EnemyShockDuration',
+  'EnemyBrittleDuration',
+  'EnemyScorchDuration',
+  'EnemySapDuration',
+  'EnemyStunDuration',
+  // PoB player-side ailment infliction chance & knockback modifiers
+  'EnemyIgniteChance',
+  'EnemyBleedChance',
+  'EnemyPoisonChance',
+  'EnemyFreezeChance',
+  'EnemyShockChance',
+  'EnemyScorchChance',
+  'EnemyBrittleChance',
+  'EnemySapChance',
+  'EnemyKnockbackChance',
+  'EnemyKnockbackDistance',
+  // PoB player-side non-damaging ailment effect / magnitude / buildup modifiers
+  'EnemyShockEffect',
+  'EnemyChillEffect',
+  'EnemyFreezeEffect',
+  'EnemyScorchEffect',
+  'EnemyBrittleEffect',
+  'EnemySapEffect',
+  'EnemyShockMagnitude',
+  'EnemyChillMagnitude',
+  'EnemyHeavyStunBuildup',
+  'EnemyFreezeBuildup',
+  'EnemyElectrocuteBuildup',
+  'EnemyPinBuildup',
+  'EnemyStunThreshold',
+  // PoB player-side curse limit, Yoke of Suffering & The Tempest Rising flags
+  'EnemyCurseLimit',
+  'EnemyDamageTakenPerAilmentType',
+  'EnemyAffectedByEleAilmentCountsAsMoving',
+]);
+
+const WEAPON_MOD_FLAGS =
+  ModFlag.Weapon1H |
+  ModFlag.Weapon2H |
+  ModFlag.WeaponRanged |
+  ModFlag.Bow |
+  ModFlag.Wand |
+  ModFlag.Sword |
+  ModFlag.Axe |
+  ModFlag.Mace |
+  ModFlag.Staff |
+  ModFlag.Dagger |
+  ModFlag.Claw |
+  ModFlag.Crossbow |
+  ModFlag.Quarterstaff |
+  ModFlag.Talisman;
+
+const DAMAGING_AILMENT_KW_BITS = [KeywordFlag.Ignite, KeywordFlag.Bleed, KeywordFlag.Poison] as const;
+const DAMAGING_AILMENT_KW_MASK = KeywordFlag.Ignite | KeywordFlag.Bleed | KeywordFlag.Poison;
+const TRAP_MINE_KW_MASK = KeywordFlag.Trap | KeywordFlag.Mine;
+
+function splitMultiKeywordMod(mod: Mod): Mod[] {
+  let out: Mod[] = [mod];
+  const ailBits = mod.keywordFlags & DAMAGING_AILMENT_KW_MASK;
+  if (ailBits !== 0 && (ailBits & (ailBits - 1)) !== 0) {
+    const rest = mod.keywordFlags & ~DAMAGING_AILMENT_KW_MASK;
+    out = [];
+    for (const bit of DAMAGING_AILMENT_KW_BITS) {
+      if ((ailBits & bit) !== 0) {
+        out.push({ ...mod, keywordFlags: rest | bit });
+      }
+    }
+  }
+  const expanded: Mod[] = [];
+  for (const m of out) {
+    if ((m.keywordFlags & TRAP_MINE_KW_MASK) === TRAP_MINE_KW_MASK) {
+      const rest = m.keywordFlags & ~TRAP_MINE_KW_MASK;
+      expanded.push({ ...m, keywordFlags: rest | KeywordFlag.Trap });
+      expanded.push({ ...m, keywordFlags: rest | KeywordFlag.Mine });
+    } else {
+      expanded.push(m);
+    }
+  }
+  return expanded;
+}
+
+function normalizeAilmentScopedMod(mod: Mod): Mod {
+  let flags = mod.flags;
+  let kw = mod.keywordFlags;
+  let tags = mod.tags;
+  if ((flags & ModFlag.Attack) !== 0) {
+    flags &= ~ModFlag.Attack;
+    kw |= KeywordFlag.Attack;
+  }
+  if ((flags & ModFlag.Spell) !== 0) {
+    flags &= ~ModFlag.Spell;
+    kw |= KeywordFlag.Spell;
+  }
+  if ((flags & ModFlag.Melee) !== 0) {
+    flags &= ~ModFlag.Melee;
+    tags = [...(tags ?? []), { type: 'Condition' as const, var: 'MeleeAilment' }];
+  }
+  flags = (flags & ~(ModFlag.Hit | ModFlag.Area | ModFlag.Projectile)) | ModFlag.Ailment;
+  return {
+    ...mod,
+    flags,
+    keywordFlags: kw,
+    ...(tags ? { tags } : {}),
+  };
+}
+
+const INHERENT_DOT_OR_AILMENT_STATS = new Set([
+  'DotDamage',
+  'BleedDamage',
+  'PoisonDamage',
+  'IgniteDamage',
+  'DotMultiplier',
+  'PhysicalDotMultiplier',
+  'FireDotMultiplier',
+  'ColdDotMultiplier',
+  'LightningDotMultiplier',
+  'ChaosDotMultiplier',
+  'BleedDotMultiplier',
+  'PoisonDotMultiplier',
+  'IgniteDotMultiplier',
+  'CritAilmentDotMultiplier',
+  'AilmentEffect',
+  'AilmentMagnitude',
+  'PoisonMagnitude',
+  'BleedingMagnitude',
+  'BleedMagnitude',
+  'IgniteMagnitude',
+]);
+
+function expandPlayerModFlags(mod: Mod): Mod[] {
+  const results: Mod[] = [];
+  const hasHit = (mod.flags & ModFlag.Hit) !== 0;
+  const hasAilment = (mod.flags & ModFlag.Ailment) !== 0;
+  const hasDeliveryNonWeapon =
+    (mod.flags & (ModFlag.Hit | ModFlag.Melee | ModFlag.Area | ModFlag.Projectile)) !== 0;
+
+  if (hasHit && hasAilment) {
+    // Player/tree/item "with Hits and Ailments" mod -> applies to BOTH Hits and Ailments
+    results.push({ ...mod, flags: mod.flags & ~ModFlag.Ailment });
+    results.push(normalizeAilmentScopedMod(mod));
+  } else if (
+    hasAilment &&
+    !hasHit &&
+    (mod.flags & (ModFlag.Attack | ModFlag.Spell | ModFlag.Melee | ModFlag.Area | ModFlag.Projectile)) !== 0
+  ) {
+    // Player/tree/item "with Ailments from Attack/Spell/Melee Skills" -> preserve delivery as KeywordFlag / MeleeAilment condition
+    results.push(normalizeAilmentScopedMod(mod));
+  } else if (
+    INHERENT_DOT_OR_AILMENT_STATS.has(mod.name) &&
+    (mod.flags & (ModFlag.Attack | ModFlag.Spell | ModFlag.Melee)) !== 0
+  ) {
+    // Inherently DoT/Ailment stats tagged with Attack/Spell/Melee by parser (e.g. "+26% to DoT Multi with Attack Skills",
+    // "12% increased DoT with Bow Skills") -> convert Attack/Spell to KeywordFlag so they match DoT & Ailment queries.
+    let flags = mod.flags;
+    let kw = mod.keywordFlags;
+    let tags = mod.tags;
+    if ((flags & ModFlag.Attack) !== 0) {
+      flags &= ~ModFlag.Attack;
+      kw |= KeywordFlag.Attack;
+    }
+    if ((flags & ModFlag.Spell) !== 0) {
+      flags &= ~ModFlag.Spell;
+      kw |= KeywordFlag.Spell;
+    }
+    if ((flags & ModFlag.Melee) !== 0) {
+      flags &= ~ModFlag.Melee;
+      tags = [...(tags ?? []), { type: 'Condition' as const, var: 'MeleeAilment' }];
+    }
+    results.push({ ...mod, flags, keywordFlags: kw, ...(tags ? { tags } : {}) });
+  } else if (
+    !hasDeliveryNonWeapon &&
+    (mod.flags & ModFlag.Attack) !== 0 &&
+    ((mod.flags & WEAPON_MOD_FLAGS) !== 0 ||
+      (mod.name === 'ElementalDamage' && mod.flags === ModFlag.Attack))
+  ) {
+    // PoB1 parity for parser-emitted weapon mods ("30% inc Phys Damage with Axes", "Axe Attacks deal X% with Hits & Ailments")
+    // and WED ("35% inc Elemental Damage with Attack Skills"): use KeywordFlag.Attack so they scale both Hits and Attack Ailments
+    // without allowing generic Attack/Melee/Area/Projectile hit mods to double-dip into ailments.
+    results.push({
+      ...mod,
+      flags: mod.flags & ~ModFlag.Attack,
+      keywordFlags: mod.keywordFlags | KeywordFlag.Attack,
+    });
+  } else {
+    results.push(mod);
+  }
+  return results.flatMap(splitMultiKeywordMod);
+}
+
 export function isMinionRoutedMod(mod: Mod, target?: ActorTarget): boolean {
   if (target === 'minion') return true;
   if (target === 'enemy' || target === 'player' || target === 'skill' || target === 'parent') return false;
@@ -968,12 +1167,14 @@ export function isMinionRoutedMod(mod: Mod, target?: ActorTarget): boolean {
 export function isEnemyRoutedMod(mod: Mod, target?: ActorTarget): boolean {
   if (target === 'enemy') return true;
   if (target === 'minion' || target === 'player' || target === 'skill' || target === 'parent') return false;
+  if (PLAYER_SCOPED_ENEMY_STATS.has(mod.name)) return false;
   if (mod.name.startsWith('Enemy') && mod.name.length > 5) return true;
   if (ENEMY_DEBUFF_STAT_NAMES.has(mod.name)) return true;
   if (
     (mod.keywordFlags & KeywordFlag.Curse) !== 0 &&
     (mod.name.endsWith('Resist') ||
       mod.name.includes('DamageTaken') ||
+      mod.name === 'BuffExpireFaster' ||
       mod.name === 'CritChance' ||
       mod.name === 'CritMultiplier' ||
       mod.name === 'SelfCritChance' ||
@@ -1050,7 +1251,7 @@ export function routeModToActorBuses(
     return 'enemy';
   }
 
-  buses.playerDb.addMod(mod);
+  buses.playerDb.addMods(expandPlayerModFlags(mod));
   return 'player';
 }
 
@@ -1091,7 +1292,8 @@ export function splitModDBIntoActorBuses(
 
   for (const [, list] of sourceDb.entriesByPrefix('')) {
     for (const mod of list) {
-      routeModToActorBuses(buses, mod, { ...opts, spiritualAid, spiritualCommand });
+      const modTarget = (mod as Mod & { target?: ActorTarget }).target;
+      routeModToActorBuses(buses, mod, { ...opts, target: modTarget, spiritualAid, spiritualCommand });
     }
   }
   return buses;
@@ -1214,42 +1416,108 @@ export interface InjectCompiledGemModsOptions {
  * (`skillDb`, `enemyDb`, `minionDb`) without any regex parsing.
  */
 function expandCanonicalCompiledMod(mod: Mod, target?: ActorTarget): Mod[] {
-  const convMatch = mod.name.match(
-    /^Skill(Physical|Lightning|Cold|Fire)Damage(ConvertTo|GainAs)(Lightning|Cold|Fire|Chaos)$/,
-  );
-  if (convMatch) {
-    return [{ ...mod, name: `${convMatch[1]}Damage${convMatch[2]}${convMatch[3]}` }];
+  // Normalize PoB compiled `ModFlag.MeleeHit` ailment mods (compiled as `ModFlag.Melee | ModFlag.Hit` + ailment scope,
+  // e.g. Melee Physical Damage f=36 k=Bleed|Poison, Fortify f=292) so they apply strictly to Melee ailments and never double-dip hits.
+  let normalizedMod = mod;
+  if (
+    target !== 'enemy' &&
+    (mod.flags & (ModFlag.Melee | ModFlag.Hit)) === (ModFlag.Melee | ModFlag.Hit) &&
+    ((mod.flags & ModFlag.Ailment) !== 0 || (mod.keywordFlags & DAMAGING_AILMENT_KW_MASK) !== 0)
+  ) {
+    normalizedMod = normalizeAilmentScopedMod(mod);
   }
-  if (mod.name === 'CannotMultiplePoison' && mod.type === 'FLAG' && mod.value === true) {
-    return [mod, { ...mod, name: 'CannotPoisonAlreadyPoisoned' }];
+
+  const expandName = (m: Mod): Mod[] => {
+    const convMatch = m.name.match(
+      /^Skill(Physical|Lightning|Cold|Fire)Damage(ConvertTo|GainAs)(Lightning|Cold|Fire|Chaos)$/,
+    );
+    if (convMatch) {
+      return [{ ...m, name: `${convMatch[1]}Damage${convMatch[2]}${convMatch[3]}` }];
+    }
+    if (m.name === 'CannotMultiplePoison' && m.type === 'FLAG' && m.value === true) {
+      return [m, { ...m, name: 'CannotPoisonAlreadyPoisoned' }];
+    }
+    if (target !== 'enemy') {
+      if (m.name === 'EnemyIgniteChance') return [{ ...m, name: 'IgniteChance' }];
+      if (m.name === 'EnemyBleedChance') return [{ ...m, name: 'BleedChance' }];
+      if (m.name === 'EnemyPoisonChance') return [{ ...m, name: 'PoisonChance' }];
+      if (m.name === 'EnemyFreezeChance') return [{ ...m, name: 'FreezeChance' }];
+      if (m.name === 'EnemyShockChance') return [{ ...m, name: 'ShockChance' }];
+    }
+    if (target !== 'enemy' && m.name === 'ElementalResist') {
+      return [
+        { ...m, name: 'FireResist' },
+        { ...m, name: 'ColdResist' },
+        { ...m, name: 'LightningResist' },
+      ];
+    }
+    if (target !== 'enemy' && m.name === 'ElementalResistMax') {
+      return [
+        { ...m, name: 'FireResistMax' },
+        { ...m, name: 'ColdResistMax' },
+        { ...m, name: 'LightningResistMax' },
+      ];
+    }
+    if (m.name === 'AllAttributes') {
+      return [
+        { ...m, name: 'Str' },
+        { ...m, name: 'Dex' },
+        { ...m, name: 'Int' },
+      ];
+    }
+    return [m];
+  };
+
+  return expandName(normalizedMod).flatMap(splitMultiKeywordMod);
+}
+
+const GEM_QUALITY_SOURCE_SUFFIX_RE = /\s+\(Q\d+(?:\.\d+)?\)$/;
+
+function serializeModTagsKey(tags: readonly ModTag[] | undefined): string {
+  if (!tags || tags.length === 0) return '';
+  return JSON.stringify(tags);
+}
+
+/**
+ * Matches PoB `CalcActiveSkill.lua`: a gem's base level stat and quality stat for the
+ * identical stat bucket (`MORE` modifier with identical name/flags/keywordFlags/condition/tags
+ * from `"Skill: X"` and `"Skill: X (Q...)"` or `"Support: X"` and `"Support: X (Q...)"`)
+ * sum additively into one `MORE` modifier rather than multiplying separately (e.g.
+ * `Lacerate of Haemorrhage` 138% + Q50 100% = 238% more Ailment Damage, not 2.38 × 2.00;
+ * `Boneshatter of Complex Trauma` 15% + Q20 5% = 20% more Damage per Trauma).
+ */
+function coalesceSameGemQualityMoreMod(targetDb: ModDB, mod: Mod): boolean {
+  if (mod.type !== 'MORE' || typeof mod.value !== 'number') return false;
+  const modSrc = mod.source ?? '';
+  if (!modSrc) return false;
+  const baseSrc = modSrc.replace(GEM_QUALITY_SOURCE_SUFFIX_RE, '');
+  const modIsQuality = baseSrc !== modSrc;
+  const modTagsKey = serializeModTagsKey(mod.tags);
+  const modCond = mod.condition ?? '';
+
+  for (const [key, bucket] of targetDb.entriesByPrefix(mod.name)) {
+    if (key !== mod.name) continue;
+    for (let i = 0; i < bucket.length; i++) {
+      const existing = bucket[i]!;
+      if (existing.type !== 'MORE' || typeof existing.value !== 'number') continue;
+      if (existing.flags !== mod.flags || existing.keywordFlags !== mod.keywordFlags) continue;
+      if ((existing.condition ?? '') !== modCond) continue;
+      const existingSrc = existing.source ?? '';
+      const existingBaseSrc = existingSrc.replace(GEM_QUALITY_SOURCE_SUFFIX_RE, '');
+      if (existingBaseSrc !== baseSrc) continue;
+      const existingIsQuality = existingBaseSrc !== existingSrc;
+      if (existingIsQuality === modIsQuality) continue;
+      if (serializeModTagsKey(existing.tags) !== modTagsKey) continue;
+      // Clone-safe replacement so cloned ModDBs never alias mutated Mod objects
+      bucket[i] = {
+        ...existing,
+        value: existing.value + mod.value,
+        source: baseSrc,
+      };
+      return true;
+    }
   }
-  if (target !== 'enemy') {
-    if (mod.name === 'EnemyIgniteChance') return [{ ...mod, name: 'IgniteChance' }];
-    if (mod.name === 'EnemyFreezeChance') return [{ ...mod, name: 'FreezeChance' }];
-    if (mod.name === 'EnemyShockChance') return [{ ...mod, name: 'ShockChance' }];
-  }
-  if (target !== 'enemy' && mod.name === 'ElementalResist') {
-    return [
-      { ...mod, name: 'FireResist' },
-      { ...mod, name: 'ColdResist' },
-      { ...mod, name: 'LightningResist' },
-    ];
-  }
-  if (target !== 'enemy' && mod.name === 'ElementalResistMax') {
-    return [
-      { ...mod, name: 'FireResistMax' },
-      { ...mod, name: 'ColdResistMax' },
-      { ...mod, name: 'LightningResistMax' },
-    ];
-  }
-  if (mod.name === 'AllAttributes') {
-    return [
-      { ...mod, name: 'Str' },
-      { ...mod, name: 'Dex' },
-      { ...mod, name: 'Int' },
-    ];
-  }
-  return [mod];
+  return false;
 }
 
 export function injectCompiledGemMods(
@@ -1303,6 +1571,15 @@ export function injectCompiledGemMods(
     };
 
     for (const mod of expandCanonicalCompiledMod(baseMod, cm.target)) {
+      if (
+        mod.type === 'MORE' &&
+        cm.target !== 'enemy' &&
+        cm.target !== 'minion' &&
+        coalesceSameGemQualityMoreMod(skillDb, mod)
+      ) {
+        playerCount++;
+        continue;
+      }
       const dest = routeModToActorBuses(buses, mod, { target: cm.target, game: opts.game });
       if (dest === 'player') playerCount++;
       else if (dest === 'enemy') enemyCount++;
@@ -1340,11 +1617,15 @@ export interface AuthenticDotInput {
   enemyDb: ModDB;
   /** Pre-INC/MORE converted base average hit damage per DamageType (for PoE 1 ailments). */
   baseDamageByType: Partial<Record<DamageType, number>>;
+  /** Optional pre-INC/MORE converted base [min, max] per DamageType (for PoE 1 Volatility / Ryslatha top-roll selection). */
+  baseDamageRangeByType?: Partial<Record<DamageType, [number, number]>>;
   /**
    * PoE 2 post-INC/MORE, pre-enemy-mitigation average hit damage per DamageType
    * (used for PoE 2 Poison/Bleed/Ignite magnitude scaling; falls back to scaling `baseDamageByType` if omitted).
    */
   preMitigationHitByType?: Partial<Record<DamageType, number>>;
+  /** Optional min/max/average hit damage ranges for PoE 2 over-stacking roll uplift. */
+  hitDamageRangeByType?: Partial<Record<DamageType, { min: number; max: number; average: number }>>;
   /** Skill ModFlags (e.g. `ModFlag.Attack | ModFlag.Melee | ModFlag.Hit`). */
   flags?: number;
   /** Skill KeywordFlags. */
@@ -1357,6 +1638,8 @@ export interface AuthenticDotInput {
   critChancePct?: number;
   /** Total critical strike multiplier percentage (e.g. 150 in PoE 1, 200 in PoE 2). */
   critMultiplierPct?: number;
+  /** Raw pre-override PoE 1 critical strike multiplier percentage (used by Perfect Agony). */
+  rawCritMultiplierPct?: number;
   /** Hits per skill use (default 1; e.g. 2 for Double Strike or multi-proj shotguns). */
   hitsPerUse?: number;
   /** Whether the skill is an Attack (used for PoE 1 Bleed gating; defaults to `(flags & ModFlag.Attack) !== 0`). */
@@ -1416,8 +1699,18 @@ export interface AuthenticDotResult {
   bleed: BleedDotBreakdown;
   ignite: IgniteDotBreakdown;
   skillDot: SkillSpellDotBreakdown;
+  causticGroundDps?: number;
+  burningGroundDps?: number;
   totalDotDps: number;
 }
+
+const DAMAGE_TYPE_TO_KEYWORD: Record<DamageType, number> = {
+  Physical: KeywordFlag.Physical,
+  Lightning: KeywordFlag.Lightning,
+  Cold: KeywordFlag.Cold,
+  Fire: KeywordFlag.Fire,
+  Chaos: KeywordFlag.Chaos,
+};
 
 function getEnemyResistForDot(
   dt: DamageType,
@@ -1426,11 +1719,18 @@ function getEnemyResistForDot(
   flags: number,
   kwFlags: number,
 ): number {
-  if (dt === 'Physical') return 0;
+  if (dt === 'Physical') {
+    // PoB CalcOffence.lua:4631,5879 — Physical DoTs / Bleed are mitigated only by positive PhysicalDamageReduction [0..90]
+    return clamp(enemyDb.sum('BASE', 'PhysicalDamageReduction', flags, kwFlags), 0, 90);
+  }
+  const maxRes = enemyConfig?.enemyMaxResist ?? 75;
   if (dt === 'Fire') {
     const overrideDot = enemyDb.override('FireResistDotOverride', flags, kwFlags);
-    if (overrideDot !== null) return overrideDot;
+    if (overrideDot !== null) return clamp(overrideDot, -200, maxRes);
   }
+  const overrideRes = enemyDb.override(`${dt}Resist`, flags, kwFlags);
+  if (overrideRes !== null) return clamp(overrideRes, -200, maxRes);
+
   const cfgBase =
     dt === 'Fire'
       ? (enemyConfig?.enemyFireResist ?? 0)
@@ -1439,8 +1739,14 @@ function getEnemyResistForDot(
         : dt === 'Lightning'
           ? (enemyConfig?.enemyLightningResist ?? 0)
           : (enemyConfig?.enemyChaosResist ?? 0);
-  const maxRes = enemyConfig?.enemyMaxResist ?? 75;
-  return clamp(cfgBase + enemyDb.sum('BASE', `${dt}Resist`, flags, kwFlags), -200, maxRes);
+  const isEle = dt === 'Fire' || dt === 'Cold' || dt === 'Lightning';
+  const statNames = isEle ? [`${dt}Resist`, 'ElementalResist'] : [`${dt}Resist`];
+  const rawBase = cfgBase + enemyDb.sum('BASE', statNames, flags, kwFlags);
+  // PoB CalcOffence.lua:507 — INC/MORE on enemy resistance (e.g. Eye of Malice +50% INC scales negative resists too)
+  const resMod =
+    Math.max(0, 1 + enemyDb.sum('INC', statNames, flags, kwFlags) / 100) *
+    enemyDb.more(statNames, flags, kwFlags);
+  return clamp(rawBase * resMod, -200, maxRes);
 }
 
 function getEnemyDotTakenMult(
@@ -1451,12 +1757,64 @@ function getEnemyDotTakenMult(
   kwFlags: number,
 ): number {
   const isEle = dt === 'Fire' || dt === 'Cold' || dt === 'Lightning';
-  const statNames = ['DamageTaken', 'DotDamageTaken', `${dt}DamageTaken`];
-  if (isEle) statNames.push('ElementalDamageTaken');
+  // PoB CalcOffence.lua:4632,4902,5253,5876 & PoB2 CalcOffence.lua:5386
+  const statNames = [
+    'DamageTaken',
+    'DotDamageTaken',
+    'DamageTakenOverTime',
+    `${dt}DamageTaken`,
+    `${dt}DamageTakenOverTime`,
+  ];
+  if (isEle) {
+    statNames.push('ElementalDamageTaken', 'ElementalDamageTakenOverTime');
+  }
   if (ailmentSpecificTakenStat) statNames.push(ailmentSpecificTakenStat);
   const inc = enemyDb.sum('INC', statNames, flags, kwFlags);
   const more = enemyDb.more(statNames, flags, kwFlags);
   return Math.max(0, 1 + inc / 100) * more;
+}
+
+/** PoB CalcOffence.lua:1499 / PoB2 CalcOffence.lua:448 — Temporal Chains / debuff expiration multiplier. */
+function getEnemyDebuffDurationMult(enemyDb: ModDB, flags: number, kwFlags: number): number {
+  const expireRate =
+    Math.max(0, 1 + enemyDb.sum('INC', 'BuffExpireFaster', flags, kwFlags) / 100) *
+    enemyDb.more('BuffExpireFaster', flags, kwFlags);
+  return 1 / Math.max(0.25, expireRate);
+}
+
+const POE2_MONSTER_AILMENT_THRESHOLD: readonly number[] = [
+  15, 20, 24, 28, 34, 39, 46, 52, 60, 70, 81, 95, 110, 126, 144, 171, 193, 218, 245, 275,
+  306, 340, 376, 413, 455, 497, 543, 590, 641, 695, 752, 812, 874, 950, 1033, 1123, 1220, 1326, 1442, 1568,
+  1705, 1854, 2015, 2192, 2384, 2564, 2757, 2966, 3188, 3426, 3681, 3955, 4247, 4560, 4895, 5254, 5638, 6049, 6489, 6959,
+  7462, 8001, 8576, 9193, 9649, 10228, 10841, 11492, 12181, 18272, 19369, 20531, 21763, 23068, 34602, 36679, 38879, 41212, 43685, 65527,
+  68415, 71303, 74191, 77079, 79967, 82855, 85743, 88631, 91519, 94407, 97295, 100183, 103071, 105959, 108847, 111735, 114623, 117511, 120399, 123287,
+];
+
+function getPoe2EnemyAilmentThreshold(enemyLevel: number, enemyDb: ModDB): number {
+  // PoB2 Pinnacle Boss default is level 82 (71303); level 84 is 77079.
+  const lv = clamp(Math.round(enemyLevel || 82), 1, 100);
+  const base = POE2_MONSTER_AILMENT_THRESHOLD[lv - 1] ?? 71303;
+  // Note: `normalizeEnemyStat` strips `Enemy` prefix to `AilmentThreshold` inside `enemyDb`
+  const threshStats = ['EnemyAilmentThreshold', 'AilmentThreshold'];
+  const inc = enemyDb.sum('INC', threshStats);
+  const more = enemyDb.more(threshStats);
+  return Math.max(1, base * Math.max(0.05, 1 + inc / 100) * more);
+}
+
+function withTemporaryCondition<T>(db: ModDB, name: string, value: boolean, fn: () => T): T {
+  const conds = db.getEvalContext().conditions;
+  const hadKey = Object.prototype.hasOwnProperty.call(conds, name);
+  const prev = conds[name];
+  conds[name] = value;
+  try {
+    return fn();
+  } finally {
+    if (hadKey) {
+      conds[name] = prev!;
+    } else {
+      delete conds[name];
+    }
+  }
 }
 
 function resolvePoe2PreMitigationTypeAvg(
@@ -1490,13 +1848,17 @@ export function computeAuthenticAilmentAndSkillDots(input: AuthenticDotInput): A
   const flags = input.flags ?? ModFlag.Hit;
   const kwFlags = input.keywordFlags ?? 0;
   const isAttack = input.isAttack ?? (flags & ModFlag.Attack) !== 0;
+  const isMelee = (flags & ModFlag.Melee) !== 0;
   const speed = Math.max(0, input.speed);
   const hitChanceFrac = clamp(input.hitChancePct ?? 100, 0, 100) / 100;
   const hitsPerUse = Math.max(1, input.hitsPerUse ?? 1);
   const effectiveHitRate = speed * hitChanceFrac * hitsPerUse;
 
   const critFrac = clamp(input.critChancePct ?? 0, 0, 100) / 100;
-  const noCritAilments = skillDb.flag('NoCritAilments', flags, kwFlags);
+  const noCritAilments =
+    skillDb.flag('NoCritAilments', flags, kwFlags) ||
+    skillDb.flag('AilmentsAreNeverFromCrit', flags, kwFlags) ||
+    skillDb.flag('ElementalOverload', flags, kwFlags);
   const dealNoPhys = skillDb.flag('DealNoPhysical', flags, kwFlags);
   const dealNoFire = skillDb.flag('DealNoFire', flags, kwFlags);
   const dealNoCold = skillDb.flag('DealNoCold', flags, kwFlags);
@@ -1507,461 +1869,1294 @@ export function computeAuthenticAilmentAndSkillDots(input: AuthenticDotInput): A
   const dealNoChaos = skillDb.flag('DealNoChaos', flags, kwFlags);
   const dealNoNonFire = skillDb.flag('DealNoNonFire', flags, kwFlags);
 
-  // PoB CalcOffence: Ailments strip Hit & Spell flags and add Ailment | Dot flags
-  const ailmentFlags = (flags & ~(ModFlag.Hit | ModFlag.Spell)) | ModFlag.Ailment | ModFlag.Dot;
-  const baseDotMulti = skillDb.sum('BASE', 'DotMultiplier', ailmentFlags, kwFlags);
+  // PoB CalcOffence.lua:4470,4743,5048 — Ailment damage scaling keeps ONLY Dot | Ailment | WeaponMask
+  // (never double-dips Attack/Spell/Hit/Melee/Area/Projectile hit mods; Melee Physical Damage & Fortify
+  // ailment cmods use the temporary `MeleeAilment` condition instead).
+  const ailmentDamageFlags = ModFlag.Dot | ModFlag.Ailment | (flags & WEAPON_MOD_FLAGS);
+  // Utility queries (Faster/Slower/Duration) match both hit-cfg (`cfg`) and ailment-cfg (`dotCfg`) modifiers.
+  const ailmentUtilityFlags = flags | ModFlag.Ailment | ModFlag.Dot;
+  const baseAilmentKw =
+    (kwFlags & ~KeywordFlag.Hit) |
+    KeywordFlag.Ailment |
+    (isAttack ? KeywordFlag.Attack : 0) |
+    ((flags & ModFlag.Spell) !== 0 ? KeywordFlag.Spell : 0);
 
-  // -------------------------------------------------------------------------
-  // 4.1 POISON (PoE 1 Infinite Stacks / Mamba Single-Poison / PoE 2 Magnitude & Stack Cap)
-  // -------------------------------------------------------------------------
-  const poisonKw = kwFlags | KeywordFlag.Ailment | KeywordFlag.Poison;
-  const cannotPoison = skillDb.flag('CannotPoison', flags, poisonKw);
-  const poisonChancePct = cannotPoison
-    ? 0
-    : clamp(skillDb.sum('BASE', 'PoisonChance', flags, poisonKw), 0, 100);
-  const poisonChanceFrac = poisonChancePct / 100;
+  const isPoe1PerfectAgony =
+    game === 'poe1' &&
+    (skillDb.flag('PerfectAgony', flags, kwFlags) ||
+      skillDb.flag('DotMultiplierIsCritMultiplier', flags, kwFlags));
+  const nonCritsNoAilments =
+    isPoe1PerfectAgony ||
+    skillDb.flag('NonCritsCannotInflictAilments', flags, kwFlags) ||
+    skillDb.flag('AilmentsOnlyFromCrit', flags, kwFlags);
+  const rawCritMultiForPa = input.rawCritMultiplierPct ?? input.critMultiplierPct ?? 150;
+  const enemySelfCritMulti = enemyDb.sum('BASE', 'SelfCritMultiplier', flags, kwFlags);
+  const paRatio = (skillDb.sum('BASE', 'PerfectAgonyPct', flags, kwFlags) || 100) / 100;
+  const paDotMultiOverride = isPoe1PerfectAgony
+    ? Math.round((rawCritMultiForPa - 100) * paRatio + enemySelfCritMulti)
+    : null;
+  const legacyCritMultiToDegenPct =
+    game === 'poe1' && !isPoe1PerfectAgony
+      ? skillDb.sum('BASE', 'CritMultiplierAppliesToDegen', flags, kwFlags)
+      : 0;
+  const legacyCritMultiDegenBonus =
+    legacyCritMultiToDegenPct > 0
+      ? Math.max(0, Math.floor(((rawCritMultiForPa - 150) * legacyCritMultiToDegenPct) / 100))
+      : 0;
+  const debuffDurationMult = getEnemyDebuffDurationMult(enemyDb, flags, kwFlags);
+  const POE_DOT_DPS_CAP = 35791394.13;
 
-  const allCanPoison = skillDb.flag('AllDamageCanPoison', flags, poisonKw);
-  const poisonFasterPct = skillDb.sum('INC', ['AilmentFaster', 'PoisonFaster', 'AilmentDealDamageFaster'], ailmentFlags, poisonKw);
-  const poisonSlowerPct = skillDb.sum('INC', ['AilmentSlower', 'PoisonSlower'], ailmentFlags, poisonKw);
-  const poisonFasterMult =
-    Math.max(0.1, 1 + poisonFasterPct / 100) / Math.max(0.1, 1 + poisonSlowerPct / 100);
+  // PoB1 CalcOffence.lua:3015-3029 — Ruthless Support average ailment damage multiplier
+  const ruthlessBlowMaxCount =
+    game === 'poe1' ? skillDb.sum('BASE', 'RuthlessBlowMaxCount', flags, kwFlags) : 0;
+  const ruthlessBlowChanceFrac =
+    ruthlessBlowMaxCount > 0 ? clamp(Math.round(100 / ruthlessBlowMaxCount), 0, 100) / 100 : 0;
+  const ruthlessBlowAilmentMult =
+    ruthlessBlowChanceFrac > 0
+      ? 1 + skillDb.sum('BASE', 'RuthlessBlowAilmentMultiplier', flags, kwFlags) / 100
+      : 1;
+  const ruthlessBlowAilmentEffect =
+    ruthlessBlowChanceFrac > 0
+      ? 1 - ruthlessBlowChanceFrac + ruthlessBlowChanceFrac * ruthlessBlowAilmentMult
+      : 1;
 
-  const rawSkillDuration =
-    typeof skillData?.duration === 'number' && skillData.duration > 0 ? skillData.duration : undefined;
-  const poisonBaseDuration = Math.max(
-    0.1,
-    skillData?.poisonDuration ??
-      (skillData?.poisonDurationIsSkillDuration ? rawSkillDuration : undefined) ??
-      2.0,
-  );
-  const poisonDurStats =
-    input.skillHasDurationTag ||
-    skillData?.durationAppliesToPoison ||
-    Boolean(skillData?.poisonDurationIsSkillDuration) ||
-    Boolean(skillData?.poisonIsSkillEffect)
-      ? ['PoisonDuration', 'AilmentDuration', 'Duration']
-      : ['PoisonDuration', 'AilmentDuration'];
-  const poisonDurInc = skillDb.sum('INC', poisonDurStats, ailmentFlags, poisonKw);
-  const poisonDurMore = skillDb.more(poisonDurStats, ailmentFlags, poisonKw);
-  const effectivePoisonDurationSec =
-    (poisonBaseDuration * Math.max(0.1, 1 + poisonDurInc / 100) * poisonDurMore) / poisonFasterMult;
+  const getPoe1ScaledBaseForAilment = (dt: DamageType, rollFrac: number): number => {
+    const range = input.baseDamageRangeByType?.[dt];
+    if (range && (range[0] > 0 || range[1] > 0)) {
+      const minMore = skillDb.more(['MinDamage', `Min${dt}Damage`, `${dt}MinDamage`], flags, kwFlags);
+      const maxMore = skillDb.more(['MaxDamage', `Max${dt}Damage`, `${dt}MaxDamage`], flags, kwFlags);
+      const minInc = Math.max(
+        0,
+        1 + skillDb.sum('INC', [`Min${dt}Damage`, `${dt}MinDamage`], flags, kwFlags) / 100,
+      );
+      const maxInc = Math.max(
+        0,
+        1 + skillDb.sum('INC', [`Max${dt}Damage`, `${dt}MaxDamage`], flags, kwFlags) / 100,
+      );
+      const rMin = range[0] * minMore * minInc;
+      const rMax = range[1] * maxMore * maxInc;
+      return Math.max(0, rMin + (rMax - rMin) * rollFrac);
+    }
+    return Math.max(0, input.baseDamageByType[dt] ?? 0);
+  };
 
-  const cannotPoisonAlreadyPoisoned =
-    skillDb.flag('CannotPoisonAlreadyPoisoned', flags, poisonKw) ||
-    Boolean(skillData?.cannotPoisonAlreadyPoisoned);
+  const computeAilmentRateMod = (
+    fasterStats: readonly string[],
+    slowerStats: readonly string[],
+    enemySelfFasterStats: readonly string[],
+    ailKw: number,
+  ): number => {
+    const fasterInc = skillDb.sum('INC', fasterStats, ailmentUtilityFlags, ailKw);
+    const fasterMore = skillDb.more(fasterStats, ailmentUtilityFlags, ailKw);
+    const enemySelfFaster = enemyDb.sum('INC', enemySelfFasterStats);
+    const slowerInc = skillDb.sum('INC', slowerStats, ailmentUtilityFlags, ailKw);
+    const slowerMore = skillDb.more(slowerStats, ailmentUtilityFlags, ailKw);
+    const num = Math.max(0.05, Math.max(0.05, 1 + fasterInc / 100) * fasterMore + enemySelfFaster / 100);
+    const den = Math.max(0.05, Math.max(0.05, 1 + slowerInc / 100) * slowerMore);
+    return Math.max(0.1, num / den);
+  };
 
-  let maxPoisonStacks: number;
-  if (cannotPoisonAlreadyPoisoned) {
-    maxPoisonStacks = 1;
-  } else if (game === 'poe2') {
-    const baseMax = skillData?.maxPoisonStacks ?? 1;
-    const extraStacks = skillDb.sum('BASE', ['AdditionalPoisonStack', 'MaxPoisonStacks'], flags, poisonKw);
-    const stackMore =
-      skillDb.more('MaxPoisonStacks', flags, poisonKw) *
-      (skillDb.flag('DoublePoisonStacks', flags, poisonKw) ? 2 : 1);
-    maxPoisonStacks = Math.max(1, Math.floor((baseMax + extraStacks) * stackMore));
-  } else {
-    const overrideMax = skillDb.override('MaxPoisonStacks', flags, poisonKw);
-    maxPoisonStacks =
-      overrideMax !== null
-        ? Math.max(1, Math.floor(overrideMax))
-        : skillData?.maxPoisonStacks !== undefined
-          ? Math.max(1, Math.floor(skillData.maxPoisonStacks))
-          : Number.POSITIVE_INFINITY;
-  }
+  const computeAilmentEffectMod = (ailKw: number): number => {
+    const effInc = skillDb.sum('INC', 'AilmentEffect', ailmentDamageFlags, ailKw);
+    const effMore = skillDb.more('AilmentEffect', ailmentDamageFlags, ailKw);
+    return Math.max(0, 1 + effInc / 100) * effMore;
+  };
 
-  let singleStackPoisonDps = 0;
-  let effectivePoisonStacks = 0;
+  const computePoe1DotMultiPair = (
+    typeMultiStats: readonly string[],
+    ailKw: number,
+  ): { nonCritMulti: number; critMulti: number } => {
+    if (paDotMultiOverride !== null) {
+      const m = Math.max(0, 1 + paDotMultiOverride / 100);
+      return { nonCritMulti: m, critMulti: m };
+    }
+    const evalMulti = (isCrit: boolean): number =>
+      withTemporaryCondition(skillDb, 'CriticalStrike', isCrit, () => {
+        const ov = skillDb.override('DotMultiplier', ailmentDamageFlags, ailKw);
+        if (ov !== null) return Math.max(0, 1 + ov / 100);
+        const total =
+          skillDb.sum('BASE', 'DotMultiplier', ailmentDamageFlags, ailKw) +
+          skillDb.sum('BASE', typeMultiStats, ailmentDamageFlags, ailKw) +
+          (isCrit ? 50 + legacyCritMultiDegenBonus + skillDb.sum('BASE', 'CritAilmentDotMultiplier', ailmentDamageFlags, ailKw) : 0);
+        return Math.max(0, 1 + total / 100);
+      });
+    const nonCritMulti = evalMulti(false);
+    const critMulti = noCritAilments ? nonCritMulti : evalMulti(true);
+    return { nonCritMulti, critMulti };
+  };
 
-  if (poisonChanceFrac > 0) {
-    const enemyChaosRes = getEnemyResistForDot('Chaos', enemyDb, enemyConfig, ailmentFlags, poisonKw);
-    const enemyChaosResMult = Math.max(0.05, 1 - enemyChaosRes / 100);
-    const enemyChaosTakenMult = getEnemyDotTakenMult('Chaos', 'PoisonDamageTaken', enemyDb, ailmentFlags, poisonKw);
-    const poisonEnemyMult = enemyChaosResMult * enemyChaosTakenMult;
+  const weightByCrit = (
+    chanceOnHitPct: number,
+    chanceOnCritPct: number,
+    sourceCritFrac: number,
+    hitVal: number,
+    critVal: number,
+  ): number => {
+    const cHit = chanceOnHitPct * (1 - sourceCritFrac);
+    const cCrit = chanceOnCritPct * sourceCritFrac;
+    const cSum = cHit + cCrit;
+    if (cSum <= 0) return 0;
+    return (hitVal * cHit + critVal * cCrit) / cSum;
+  };
 
-    if (game === 'poe2') {
-      const prePhys = dealNoPhys || dealNoNonFire ? 0 : resolvePoe2PreMitigationTypeAvg('Physical', input, flags, kwFlags);
-      const preChaos = dealNoChaos || dealNoNonFire ? 0 : resolvePoe2PreMitigationTypeAvg('Chaos', input, flags, kwFlags);
-      let preTotal = prePhys + preChaos;
-      if (allCanPoison && !dealNoEle) {
-        for (const el of ['Fire', 'Cold', 'Lightning'] as const) {
-          if (dealNoNonFire && el !== 'Fire') continue;
-          if ((el === 'Fire' && dealNoFire) || (el === 'Cold' && dealNoCold) || (el === 'Lightning' && dealNoLight)) continue;
-          preTotal += resolvePoe2PreMitigationTypeAvg(el, input, flags, kwFlags);
-        }
-      }
-      if (preTotal > 0) {
-        const magInc = skillDb.sum('INC', ['AilmentMagnitude', 'PoisonMagnitude'], ailmentFlags, poisonKw);
-        const magMore = skillDb.more(['AilmentMagnitude', 'PoisonMagnitude'], ailmentFlags, poisonKw);
-        singleStackPoisonDps =
-          0.2 * preTotal * Math.max(0, 1 + magInc / 100) * magMore * poisonFasterMult * poisonEnemyMult;
-      }
-    } else {
-      // PoE 1: 0.30 * base(Phys + Chaos [+ Ele if AllDamageCanPoison]) scaled by type/Chaos/Poison/Ailment INC & MORE
-      const chaosDotMulti =
-        baseDotMulti + skillDb.sum('BASE', ['ChaosDotMultiplier', 'PoisonDotMultiplier'], ailmentFlags, poisonKw);
-      const critAilmentMultiBonus = noCritAilments ? 0 : 50;
-      const effectiveDotMulti =
-        1 + (chaosDotMulti + critFrac * critAilmentMultiBonus) / 100;
+  const computeAppliedStacks = (ailmentChanceFrac: number, durationSec: number, perHitExtra = 1): number => {
+    const base = hitChanceFrac * ailmentChanceFrac * perHitExtra * hitsPerUse;
+    return speed > 0 ? base * speed * durationSec : base;
+  };
 
-      const basePhys = dealNoPhys || dealNoNonFire ? 0 : Math.max(0, input.baseDamageByType.Physical ?? 0);
-      const baseChaos = dealNoChaos || dealNoNonFire ? 0 : Math.max(0, input.baseDamageByType.Chaos ?? 0);
-
-      let scaledBase = 0;
-      if (baseChaos > 0) {
-        const names = ['Damage', 'ChaosDamage', 'DotDamage', 'PoisonDamage'];
-        const inc = skillDb.sum('INC', names, ailmentFlags, poisonKw);
-        const more = skillDb.more(names, ailmentFlags, poisonKw);
-        scaledBase += baseChaos * Math.max(0, 1 + inc / 100) * more;
-      }
-      if (basePhys > 0) {
-        const names = ['Damage', 'PhysicalDamage', 'ChaosDamage', 'DotDamage', 'PoisonDamage'];
-        const inc = skillDb.sum('INC', names, ailmentFlags, poisonKw);
-        const more = skillDb.more(names, ailmentFlags, poisonKw);
-        scaledBase += basePhys * Math.max(0, 1 + inc / 100) * more;
-      }
-      if (allCanPoison && !dealNoEle) {
-        for (const el of ['Fire', 'Cold', 'Lightning'] as const) {
-          if (dealNoNonFire && el !== 'Fire') continue;
-          const baseEl = Math.max(0, input.baseDamageByType[el] ?? 0);
-          if (baseEl <= 0) continue;
-          const names = ['Damage', 'ElementalDamage', `${el}Damage`, 'ChaosDamage', 'DotDamage', 'PoisonDamage'];
-          const inc = skillDb.sum('INC', names, ailmentFlags, poisonKw);
-          const more = skillDb.more(names, ailmentFlags, poisonKw);
-          scaledBase += baseEl * Math.max(0, 1 + inc / 100) * more;
-        }
-      }
-
-      if (scaledBase > 0) {
-        singleStackPoisonDps =
-          0.3 * scaledBase * Math.max(0, effectiveDotMulti) * poisonFasterMult * poisonEnemyMult;
+  return withTemporaryCondition(skillDb, 'MeleeAilment', isMelee, () => {
+    // -------------------------------------------------------------------------
+    // 4.1 POISON (PoE 1 Infinite Stacks / Mamba Single-Poison / PoE 2 Magnitude & Stack Cap)
+    // -------------------------------------------------------------------------
+    const poisonKw = baseAilmentKw | KeywordFlag.Poison | KeywordFlag.Chaos;
+    const cannotPoison =
+      skillDb.flag('CannotPoison', flags, poisonKw) || enemyDb.flag('PoisonImmune');
+    const enemyAvoidPoisonMult = Math.max(0, 1 - clamp(enemyDb.sum('BASE', 'AvoidPoison'), 0, 100) / 100);
+    let poisonChanceOnHitPct = 0;
+    let poisonChanceOnCritPct = 0;
+    let chaosPoisonChancePct = 0;
+    if (!cannotPoison && enemyAvoidPoisonMult > 0) {
+      const evalPoisonChance = (isCrit: boolean): number =>
+        withTemporaryCondition(skillDb, 'CriticalStrike', isCrit, () => {
+          const chanceStats =
+            game === 'poe2'
+              ? ['PoisonChance', 'EnemyPoisonChance', 'AilmentChance']
+              : ['PoisonChance', 'EnemyPoisonChance'];
+          const base =
+            skillDb.sum('BASE', chanceStats, flags, poisonKw) +
+            enemyDb.sum('BASE', 'SelfPoisonChance') +
+            (isCrit ? skillDb.sum('BASE', 'CritPoisonChance', flags, poisonKw) : 0);
+          if (game === 'poe2') {
+            const ov = skillDb.override('PoisonChance', flags, poisonKw);
+            if (ov !== null) return clamp(ov * enemyAvoidPoisonMult, 0, 100);
+            const inc = skillDb.sum('INC', chanceStats, flags, poisonKw);
+            const more = skillDb.more(chanceStats, flags, poisonKw);
+            return clamp(base * Math.max(0, 1 + inc / 100) * more * enemyAvoidPoisonMult, 0, 100);
+          }
+          return clamp(base * enemyAvoidPoisonMult, 0, 100);
+        });
+      poisonChanceOnHitPct = nonCritsNoAilments ? 0 : evalPoisonChance(false);
+      poisonChanceOnCritPct = noCritAilments
+        ? nonCritsNoAilments
+          ? 0
+          : poisonChanceOnHitPct
+        : evalPoisonChance(true);
+      if (game === 'poe1') {
+        chaosPoisonChancePct = clamp(
+          skillDb.sum('BASE', 'ChaosPoisonChance', flags, poisonKw) * enemyAvoidPoisonMult,
+          0,
+          100,
+        );
       }
     }
+    const effPoisonChanceOnHitPct = clamp(
+      poisonChanceOnHitPct + ((input.baseDamageByType.Chaos ?? 0) > 0 && !nonCritsNoAilments ? chaosPoisonChancePct : 0),
+      0,
+      100,
+    );
+    const effPoisonChanceOnCritPct = clamp(
+      poisonChanceOnCritPct + ((input.baseDamageByType.Chaos ?? 0) > 0 && !(noCritAilments && nonCritsNoAilments) ? chaosPoisonChancePct : 0),
+      0,
+      100,
+    );
+    const poisonChanceFrac =
+      (effPoisonChanceOnHitPct / 100) * (1 - critFrac) + (effPoisonChanceOnCritPct / 100) * critFrac;
+    const poisonChancePct = round2(poisonChanceFrac * 100);
 
-    if (singleStackPoisonDps > 0) {
-      const uncappedStacks = poisonChanceFrac * effectiveHitRate * effectivePoisonDurationSec;
-      effectivePoisonStacks = Number.isFinite(maxPoisonStacks)
-        ? Math.min(maxPoisonStacks, uncappedStacks)
-        : uncappedStacks;
-    }
-  }
-
-  const totalPoisonDps = singleStackPoisonDps * effectivePoisonStacks;
-
-  // -------------------------------------------------------------------------
-  // 4.2 BLEEDING (PoE 1 Stationary 70% / Moving & Aggravated 210% / Crimson Dance 35% * min(8, stacks); PoE 2 Bleed)
-  // -------------------------------------------------------------------------
-  const bleedKw = kwFlags | KeywordFlag.Ailment | KeywordFlag.Bleed;
-  const cannotBleed = skillDb.flag('CannotBleed', flags, bleedKw);
-  const bleedChancePct = cannotBleed
-    ? 0
-    : clamp(skillDb.sum('BASE', 'BleedChance', flags, bleedKw), 0, 100);
-  const bleedChanceFrac = bleedChancePct / 100;
-
-  const isCrimsonDance =
-    game === 'poe1' && Boolean(input.crimsonDance || skillDb.flag('CrimsonDance', flags, bleedKw));
-  const isAggravatedOrMoving =
-    !isCrimsonDance &&
-    Boolean(
-      input.enemyMovingOrAggravated ||
-        enemyConfig?.enemyMoving ||
-        enemyConfig?.enemyAggravatedBleed ||
-        skillDb.flag('BleedAlwaysAggravated', flags, bleedKw) ||
-        skillDb.flag('EnemyMoving', flags, bleedKw),
+    const allCanPoison = skillDb.flag('AllDamageCanPoison', flags, poisonKw);
+    const poisonFasterMult = computeAilmentRateMod(
+      ['AilmentFaster', 'PoisonFaster', 'AilmentDealDamageFaster', 'DamageFaster'],
+      ['AilmentSlower', 'PoisonSlower'],
+      ['SelfPoisonFaster'],
+      poisonKw,
     );
 
-  const bleedFasterPct = skillDb.sum('INC', ['AilmentFaster', 'BleedFaster'], ailmentFlags, bleedKw);
-  const bleedSlowerPct = skillDb.sum('INC', ['AilmentSlower', 'BleedSlower'], ailmentFlags, bleedKw);
-  const bleedFasterMult =
-    Math.max(0.1, 1 + bleedFasterPct / 100) / Math.max(0.1, 1 + bleedSlowerPct / 100);
+    const cannotPoisonAlreadyPoisoned =
+      skillDb.flag('CannotPoisonAlreadyPoisoned', flags, poisonKw) ||
+      skillDb.flag('CannotMultiplePoison', flags, poisonKw) ||
+      skillDb.flag('Condition:NonPoisonedOnly', flags, poisonKw) ||
+      Boolean(skillData?.cannotPoisonAlreadyPoisoned);
+    if (cannotPoisonAlreadyPoisoned) {
+      skillDb.setCondition('NonPoisonedOnly', true);
+    }
 
-  const bleedBaseDuration = Math.max(0.1, skillData?.bleedDuration ?? 5.0);
-  const bleedDurInc = skillDb.sum('INC', ['BleedDuration', 'AilmentDuration'], ailmentFlags, bleedKw);
-  const bleedDurMore = skillDb.more(['BleedDuration', 'AilmentDuration'], ailmentFlags, bleedKw);
-  const effectiveBleedDurationSec =
-    (bleedBaseDuration * Math.max(0.1, 1 + bleedDurInc / 100) * bleedDurMore) / bleedFasterMult;
+    // PoB1 CalcOffence.lua:4770-4773 — "inflict X additional poisons" (Poison Mastery / Herald / Ascendancy)
+    const additionalPoisonStacks =
+      game === 'poe1' && !cannotPoisonAlreadyPoisoned
+        ? 1 +
+          clamp(skillDb.sum('BASE', 'AdditionalPoisonChance', flags, poisonKw) / 100, 0, 1) +
+          Math.max(0, skillDb.sum('BASE', 'AdditionalPoisonStacks', flags, poisonKw))
+        : 1;
 
-  const maxBleedStacks = isCrimsonDance ? 8 : 1;
-  let singleStackBleedDps = 0;
-  let effectiveBleedStacks = 0;
+    const rawSkillDuration =
+      typeof skillData?.duration === 'number' && skillData.duration > 0 ? skillData.duration : undefined;
+    const poisonBaseDuration = Math.max(
+      0.1,
+      skillDb.override('PoisonDurationBase', ailmentUtilityFlags, poisonKw) ??
+        skillData?.poisonDuration ??
+        (skillData?.poisonDurationIsSkillDuration ? rawSkillDuration : undefined) ??
+        2.0,
+    );
+    const poisonDurStats =
+      input.skillHasDurationTag ||
+      skillData?.durationAppliesToPoison ||
+      Boolean(skillData?.poisonDurationIsSkillDuration) ||
+      Boolean(skillData?.poisonIsSkillEffect)
+        ? [
+            'PoisonDuration',
+            'AilmentDuration',
+            'EnemyPoisonDuration',
+            'EnemyAilmentDuration',
+            'EnemyChaosAilmentDuration',
+            'DamagingAilmentDuration',
+            'DurationofDamagingAilmentsDuration',
+            'Duration',
+          ]
+        : [
+            'PoisonDuration',
+            'AilmentDuration',
+            'EnemyPoisonDuration',
+            'EnemyAilmentDuration',
+            'EnemyChaosAilmentDuration',
+            'DamagingAilmentDuration',
+            'DurationofDamagingAilmentsDuration',
+          ];
+    let poisonDurInc = skillDb.sum('INC', poisonDurStats, ailmentUtilityFlags, poisonKw);
+    // PoE 1 Assassin `Toxic Delivery` (5% per Poison inflicted Recently, up to 100%)
+    // & PoE 2 `Escalating Toxins` (10% per Poison inflicted Recently, up to 100%)
+    const toxicDeliveryCap = skillDb.sum('BASE', 'ToxicDeliveryPoisonDurCap', ailmentUtilityFlags, poisonKw);
+    if (toxicDeliveryCap > 0) {
+      const configuredRecentPoisons =
+        skillDb.getEvalContext().multipliers.PoisonAppliedRecently ??
+        enemyDb.getEvalContext().multipliers.PoisonAppliedRecently;
+      const poisonsAppliedRecently =
+        configuredRecentPoisons !== undefined
+          ? Math.max(0, configuredRecentPoisons)
+          : poisonChanceFrac > 0 && effectiveHitRate > 0
+            ? Math.floor(effectiveHitRate * poisonChanceFrac * additionalPoisonStacks * 4)
+            : 0;
+      const perRecentPoisonPct = game === 'poe2' ? 10 : 5;
+      poisonDurInc += Math.min(toxicDeliveryCap, poisonsAppliedRecently * perRecentPoisonPct);
+    }
+    const poisonDurMore = skillDb.more(poisonDurStats, ailmentUtilityFlags, poisonKw);
+    const enemyPoisonDurMod =
+      Math.max(0, 1 + enemyDb.sum('INC', ['SelfPoisonDuration', 'SelfAilmentDuration']) / 100) *
+      enemyDb.more(['SelfPoisonDuration', 'SelfAilmentDuration']);
+    const effectivePoisonDurationSec =
+      (poisonBaseDuration *
+        Math.max(0.05, 1 + poisonDurInc / 100) *
+        poisonDurMore *
+        enemyPoisonDurMod *
+        debuffDurationMult) /
+      poisonFasterMult;
 
-  if ((isAttack || game === 'poe2') && !dealNoPhys && !dealNoNonFire && bleedChanceFrac > 0) {
-    const enemyPhysTakenMult = getEnemyDotTakenMult('Physical', 'BleedDamageTaken', enemyDb, ailmentFlags, bleedKw);
-
-    if (game === 'poe2') {
-      const prePhys = resolvePoe2PreMitigationTypeAvg('Physical', input, flags, kwFlags);
-      if (prePhys > 0) {
-        const magInc = skillDb.sum('INC', ['AilmentMagnitude', 'BleedingMagnitude'], ailmentFlags, bleedKw);
-        const magMore = skillDb.more(['AilmentMagnitude', 'BleedingMagnitude'], ailmentFlags, bleedKw);
-        const baseCoeff = isAggravatedOrMoving ? 0.3 : 0.15;
-        singleStackBleedDps =
-          baseCoeff * prePhys * Math.max(0, 1 + magInc / 100) * magMore * bleedFasterMult * enemyPhysTakenMult;
+    let maxPoisonStacks: number;
+    if (cannotPoisonAlreadyPoisoned) {
+      maxPoisonStacks = 1;
+    } else if (game === 'poe2') {
+      const overridePoe2Stacks = skillDb.override('PoisonStacks', flags, poisonKw);
+      if (overridePoe2Stacks !== null) {
+        maxPoisonStacks = Math.max(1, Math.floor(overridePoe2Stacks));
+      } else {
+        const baseMax = skillData?.maxPoisonStacks ?? 1;
+        const extraStacks = skillDb.sum(
+          'BASE',
+          ['AdditionalPoisonStack', 'MaxPoisonStacks', 'PoisonStacks', 'PoisonStacksMax'],
+          flags,
+          poisonKw,
+        );
+        const stackMore =
+          skillDb.more('MaxPoisonStacks', flags, poisonKw) *
+          skillDb.more('PoisonStacks', flags, poisonKw) *
+          skillDb.more('PoisonStacksMax', flags, poisonKw) *
+          (skillDb.flag('DoublePoisonStacks', flags, poisonKw) ? 2 : 1);
+        maxPoisonStacks = Math.max(1, Math.floor((baseMax + extraStacks) * stackMore));
       }
     } else {
-      const basePhys = Math.max(0, input.baseDamageByType.Physical ?? 0);
-      if (basePhys > 0) {
-        const physDotMulti =
-          baseDotMulti + skillDb.sum('BASE', ['PhysicalDotMultiplier', 'BleedDotMultiplier'], ailmentFlags, bleedKw);
-        const critAilmentMultiBonus = noCritAilments ? 0 : 50;
-        const effectiveDotMulti = 1 + (physDotMulti + critFrac * critAilmentMultiBonus) / 100;
-
-        const names = ['Damage', 'PhysicalDamage', 'DotDamage', 'BleedDamage'];
-        const inc = skillDb.sum('INC', names, ailmentFlags, bleedKw);
-        const more = skillDb.more(names, ailmentFlags, bleedKw);
-        const baseCoeff = isCrimsonDance ? 0.35 : isAggravatedOrMoving ? 2.1 : 0.7;
-
-        singleStackBleedDps =
-          baseCoeff *
-          basePhys *
-          Math.max(0, 1 + inc / 100) *
-          more *
-          Math.max(0, effectiveDotMulti) *
-          bleedFasterMult *
-          enemyPhysTakenMult;
-      }
+      const overrideMax =
+        skillDb.override('MaxPoisonStacks', flags, poisonKw) ??
+        skillDb.override('PoisonStackLimit', flags, poisonKw);
+      maxPoisonStacks =
+        overrideMax !== null
+          ? Math.max(1, Math.floor(overrideMax))
+          : skillData?.maxPoisonStacks !== undefined
+            ? Math.max(1, Math.floor(skillData.maxPoisonStacks))
+            : Number.POSITIVE_INFINITY;
     }
 
-    if (singleStackBleedDps > 0) {
-      if (isCrimsonDance) {
-        effectiveBleedStacks = Math.min(8, bleedChanceFrac * effectiveHitRate * effectiveBleedDurationSec);
-      } else {
-        const expectedHitsInWindow = Math.max(1, effectiveHitRate * effectiveBleedDurationSec);
-        effectiveBleedStacks =
-          bleedChanceFrac >= 1 ? 1 : clamp(1 - Math.pow(1 - bleedChanceFrac, expectedHitsInWindow), 0, 1);
-      }
-    }
-  }
+    let singleStackPoisonDps = 0;
+    let effectivePoisonStacks = 0;
 
-  const totalBleedDps = singleStackBleedDps * effectiveBleedStacks;
+    if (poisonChanceFrac > 0) {
+      const enemyChaosRes = getEnemyResistForDot('Chaos', enemyDb, enemyConfig, ailmentDamageFlags, poisonKw);
+      const enemyChaosResMult = Math.max(0.05, 1 - enemyChaosRes / 100);
+      const enemyChaosTakenMult = getEnemyDotTakenMult(
+        'Chaos',
+        'PoisonDamageTaken',
+        enemyDb,
+        ailmentDamageFlags,
+        poisonKw,
+      );
+      const poisonEnemyMult = enemyChaosResMult * enemyChaosTakenMult;
+      const poisonEffectMod = computeAilmentEffectMod(poisonKw);
+      // PoB2 CalcOffence.lua:5255,5268-5270 — configured poison stacks override (`multiplierPoisonOnEnemy`)
+      const configPoisonStacks =
+        game === 'poe2'
+          ? Math.max(
+              0,
+              enemyDb.sum('BASE', 'Multiplier:PoisonStacks'),
+              enemyDb.getEvalContext().multipliers.PoisonStacks ?? 0,
+              skillDb.getEvalContext().multipliers.PoisonStacks ?? 0,
+            )
+          : 0;
+      const uncappedStacks =
+        configPoisonStacks > 0
+          ? configPoisonStacks
+          : computeAppliedStacks(
+              poisonChanceFrac,
+              effectivePoisonDurationSec,
+              additionalPoisonStacks,
+            );
 
-  // -------------------------------------------------------------------------
-  // 4.3 IGNITE (PoE 1 & PoE 2)
-  // -------------------------------------------------------------------------
-  const igniteKw = kwFlags | KeywordFlag.Ailment | KeywordFlag.Ignite;
-  const cannotIgnite = skillDb.flag('CannotIgnite', flags, igniteKw);
-  const rawIgniteChance = cannotIgnite
-    ? 0
-    : clamp(skillDb.sum('BASE', 'IgniteChance', flags, igniteKw), 0, 100);
-  const baseIgniteChanceFrac = rawIgniteChance / 100;
-  const critAlwaysIgnites = game === 'poe1' && !cannotIgnite && !noCritAilments;
-  const effIgniteChanceFrac = cannotIgnite
-    ? 0
-    : critAlwaysIgnites
-      ? critFrac + (1 - critFrac) * baseIgniteChanceFrac
-      : baseIgniteChanceFrac;
-
-  const igniteFasterPct = skillDb.sum('INC', ['AilmentFaster', 'IgniteFaster'], ailmentFlags, igniteKw);
-  const igniteSlowerPct = skillDb.sum('INC', ['AilmentSlower', 'IgniteSlower'], ailmentFlags, igniteKw);
-  const igniteFasterMult =
-    Math.max(0.1, 1 + igniteFasterPct / 100) / Math.max(0.1, 1 + igniteSlowerPct / 100);
-
-  const igniteBaseDuration = Math.max(0.1, skillData?.igniteDuration ?? 4.0);
-  const igniteDurInc = skillDb.sum('INC', ['IgniteDuration', 'AilmentDuration'], ailmentFlags, igniteKw);
-  const igniteDurMore = skillDb.more(['IgniteDuration', 'AilmentDuration'], ailmentFlags, igniteKw);
-  const effectiveIgniteDurationSec =
-    (igniteBaseDuration * Math.max(0.1, 1 + igniteDurInc / 100) * igniteDurMore) / igniteFasterMult;
-
-  const maxIgniteStacks = Math.max(1, 1 + Math.floor(skillDb.sum('BASE', 'AdditionalIgniteStack', flags, igniteKw)));
-  let singleStackIgniteDps = 0;
-  let effectiveIgniteStacks = 0;
-
-  if (!cannotIgnite && !dealNoEle && !dealNoFire && effIgniteChanceFrac > 0) {
-    const enemyFireRes = getEnemyResistForDot('Fire', enemyDb, enemyConfig, ailmentFlags, igniteKw);
-    const enemyFireResMult = Math.max(0.05, 1 - enemyFireRes / 100);
-    const enemyFireTakenMult = getEnemyDotTakenMult('Fire', 'IgniteDamageTaken', enemyDb, ailmentFlags, igniteKw);
-    const igniteEnemyMult = enemyFireResMult * enemyFireTakenMult;
-    const allCanIgnite = skillDb.flag('AllDamageCanIgnite', flags, igniteKw);
-
-    if (game === 'poe2') {
-      let preTotal = resolvePoe2PreMitigationTypeAvg('Fire', input, flags, kwFlags);
-      if (allCanIgnite && !dealNoNonFire) {
-        for (const dt of ['Physical', 'Cold', 'Lightning', 'Chaos'] as const) {
-          if (dealNoChaos && dt === 'Chaos') continue;
+      if (game === 'poe2') {
+        const poisonTypes: DamageType[] = [];
+        if (!dealNoPhys && !dealNoNonFire) poisonTypes.push('Physical');
+        if (!dealNoChaos && !dealNoNonFire) poisonTypes.push('Chaos');
+        if (!dealNoEle) {
+          for (const el of ['Fire', 'Cold', 'Lightning'] as const) {
+            if (dealNoNonFire && el !== 'Fire') continue;
+            if ((el === 'Fire' && dealNoFire) || (el === 'Cold' && dealNoCold) || (el === 'Lightning' && dealNoLight)) {
+              continue;
+            }
+            if (allCanPoison || skillDb.flag(`${el}CanPoison`, flags, poisonKw)) {
+              poisonTypes.push(el);
+            }
+          }
+        }
+        let preTotal = 0;
+        let rMin = 0;
+        let rMax = 0;
+        let rAvg = 0;
+        for (const dt of poisonTypes) {
           preTotal += resolvePoe2PreMitigationTypeAvg(dt, input, flags, kwFlags);
+          const r = input.hitDamageRangeByType?.[dt];
+          if (r && r.average > 0) {
+            rMin += r.min;
+            rMax += r.max;
+            rAvg += r.average;
+          }
+        }
+        if (preTotal > 0) {
+          // PoB2 CalcOffence.lua:5306-5358 — order-statistic roll average & over-stack crit probability
+          const stackPotential = Number.isFinite(maxPoisonStacks) && maxPoisonStacks > 0 ? uncappedStacks / maxPoisonStacks : 0;
+          const rollAvgFrac =
+            Number.isFinite(maxPoisonStacks) && stackPotential > 1
+              ? clamp((uncappedStacks - (maxPoisonStacks - 1) / 2) / (uncappedStacks + 1), 0.5, 1)
+              : 0.5;
+          const rollUplift =
+            rAvg > 0 && rMax > rMin && rollAvgFrac !== 0.5
+              ? (rMin + (rMax - rMin) * rollAvgFrac) / rAvg
+              : 1;
+          const baseCritMult = noCritAilments ? 1 : Math.max(1, (input.critMultiplierPct ?? 200) / 100);
+          const baseCritEff = 1 - critFrac + critFrac * baseCritMult;
+          const nonCritPre = baseCritEff > 0 ? preTotal / baseCritEff : preTotal;
+          const overCritFrac =
+            critFrac > 0 && critFrac < 1 && stackPotential > 1
+              ? 1 - Math.pow(Math.max(0, 1 - critFrac), Math.max(1, stackPotential))
+              : critFrac;
+          const effectivePreTotal = weightByCrit(
+            effPoisonChanceOnHitPct,
+            effPoisonChanceOnCritPct,
+            overCritFrac,
+            nonCritPre,
+            nonCritPre * baseCritMult,
+          );
+          const magInc = skillDb.sum('INC', ['AilmentMagnitude', 'PoisonMagnitude'], ailmentDamageFlags, poisonKw);
+          const magMore = skillDb.more(['AilmentMagnitude', 'PoisonMagnitude'], ailmentDamageFlags, poisonKw);
+          singleStackPoisonDps =
+            0.2 *
+            effectivePreTotal *
+            rollUplift *
+            Math.max(0, 1 + magInc / 100) *
+            magMore *
+            poisonEffectMod *
+            poisonFasterMult *
+            poisonEnemyMult;
+        }
+      } else {
+        // PoE 1: 0.30 * base(Phys + Chaos [+ Ele if CanPoison]) scaled by type/Chaos/Poison/Ailment INC & MORE
+        const { nonCritMulti, critMulti } = computePoe1DotMultiPair(
+          ['ChaosDotMultiplier', 'PoisonDotMultiplier'],
+          poisonKw,
+        );
+        const basePhys = dealNoPhys || dealNoNonFire ? 0 : getPoe1ScaledBaseForAilment('Physical', 0.5);
+        const baseChaos = dealNoChaos || dealNoNonFire ? 0 : getPoe1ScaledBaseForAilment('Chaos', 0.5);
+        const nonChaosWeight =
+          chaosPoisonChancePct > 0 && baseChaos > 0 && effPoisonChanceOnHitPct > 0
+            ? poisonChanceOnHitPct / effPoisonChanceOnHitPct
+            : 1;
+
+        let scaledBase = 0;
+        if (baseChaos > 0) {
+          const names = ['Damage', 'ChaosDamage', 'DotDamage', 'PoisonDamage'];
+          const inc = skillDb.sum('INC', names, ailmentDamageFlags, poisonKw);
+          const more = skillDb.more(names, ailmentDamageFlags, poisonKw);
+          scaledBase += baseChaos * Math.max(0, 1 + inc / 100) * more;
+        }
+        if (basePhys > 0) {
+          const names = ['Damage', 'PhysicalDamage', 'ChaosDamage', 'DotDamage', 'PoisonDamage'];
+          const inc = skillDb.sum('INC', names, ailmentDamageFlags, poisonKw);
+          const more = skillDb.more(names, ailmentDamageFlags, poisonKw);
+          scaledBase += basePhys * nonChaosWeight * Math.max(0, 1 + inc / 100) * more;
+        }
+        if (!dealNoEle) {
+          for (const el of ['Fire', 'Cold', 'Lightning'] as const) {
+            if (dealNoNonFire && el !== 'Fire') continue;
+            if ((el === 'Fire' && dealNoFire) || (el === 'Cold' && dealNoCold) || (el === 'Lightning' && dealNoLight)) {
+              continue;
+            }
+            if (!allCanPoison && !skillDb.flag(`${el}CanPoison`, flags, poisonKw)) continue;
+            const baseEl = getPoe1ScaledBaseForAilment(el, 0.5);
+            if (baseEl <= 0) continue;
+            const names = ['Damage', 'ElementalDamage', `${el}Damage`, 'ChaosDamage', 'DotDamage', 'PoisonDamage'];
+            const inc = skillDb.sum('INC', names, ailmentDamageFlags, poisonKw);
+            const more = skillDb.more(names, ailmentDamageFlags, poisonKw);
+            scaledBase += baseEl * nonChaosWeight * Math.max(0, 1 + inc / 100) * more;
+          }
+        }
+
+        if (scaledBase > 0) {
+          const weightedSource = weightByCrit(
+            effPoisonChanceOnHitPct,
+            effPoisonChanceOnCritPct,
+            critFrac,
+            scaledBase * nonCritMulti,
+            scaledBase * critMulti,
+          );
+          singleStackPoisonDps =
+            0.3 *
+            weightedSource *
+            ruthlessBlowAilmentEffect *
+            poisonEffectMod *
+            poisonFasterMult *
+            poisonEnemyMult;
         }
       }
-      if (preTotal > 0) {
-        const magInc = skillDb.sum('INC', ['AilmentMagnitude', 'IgniteMagnitude'], ailmentFlags, igniteKw);
-        const magMore = skillDb.more(['AilmentMagnitude', 'IgniteMagnitude'], ailmentFlags, igniteKw);
-        singleStackIgniteDps =
-          0.2 * preTotal * Math.max(0, 1 + magInc / 100) * magMore * igniteFasterMult * igniteEnemyMult;
-      }
-    } else {
-      const fireDotMulti =
-        baseDotMulti + skillDb.sum('BASE', ['FireDotMultiplier', 'IgniteDotMultiplier'], ailmentFlags, igniteKw);
-      const critShare =
-        effIgniteChanceFrac > 0 && critAlwaysIgnites ? Math.min(1, critFrac / effIgniteChanceFrac) : 0;
-      const effectiveDotMulti = 1 + (fireDotMulti + critShare * (noCritAilments ? 0 : 50)) / 100;
 
-      const baseFire = Math.max(0, input.baseDamageByType.Fire ?? 0);
-      let scaledBase = 0;
-      if (baseFire > 0) {
-        const names = ['Damage', 'ElementalDamage', 'FireDamage', 'DotDamage', 'IgniteDamage'];
-        const inc = skillDb.sum('INC', names, ailmentFlags, igniteKw);
-        const more = skillDb.more(names, ailmentFlags, igniteKw);
-        scaledBase += baseFire * Math.max(0, 1 + inc / 100) * more;
-      }
-      if (allCanIgnite && !dealNoNonFire) {
-        for (const dt of ['Physical', 'Cold', 'Lightning', 'Chaos'] as const) {
-          if (dealNoChaos && dt === 'Chaos') continue;
-          const baseOther = Math.max(0, input.baseDamageByType[dt] ?? 0);
-          if (baseOther <= 0) continue;
-          const names = ['Damage', 'ElementalDamage', 'FireDamage', `${dt}Damage`, 'DotDamage', 'IgniteDamage'];
-          const inc = skillDb.sum('INC', names, ailmentFlags, igniteKw);
-          const more = skillDb.more(names, ailmentFlags, igniteKw);
-          scaledBase += baseOther * Math.max(0, 1 + inc / 100) * more;
-        }
-      }
-
-      if (scaledBase > 0) {
-        singleStackIgniteDps =
-          0.9 * scaledBase * Math.max(0, effectiveDotMulti) * igniteFasterMult * igniteEnemyMult;
+      if (singleStackPoisonDps > 0) {
+        effectivePoisonStacks = Number.isFinite(maxPoisonStacks)
+          ? Math.min(maxPoisonStacks, uncappedStacks)
+          : uncappedStacks;
       }
     }
 
-    if (singleStackIgniteDps > 0) {
-      if (maxIgniteStacks > 1) {
-        effectiveIgniteStacks = Math.min(
-          maxIgniteStacks,
-          effIgniteChanceFrac * effectiveHitRate * effectiveIgniteDurationSec,
+    const totalPoisonDps = Math.min(POE_DOT_DPS_CAP, singleStackPoisonDps * effectivePoisonStacks);
+    const causticGroundPct = Math.max(
+      skillDb.max('PoisonDpsAsCausticGround', ailmentDamageFlags, poisonKw) ?? 0,
+      enemyDb.max('PoisonDpsAsCausticGround') ?? 0,
+      skillDb.sum('BASE', 'PoisonDpsAsCausticGround', ailmentDamageFlags, poisonKw),
+      enemyDb.sum('BASE', 'PoisonDpsAsCausticGround'),
+    );
+    const causticGroundDps =
+      singleStackPoisonDps > 0 && causticGroundPct > 0
+        ? Math.min(POE_DOT_DPS_CAP, (singleStackPoisonDps * causticGroundPct) / 100)
+        : 0;
+
+    // -------------------------------------------------------------------------
+    // 4.2 BLEEDING (PoE 1 Stationary 70% / Moving & Aggravated 210% / Crimson Dance 35% * min(8, stacks); PoE 2 Bleed)
+    // -------------------------------------------------------------------------
+    const bleedKw = baseAilmentKw | KeywordFlag.Bleed | KeywordFlag.Physical;
+    const cannotBleed =
+      skillDb.flag('CannotBleed', flags, bleedKw) || enemyDb.flag('BleedImmune');
+    const enemyAvoidBleedMult = Math.max(0, 1 - clamp(enemyDb.sum('BASE', 'AvoidBleed'), 0, 100) / 100);
+    let bleedChanceOnHitPct = 0;
+    let bleedChanceOnCritPct = 0;
+    if (!cannotBleed && enemyAvoidBleedMult > 0) {
+      const evalBleedChance = (isCrit: boolean): number =>
+        withTemporaryCondition(skillDb, 'CriticalStrike', isCrit, () => {
+          const chanceStats =
+            game === 'poe2'
+              ? ['BleedChance', 'EnemyBleedChance', 'AilmentChance']
+              : ['BleedChance', 'EnemyBleedChance'];
+          const base =
+            skillDb.sum('BASE', chanceStats, flags, bleedKw) +
+            enemyDb.sum('BASE', 'SelfBleedChance') +
+            (isCrit ? skillDb.sum('BASE', 'CritBleedChance', flags, bleedKw) : 0);
+          if (game === 'poe2') {
+            const ov = skillDb.override('BleedChance', flags, bleedKw);
+            if (ov !== null) return clamp(ov * enemyAvoidBleedMult, 0, 100);
+            const inc = skillDb.sum('INC', chanceStats, flags, bleedKw);
+            const more = skillDb.more(chanceStats, flags, bleedKw);
+            return clamp(base * Math.max(0, 1 + inc / 100) * more * enemyAvoidBleedMult, 0, 100);
+          }
+          return clamp(base * enemyAvoidBleedMult, 0, 100);
+        });
+      bleedChanceOnHitPct = nonCritsNoAilments ? 0 : evalBleedChance(false);
+      bleedChanceOnCritPct = noCritAilments
+        ? nonCritsNoAilments
+          ? 0
+          : bleedChanceOnHitPct
+        : evalBleedChance(true);
+    }
+    const bleedChanceFrac =
+      (bleedChanceOnHitPct / 100) * (1 - critFrac) + (bleedChanceOnCritPct / 100) * critFrac;
+    const bleedChancePct = round2(bleedChanceFrac * 100);
+
+    const isCrimsonDance =
+      game === 'poe1' && Boolean(input.crimsonDance || skillDb.flag('CrimsonDance', flags, bleedKw));
+    const isAggravatedOrMoving =
+      !isCrimsonDance &&
+      Boolean(
+        input.enemyMovingOrAggravated ||
+          enemyConfig?.enemyMoving ||
+          enemyConfig?.enemyAggravatedBleed ||
+          skillDb.flag('BleedAlwaysAggravated', flags, bleedKw) ||
+          skillDb.flag('AggravatedBleed', flags, bleedKw) ||
+          skillDb.flag('AggravatedBleeding', flags, bleedKw) ||
+          skillDb.flag('EnemyMoving', flags, bleedKw) ||
+          skillDb.getEvalContext().conditions.EnemyMoving ||
+          enemyDb.getEvalContext().conditions.Moving,
+      );
+
+    const bleedFasterMult = computeAilmentRateMod(
+      ['AilmentFaster', 'BleedFaster', 'AilmentDealDamageFaster', 'DamageFaster'],
+      ['AilmentSlower', 'BleedSlower'],
+      ['SelfBleedFaster'],
+      bleedKw,
+    );
+
+    const bleedBaseDuration = Math.max(
+      0.1,
+      skillDb.override('BleedDurationBase', ailmentUtilityFlags, bleedKw) ??
+        skillData?.bleedDuration ??
+        (skillData?.bleedDurationIsSkillDuration ? rawSkillDuration : undefined) ??
+        5.0,
+    );
+    const bleedDurStats = skillData?.bleedIsSkillEffect
+      ? [
+          'BleedDuration',
+          'AilmentDuration',
+          'EnemyBleedDuration',
+          'EnemyAilmentDuration',
+          'DamagingAilmentDuration',
+          'DurationofDamagingAilmentsDuration',
+          'Duration',
+        ]
+      : [
+          'BleedDuration',
+          'AilmentDuration',
+          'EnemyBleedDuration',
+          'EnemyAilmentDuration',
+          'DamagingAilmentDuration',
+          'DurationofDamagingAilmentsDuration',
+        ];
+    const bleedDurInc = skillDb.sum('INC', bleedDurStats, ailmentUtilityFlags, bleedKw);
+    const bleedDurMore = skillDb.more(bleedDurStats, ailmentUtilityFlags, bleedKw);
+    const enemyBleedDurMod =
+      Math.max(0, 1 + enemyDb.sum('INC', ['SelfBleedDuration', 'SelfAilmentDuration']) / 100) *
+      enemyDb.more(['SelfBleedDuration', 'SelfAilmentDuration']);
+    const enemyBleedExpireRate = Math.max(
+      0.1,
+      Math.max(0.1, 1 + enemyDb.sum('INC', 'BleedExpireRate', ailmentDamageFlags, bleedKw) / 100) *
+        enemyDb.more('BleedExpireRate', ailmentDamageFlags, bleedKw),
+    );
+    const effectiveBleedDurationSec =
+      ((bleedBaseDuration * Math.max(0.05, 1 + bleedDurInc / 100) * bleedDurMore * enemyBleedDurMod) /
+        enemyBleedExpireRate /
+        bleedFasterMult) *
+      debuffDurationMult;
+
+    let maxBleedStacks = isCrimsonDance ? 8 : 1;
+    if (game === 'poe2') {
+      if (skillDb.flag('BleedCanStack', flags, bleedKw)) {
+        const ov = skillDb.override('BleedStacks', flags, bleedKw);
+        maxBleedStacks =
+          ov !== null
+            ? Math.max(1, Math.floor(ov))
+            : Math.max(
+                1,
+                Math.floor(
+                  (1 + skillDb.sum('BASE', 'BleedStacks', flags, bleedKw)) *
+                    skillDb.more('BleedStacks', flags, bleedKw),
+                ),
+              );
+      }
+    } else if (!isCrimsonDance) {
+      const ovMax = skillDb.override('BleedStacksMax', flags, bleedKw);
+      const baseMax = skillDb.sum('BASE', 'BleedStacksMax', flags, bleedKw);
+      if (ovMax !== null) maxBleedStacks = Math.max(1, Math.floor(ovMax));
+      else if (baseMax > 1) maxBleedStacks = Math.max(1, Math.floor(baseMax));
+    }
+
+    let singleStackBleedDps = 0;
+    let effectiveBleedStacks = 0;
+
+    const eleCanBleed =
+      game === 'poe2' &&
+      (skillDb.flag('ElementalCanBleed', flags, bleedKw) ||
+        skillDb.flag('AllDamageCanBleed', flags, bleedKw));
+    const chaosCanBleed =
+      game === 'poe2' &&
+      (skillDb.flag('ChaosCanBleed', flags, bleedKw) ||
+        skillDb.flag('AllDamageCanBleed', flags, bleedKw));
+    const anyAltBleedSource =
+      eleCanBleed ||
+      chaosCanBleed ||
+      (game === 'poe2' &&
+        (skillDb.flag('FireCanBleed', flags, bleedKw) ||
+          skillDb.flag('ColdCanBleed', flags, bleedKw) ||
+          skillDb.flag('LightningCanBleed', flags, bleedKw)));
+
+    if ((isAttack || game === 'poe2') && ((!dealNoPhys && !dealNoNonFire) || anyAltBleedSource) && bleedChanceFrac > 0) {
+      const enemyPhysPdr = getEnemyResistForDot('Physical', enemyDb, enemyConfig, ailmentDamageFlags, bleedKw);
+      const enemyPhysResMult = Math.max(0.05, 1 - enemyPhysPdr / 100);
+      const enemyPhysTakenMult =
+        enemyPhysResMult *
+        getEnemyDotTakenMult('Physical', 'BleedDamageTaken', enemyDb, ailmentDamageFlags, bleedKw);
+      const bleedEffectMod = computeAilmentEffectMod(bleedKw);
+      const configBleedStacks = Math.max(
+        0,
+        enemyDb.sum('BASE', 'Multiplier:BleedStacks'),
+        enemyDb.getEvalContext().multipliers.BleedStacks ?? 0,
+      );
+      const bleedStacks =
+        configBleedStacks > 0
+          ? configBleedStacks
+          : computeAppliedStacks(bleedChanceFrac, effectiveBleedDurationSec);
+      const bleedStackPotential = bleedStacks / maxBleedStacks;
+      // PoB1 CalcOffence.lua:4539-4545 & PoB2 CalcOffence.lua:5306-5312
+      const bleedRollFrac =
+        bleedStackPotential > 1
+          ? clamp((bleedStacks - (maxBleedStacks - 1) / 2) / (bleedStacks + 1), 0.5, 1)
+          : 0.5;
+      // PoB1 CalcOffence.lua:4620 & PoB2 CalcOffence.lua:5352 — over-stacking crit probability
+      const bleedOverCritFrac =
+        critFrac > 0 && critFrac < 1 && bleedStackPotential > 1
+          ? 1 - Math.pow(Math.max(0, 1 - critFrac), Math.max(1, bleedStackPotential))
+          : critFrac;
+
+      if (game === 'poe2') {
+        const bleedTypes: DamageType[] = [];
+        if (!dealNoPhys && !dealNoNonFire) bleedTypes.push('Physical');
+        if (!dealNoEle) {
+          for (const el of ['Fire', 'Cold', 'Lightning'] as const) {
+            if (dealNoNonFire && el !== 'Fire') continue;
+            if ((el === 'Fire' && dealNoFire) || (el === 'Cold' && dealNoCold) || (el === 'Lightning' && dealNoLight)) {
+              continue;
+            }
+            if (eleCanBleed || skillDb.flag(`${el}CanBleed`, flags, bleedKw)) {
+              bleedTypes.push(el);
+            }
+          }
+        }
+        if (chaosCanBleed && !dealNoChaos && !dealNoNonFire) {
+          bleedTypes.push('Chaos');
+        }
+        let preBleedTotal = 0;
+        let rMin = 0;
+        let rMax = 0;
+        let rAvg = 0;
+        for (const dt of bleedTypes) {
+          preBleedTotal += resolvePoe2PreMitigationTypeAvg(dt, input, flags, kwFlags);
+          const r = input.hitDamageRangeByType?.[dt];
+          if (r && r.average > 0) {
+            rMin += r.min;
+            rMax += r.max;
+            rAvg += r.average;
+          }
+        }
+        if (preBleedTotal > 0) {
+          const rollUplift =
+            rAvg > 0 && rMax > rMin && bleedRollFrac !== 0.5
+              ? (rMin + (rMax - rMin) * bleedRollFrac) / rAvg
+              : 1;
+          const baseCritMult = noCritAilments ? 1 : Math.max(1, (input.critMultiplierPct ?? 200) / 100);
+          const baseCritEff = 1 - critFrac + critFrac * baseCritMult;
+          const nonCritPre = baseCritEff > 0 ? preBleedTotal / baseCritEff : preBleedTotal;
+          const effectivePreBleed = weightByCrit(
+            bleedChanceOnHitPct,
+            bleedChanceOnCritPct,
+            bleedOverCritFrac,
+            nonCritPre,
+            nonCritPre * baseCritMult,
+          );
+          const magInc = skillDb.sum(
+            'INC',
+            ['AilmentMagnitude', 'BleedingMagnitude', 'BleedMagnitude'],
+            ailmentDamageFlags,
+            bleedKw,
+          );
+          const magMore = skillDb.more(
+            ['AilmentMagnitude', 'BleedingMagnitude', 'BleedMagnitude'],
+            ailmentDamageFlags,
+            bleedKw,
+          );
+          const baseCoeff = isAggravatedOrMoving ? 0.3 : 0.15;
+          singleStackBleedDps =
+            baseCoeff *
+            effectivePreBleed *
+            rollUplift *
+            Math.max(0, 1 + magInc / 100) *
+            magMore *
+            bleedEffectMod *
+            bleedFasterMult *
+            enemyPhysTakenMult;
+        }
+      } else {
+        const basePhys = getPoe1ScaledBaseForAilment('Physical', bleedRollFrac);
+        if (basePhys > 0) {
+          const { nonCritMulti, critMulti } = computePoe1DotMultiPair(
+            ['PhysicalDotMultiplier', 'BleedDotMultiplier'],
+            bleedKw,
+          );
+          const names = ['Damage', 'PhysicalDamage', 'DotDamage', 'BleedDamage'];
+          const inc = skillDb.sum('INC', names, ailmentDamageFlags, bleedKw);
+          const more = skillDb.more(names, ailmentDamageFlags, bleedKw);
+          const scaledBase = basePhys * Math.max(0, 1 + inc / 100) * more;
+          const weightedSource = weightByCrit(
+            bleedChanceOnHitPct,
+            bleedChanceOnCritPct,
+            bleedOverCritFrac,
+            scaledBase * nonCritMulti,
+            scaledBase * critMulti,
+          );
+          const customBasePct =
+            typeof skillData?.bleedBasePercent === 'number' && skillData.bleedBasePercent > 0
+              ? skillData.bleedBasePercent / 100
+              : null;
+          // Guard against double-halving when Crimson Dance's explicit "50% less Damage with Bleeding"
+          // passive-tree line is already present in `more` (DotDamage/BleedDamage MORE -50 with KeywordFlag.Bleed).
+          const hasExplicitCrimsonDanceLess =
+            isCrimsonDance &&
+            skillDb.more(['DotDamage', 'BleedDamage'], ailmentDamageFlags, bleedKw) <= 0.5001;
+          const baseCoeff = isCrimsonDance
+            ? hasExplicitCrimsonDanceLess
+              ? (customBasePct ?? 0.7)
+              : (customBasePct ?? 0.7) * 0.5
+            : isAggravatedOrMoving
+              ? (customBasePct ?? 0.7) * 3
+              : (customBasePct ?? 0.7);
+
+          singleStackBleedDps =
+            baseCoeff *
+            weightedSource *
+            ruthlessBlowAilmentEffect *
+            bleedEffectMod *
+            bleedFasterMult *
+            enemyPhysTakenMult;
+        }
+      }
+
+      if (singleStackBleedDps > 0) {
+        // PoB1 CalcOffence.lua:4641 & PoB2 CalcOffence.lua:5399 — activeBleeds = min(bleedStacks, maxStacks)
+        effectiveBleedStacks = Math.min(maxBleedStacks, bleedStacks);
+      }
+    }
+
+    const totalBleedDps = Math.min(POE_DOT_DPS_CAP, singleStackBleedDps * effectiveBleedStacks);
+
+    // -------------------------------------------------------------------------
+    // 4.3 IGNITE (PoE 1 & PoE 2)
+    // -------------------------------------------------------------------------
+    const igniteToChaos = Boolean(
+      skillData?.IgniteToChaos ||
+        skillDb.flag('IgniteToChaos', flags, baseAilmentKw | KeywordFlag.Ignite) ||
+        skillDb.flag('IgniteDealsChaosDamage', flags, baseAilmentKw | KeywordFlag.Ignite),
+    );
+    const igniteKw = baseAilmentKw | KeywordFlag.Ignite | (igniteToChaos ? KeywordFlag.Chaos : KeywordFlag.Fire);
+    const cannotIgnite =
+      skillDb.flag('CannotIgnite', flags, igniteKw) ||
+      enemyDb.flag('IgniteImmune') ||
+      enemyDb.flag('ElementalAilmentImmune');
+    const enemyAvoidIgniteMult = Math.max(
+      0,
+      1 - clamp(enemyDb.sum('BASE', ['AvoidIgnite', 'AvoidAilments', 'AvoidElementalAilments']), 0, 100) / 100,
+    );
+    const allCanIgnite = skillDb.flag('AllDamageCanIgnite', flags, igniteKw);
+    const fireCannotIgnite = skillDb.flag('FireCannotIgnite', flags, igniteKw);
+    const physCanIgnite = allCanIgnite || skillDb.flag('PhysicalCanIgnite', flags, igniteKw);
+    const coldCanIgnite = allCanIgnite || skillDb.flag('ColdCanIgnite', flags, igniteKw);
+    const lightCanIgnite = allCanIgnite || skillDb.flag('LightningCanIgnite', flags, igniteKw);
+    const chaosCanIgnite =
+      allCanIgnite ||
+      skillDb.flag('ChaosContributesToIgnite', flags, igniteKw) ||
+      skillDb.flag('ChaosCanIgnite', flags, igniteKw);
+
+    // Precompute PoE 2 unmitigated ignite source damage for scaling threshold ignite chance (CalcOffence.lua:5614-5635)
+    let poe2IgnitePreTotal = 0;
+    const poe2IgniteTypes: DamageType[] = [];
+    if (game === 'poe2' && !cannotIgnite) {
+      if (!dealNoEle && !dealNoFire && !fireCannotIgnite) poe2IgniteTypes.push('Fire');
+      if (!dealNoNonFire) {
+        if (physCanIgnite && !dealNoPhys) poe2IgniteTypes.push('Physical');
+        if (!dealNoEle) {
+          if (coldCanIgnite && !dealNoCold) poe2IgniteTypes.push('Cold');
+          if (lightCanIgnite && !dealNoLight) poe2IgniteTypes.push('Lightning');
+        }
+        if (chaosCanIgnite && !dealNoChaos) poe2IgniteTypes.push('Chaos');
+      }
+      for (const dt of poe2IgniteTypes) {
+        poe2IgnitePreTotal += resolvePoe2PreMitigationTypeAvg(dt, input, flags, kwFlags);
+      }
+    }
+
+    let igniteChanceOnHitPct = 0;
+    let igniteChanceOnCritPct = 0;
+    if (!cannotIgnite && enemyAvoidIgniteMult > 0) {
+      if (game === 'poe2') {
+        const baseChance =
+          skillDb.sum('BASE', ['IgniteChance', 'EnemyIgniteChance', 'AilmentChance'], flags, igniteKw) +
+          enemyDb.sum('BASE', 'SelfIgniteChance');
+        const incChance =
+          skillDb.sum('INC', ['IgniteChance', 'EnemyIgniteChance', 'AilmentChance'], flags, igniteKw) +
+          enemyDb.sum('INC', 'SelfIgniteChance');
+        const moreChance =
+          skillDb.more(['IgniteChance', 'EnemyIgniteChance', 'AilmentChance'], flags, igniteKw) *
+          enemyDb.more('SelfIgniteChance');
+        const useThresholdChance = Boolean(enemyConfig) && poe2IgnitePreTotal > 0;
+        const baseCritMult = noCritAilments ? 1 : Math.max(1, (input.critMultiplierPct ?? 200) / 100);
+        const baseCritEff = 1 - critFrac + critFrac * baseCritMult;
+        const nonCritHitAvg = baseCritEff > 0 ? poe2IgnitePreTotal / baseCritEff : poe2IgnitePreTotal;
+        const critHitAvg = nonCritHitAvg * baseCritMult;
+        const enemyThreshold = getPoe2EnemyAilmentThreshold(enemyConfig?.enemyLevel ?? 82, enemyDb);
+        const threshHitPct = useThresholdChance ? (nonCritHitAvg / enemyThreshold) * 20 : 0;
+        const threshCritPct = useThresholdChance ? (critHitAvg / enemyThreshold) * 20 : 0;
+        igniteChanceOnHitPct = nonCritsNoAilments
+          ? 0
+          : clamp(
+              (threshHitPct + baseChance) * Math.max(0, 1 + incChance / 100) * moreChance * enemyAvoidIgniteMult,
+              0,
+              100,
+            );
+        igniteChanceOnCritPct = clamp(
+          (threshCritPct + baseChance) * Math.max(0, 1 + incChance / 100) * moreChance * enemyAvoidIgniteMult,
+          0,
+          100,
         );
       } else {
-        const expectedHitsInWindow = Math.max(1, effectiveHitRate * effectiveIgniteDurationSec);
-        effectiveIgniteStacks =
-          effIgniteChanceFrac >= 1 ? 1 : clamp(1 - Math.pow(1 - effIgniteChanceFrac, expectedHitsInWindow), 0, 1);
+        const critsDontAlwaysIgnite = skillDb.flag('CritsDontAlwaysIgnite', flags, igniteKw);
+        const rawHitChance = withTemporaryCondition(skillDb, 'CriticalStrike', false, () =>
+          clamp(
+            (skillDb.sum('BASE', ['IgniteChance', 'EnemyIgniteChance'], flags, igniteKw) +
+              enemyDb.sum('BASE', 'SelfIgniteChance')) *
+              enemyAvoidIgniteMult,
+            0,
+            100,
+          ),
+        );
+        igniteChanceOnHitPct = nonCritsNoAilments ? 0 : rawHitChance;
+        if (noCritAilments) {
+          // PoB1 CalcOffence.lua:4349-4352 (Elemental Overload): ChanceOnCrit = AilmentsOnlyFromCrit ? 0 : ChanceOnHit
+          igniteChanceOnCritPct = nonCritsNoAilments ? 0 : igniteChanceOnHitPct;
+        } else if (critsDontAlwaysIgnite) {
+          const critExtra = withTemporaryCondition(skillDb, 'CriticalStrike', true, () =>
+            clamp(
+              (skillDb.sum('BASE', ['IgniteChance', 'EnemyIgniteChance', 'CritIgniteChance'], flags, igniteKw) +
+                enemyDb.sum('BASE', 'SelfIgniteChance')) *
+                enemyAvoidIgniteMult,
+              0,
+              100,
+            ),
+          );
+          igniteChanceOnCritPct = critExtra;
+        } else {
+          igniteChanceOnCritPct = clamp(100 * enemyAvoidIgniteMult, 0, 100);
+        }
       }
     }
-  }
+    const effIgniteChanceFrac =
+      (igniteChanceOnHitPct / 100) * (1 - critFrac) + (igniteChanceOnCritPct / 100) * critFrac;
 
-  const totalIgniteDps = singleStackIgniteDps * effectiveIgniteStacks;
+    const igniteFasterMult = computeAilmentRateMod(
+      ['AilmentFaster', 'IgniteFaster', 'IgniteBurnFaster', 'AilmentDealDamageFaster', 'DamageFaster'],
+      ['AilmentSlower', 'IgniteSlower', 'IgniteBurnSlower'],
+      ['SelfIgniteBurnFaster', 'SelfIgniteFaster'],
+      igniteKw,
+    );
 
-  // -------------------------------------------------------------------------
-  // 4.4 `skillData` Non-Ailment Spell / Ground DoTs (Toxic Rain, Essence Drain, Vortex, RF, etc.)
-  // -------------------------------------------------------------------------
-  const skillDotByType: Record<DamageType, number> = {
-    Physical: 0,
-    Lightning: 0,
-    Cold: 0,
-    Fire: 0,
-    Chaos: 0,
-  };
-  let skillDotStacks = 1;
-  let totalSkillDotDps = 0;
+    const igniteBaseDuration = Math.max(
+      0.1,
+      skillDb.override('IgniteDurationBase', ailmentUtilityFlags, igniteKw) ??
+        skillData?.igniteDuration ??
+        4.0,
+    );
+    const igniteDurStats = [
+      'IgniteDuration',
+      'AilmentDuration',
+      'EnemyIgniteDuration',
+      'EnemyAilmentDuration',
+      'EnemyElementalAilmentDuration',
+      'DamagingAilmentDuration',
+      'DurationofDamagingAilmentsDuration',
+    ];
+    const igniteDurInc = skillDb.sum('INC', igniteDurStats, ailmentUtilityFlags, igniteKw);
+    const igniteDurMore = skillDb.more(igniteDurStats, ailmentUtilityFlags, igniteKw);
+    const enemyIgniteDurMod =
+      Math.max(
+        0,
+        1 +
+          enemyDb.sum('INC', ['SelfIgniteDuration', 'SelfAilmentDuration', 'SelfElementalAilmentDuration']) / 100,
+      ) * enemyDb.more(['SelfIgniteDuration', 'SelfAilmentDuration', 'SelfElementalAilmentDuration']);
+    const effectiveIgniteDurationSec =
+      (igniteBaseDuration *
+        Math.max(0.05, 1 + igniteDurInc / 100) *
+        igniteDurMore *
+        enemyIgniteDurMod *
+        debuffDurationMult) /
+      igniteFasterMult;
 
-  if (skillData) {
-    const rawDots: Partial<Record<DamageType, number>> = {
-      ...(skillData.dotDamageByType ?? {}),
-    };
-    if (typeof skillData.PhysicalDot === 'number') rawDots.Physical = (rawDots.Physical ?? 0) + skillData.PhysicalDot;
-    if (typeof skillData.FireDot === 'number') rawDots.Fire = (rawDots.Fire ?? 0) + skillData.FireDot;
-    if (typeof skillData.ColdDot === 'number') rawDots.Cold = (rawDots.Cold ?? 0) + skillData.ColdDot;
-    if (typeof skillData.LightningDot === 'number') rawDots.Lightning = (rawDots.Lightning ?? 0) + skillData.LightningDot;
-    if (typeof skillData.ChaosDot === 'number') rawDots.Chaos = (rawDots.Chaos ?? 0) + skillData.ChaosDot;
+    let maxIgniteStacks = 1;
+    const igniteCanStack = skillDb.flag('IgniteCanStack', flags, igniteKw);
+    const extraIgniteStacks = skillDb.sum('BASE', 'AdditionalIgniteStack', flags, igniteKw);
+    if (igniteCanStack || extraIgniteStacks > 0) {
+      const ovIgniteStacks =
+        skillDb.override('IgniteStacks', flags, igniteKw) ??
+        skillDb.override('IgniteStacksMax', flags, igniteKw);
+      if (ovIgniteStacks !== null) {
+        maxIgniteStacks = Math.max(1, Math.floor(ovIgniteStacks));
+      } else {
+        const baseExtra =
+          extraIgniteStacks + (igniteCanStack ? skillDb.sum('BASE', 'IgniteStacks', flags, igniteKw) : 0);
+        const stackMore = igniteCanStack ? skillDb.more('IgniteStacks', flags, igniteKw) : 1;
+        maxIgniteStacks = Math.max(1, Math.floor((1 + baseExtra) * stackMore));
+      }
+    }
 
-    const hasAnySkillDot = DAMAGE_TYPES.some((dt) => (rawDots[dt] ?? 0) > 0);
-    if (hasAnySkillDot) {
-      const spellApplies = Boolean(skillData.spellDmgAppliesToDot || skillData.dotIsSpell);
-      const dotCanStack = Boolean(skillData.dotCanStack || skillDb.flag('DotCanStack', flags, kwFlags));
-      const dotFlags =
-        ModFlag.Dot |
-        (spellApplies ? ModFlag.Spell : 0) |
-        (skillData.dotIsArea ? ModFlag.Area : 0) |
-        (skillData.dotIsProjectile ? ModFlag.Projectile : 0);
+    let singleStackIgniteDps = 0;
+    let effectiveIgniteStacks = 0;
+    let igniteBurningGroundBase = 0;
 
-      if (dotCanStack) {
-        const baseDur = Math.max(
-          0.1,
-          skillData.dotBaseDuration ??
-            (typeof skillData.duration === 'number' && skillData.duration > 0 ? skillData.duration : 1.0),
+    const canDealAnyIgnite =
+      game === 'poe2' ? poe2IgnitePreTotal > 0 : !dealNoEle && !dealNoFire;
+
+    if (!cannotIgnite && canDealAnyIgnite && effIgniteChanceFrac > 0) {
+      const igniteDmgElement: DamageType = igniteToChaos ? 'Chaos' : 'Fire';
+      const enemyIgniteRes = getEnemyResistForDot(igniteDmgElement, enemyDb, enemyConfig, ailmentDamageFlags, igniteKw);
+      const enemyIgniteResMult = Math.max(0.05, 1 - enemyIgniteRes / 100);
+      const enemyIgniteTakenMult = getEnemyDotTakenMult(
+        igniteDmgElement,
+        'IgniteDamageTaken',
+        enemyDb,
+        ailmentDamageFlags,
+        igniteKw,
+      );
+      const igniteEnemyMult = enemyIgniteResMult * enemyIgniteTakenMult;
+      const igniteEffectMod = computeAilmentEffectMod(igniteKw);
+
+      const igniteStacks = computeAppliedStacks(effIgniteChanceFrac, effectiveIgniteDurationSec);
+      const igniteStackPotential = igniteStacks / maxIgniteStacks;
+      // PoB1 CalcOffence.lua:5125-5131 & PoB2 CalcOffence.lua:5306-5312
+      const igniteRollFrac =
+        igniteStackPotential > 1
+          ? clamp((igniteStacks - (maxIgniteStacks - 1) / 2) / (igniteStacks + 1), 0.5, 1)
+          : 0.5;
+      // PoB1 CalcOffence.lua:5233 uses max(1, igniteStacks); PoB2 CalcOffence.lua:5352 uses max(1, stackPotential)
+      const igniteCritExponent = game === 'poe1' ? Math.max(1, igniteStacks) : Math.max(1, igniteStackPotential);
+      const igniteOverCritFrac =
+        critFrac > 0 && critFrac < 1 && igniteCritExponent > 1
+          ? 1 - Math.pow(Math.max(0, 1 - critFrac), igniteCritExponent)
+          : critFrac;
+
+      if (game === 'poe2') {
+        if (poe2IgnitePreTotal > 0) {
+          let rMin = 0;
+          let rMax = 0;
+          let rAvg = 0;
+          for (const dt of poe2IgniteTypes) {
+            const r = input.hitDamageRangeByType?.[dt];
+            if (r && r.average > 0) {
+              rMin += r.min;
+              rMax += r.max;
+              rAvg += r.average;
+            }
+          }
+          const rollUplift =
+            rAvg > 0 && rMax > rMin && igniteRollFrac !== 0.5
+              ? (rMin + (rMax - rMin) * igniteRollFrac) / rAvg
+              : 1;
+          const baseCritMult = noCritAilments ? 1 : Math.max(1, (input.critMultiplierPct ?? 200) / 100);
+          const baseCritEff = 1 - critFrac + critFrac * baseCritMult;
+          const nonCritPre = baseCritEff > 0 ? poe2IgnitePreTotal / baseCritEff : poe2IgnitePreTotal;
+          const effectivePreTotal = weightByCrit(
+            igniteChanceOnHitPct,
+            igniteChanceOnCritPct,
+            igniteOverCritFrac,
+            nonCritPre,
+            nonCritPre * baseCritMult,
+          );
+
+          const magInc = skillDb.sum('INC', ['AilmentMagnitude', 'IgniteMagnitude'], ailmentDamageFlags, igniteKw);
+          const magMore = skillDb.more(['AilmentMagnitude', 'IgniteMagnitude'], ailmentDamageFlags, igniteKw);
+          const preEnemyDps =
+            0.2 *
+            effectivePreTotal *
+            rollUplift *
+            Math.max(0, 1 + magInc / 100) *
+            magMore *
+            igniteEffectMod *
+            igniteFasterMult;
+          igniteBurningGroundBase = preEnemyDps;
+          singleStackIgniteDps = preEnemyDps * igniteEnemyMult;
+        }
+      } else {
+        const { nonCritMulti, critMulti } = computePoe1DotMultiPair(
+          ['FireDotMultiplier', 'IgniteDotMultiplier'],
+          igniteKw,
         );
-        const durInc = skillDb.sum('INC', 'Duration', dotFlags, kwFlags);
-        const durMore = skillDb.more('Duration', dotFlags, kwFlags);
-        const effDur = baseDur * Math.max(0.1, 1 + durInc / 100) * durMore;
-        const perUse = Math.max(1, skillData.dotHitsPerUse ?? 1);
-        const rawStacks = speed * perUse * effDur;
-        skillDotStacks =
-          skillData.dotMaxStacks !== undefined ? Math.min(skillData.dotMaxStacks, rawStacks) : rawStacks;
-      } else if (skillData.dotMaxStacks !== undefined && skillData.dotMaxStacks > 1) {
-        skillDotStacks = skillData.dotMaxStacks;
+        let scaledBase = 0;
+        if (!fireCannotIgnite) {
+          const baseFire = getPoe1ScaledBaseForAilment('Fire', igniteRollFrac);
+          if (baseFire > 0) {
+            const names = ['Damage', 'ElementalDamage', 'FireDamage', 'DotDamage', 'IgniteDamage'];
+            const inc = skillDb.sum('INC', names, ailmentDamageFlags, igniteKw);
+            const more = skillDb.more(names, ailmentDamageFlags, igniteKw);
+            scaledBase += baseFire * Math.max(0, 1 + inc / 100) * more;
+          }
+        }
+        if (!dealNoNonFire) {
+          const altIgniteTypes: Array<{ dt: DamageType; enabled: boolean }> = [
+            { dt: 'Physical', enabled: physCanIgnite && !dealNoPhys },
+            { dt: 'Cold', enabled: coldCanIgnite && !dealNoCold && !dealNoEle },
+            { dt: 'Lightning', enabled: lightCanIgnite && !dealNoLight && !dealNoEle },
+            { dt: 'Chaos', enabled: chaosCanIgnite && !dealNoChaos },
+          ];
+          for (const { dt, enabled } of altIgniteTypes) {
+            if (!enabled) continue;
+            const baseOther = getPoe1ScaledBaseForAilment(dt, igniteRollFrac);
+            if (baseOther <= 0) continue;
+            const names = ['Damage', 'ElementalDamage', 'FireDamage', `${dt}Damage`, 'DotDamage', 'IgniteDamage'];
+            const inc = skillDb.sum('INC', names, ailmentDamageFlags, igniteKw);
+            const more = skillDb.more(names, ailmentDamageFlags, igniteKw);
+            scaledBase += baseOther * Math.max(0, 1 + inc / 100) * more;
+          }
+        }
+
+        if (scaledBase > 0) {
+          const weightedSource = weightByCrit(
+            igniteChanceOnHitPct,
+            igniteChanceOnCritPct,
+            igniteOverCritFrac,
+            scaledBase * nonCritMulti,
+            scaledBase * critMulti,
+          );
+          const preEnemyDps =
+            0.9 * weightedSource * ruthlessBlowAilmentEffect * igniteEffectMod * igniteFasterMult;
+          igniteBurningGroundBase = preEnemyDps;
+          singleStackIgniteDps = preEnemyDps * igniteEnemyMult;
+        }
       }
 
-      for (const dt of DAMAGE_TYPES) {
-        const baseDot = rawDots[dt] ?? 0;
-        if (baseDot <= 0) continue;
-        const isEle = dt === 'Fire' || dt === 'Cold' || dt === 'Lightning';
-        if (
-          (dt === 'Physical' && dealNoPhys) ||
-          (dt === 'Fire' && dealNoFire) ||
-          (dt === 'Cold' && dealNoCold) ||
-          (dt === 'Lightning' && dealNoLight) ||
-          (isEle && dealNoEle) ||
-          (dt === 'Chaos' && dealNoChaos) ||
-          (dealNoNonFire && dt !== 'Fire')
-        ) {
-          continue;
-        }
-        const statNames = ['Damage', 'DotDamage', `${dt}Damage`, ...(isEle ? ['ElementalDamage'] : [])];
-        const inc = skillDb.sum('INC', statNames, dotFlags, kwFlags);
-        const more = skillDb.more(statNames, dotFlags, kwFlags);
-        const specDotMulti =
-          skillDb.sum('BASE', 'DotMultiplier', dotFlags, kwFlags) +
-          skillDb.sum('BASE', `${dt}DotMultiplier`, dotFlags, kwFlags);
-        const enemyRes = getEnemyResistForDot(dt, enemyDb, enemyConfig, dotFlags, kwFlags);
-        const enemyResMult = dt === 'Physical' ? 1 : Math.max(0.05, 1 - enemyRes / 100);
-        const enemyTakenMult = getEnemyDotTakenMult(dt, null, enemyDb, dotFlags, kwFlags);
+      if (singleStackIgniteDps > 0) {
+        // PoB1 CalcOffence.lua:5264 & PoB2 CalcOffence.lua:5399 — activeIgnites = min(igniteStacks, maxStacks)
+        effectiveIgniteStacks = Math.min(maxIgniteStacks, igniteStacks);
+      }
+    }
 
-        const dps =
-          baseDot *
+    const totalIgniteDps = Math.min(POE_DOT_DPS_CAP, singleStackIgniteDps * effectiveIgniteStacks);
+    const burningGroundPct = Math.max(
+      skillDb.max('IgniteDpsAsBurningGround', ailmentDamageFlags, igniteKw) ?? 0,
+      enemyDb.max('IgniteDpsAsBurningGround') ?? 0,
+      skillDb.sum('BASE', 'IgniteDpsAsBurningGround', ailmentDamageFlags, igniteKw),
+      enemyDb.sum('BASE', 'IgniteDpsAsBurningGround'),
+    );
+    let burningGroundDps = 0;
+    if (igniteBurningGroundBase > 0 && burningGroundPct > 0) {
+      // PoB1 CalcOffence.lua:5274 — Burning Ground from Ignite always uses Fire enemy mitigation (even with Blackflame!)
+      const fireKw = baseAilmentKw | KeywordFlag.Ignite | KeywordFlag.Fire;
+      const fireRes = getEnemyResistForDot('Fire', enemyDb, enemyConfig, ailmentDamageFlags, fireKw);
+      const fireEffMult =
+        Math.max(0.05, 1 - fireRes / 100) *
+        getEnemyDotTakenMult('Fire', 'IgniteDamageTaken', enemyDb, ailmentDamageFlags, fireKw);
+      burningGroundDps = Math.min(POE_DOT_DPS_CAP, (igniteBurningGroundBase * fireEffMult * burningGroundPct) / 100);
+    }
+
+    // -------------------------------------------------------------------------
+    // 4.4 `skillData` Non-Ailment Spell / Ground DoTs (Toxic Rain, Essence Drain, Vortex, RF, etc.)
+    // -------------------------------------------------------------------------
+    const skillDotByType: Record<DamageType, number> = {
+      Physical: 0,
+      Lightning: 0,
+      Cold: 0,
+      Fire: 0,
+      Chaos: 0,
+    };
+    let skillDotStacks = 1;
+    let totalSkillDotDps = 0;
+
+    if (skillData) {
+      const rawDots: Partial<Record<DamageType, number>> = {
+        ...(skillData.dotDamageByType ?? {}),
+      };
+      if (typeof skillData.PhysicalDot === 'number') rawDots.Physical = (rawDots.Physical ?? 0) + skillData.PhysicalDot;
+      if (typeof skillData.FireDot === 'number') rawDots.Fire = (rawDots.Fire ?? 0) + skillData.FireDot;
+      if (typeof skillData.ColdDot === 'number') rawDots.Cold = (rawDots.Cold ?? 0) + skillData.ColdDot;
+      if (typeof skillData.LightningDot === 'number') rawDots.Lightning = (rawDots.Lightning ?? 0) + skillData.LightningDot;
+      if (typeof skillData.ChaosDot === 'number') rawDots.Chaos = (rawDots.Chaos ?? 0) + skillData.ChaosDot;
+
+      const hasAnySkillDot = DAMAGE_TYPES.some((dt) => (rawDots[dt] ?? 0) > 0);
+      if (hasAnySkillDot) {
+        const spellApplies = Boolean(
+          skillData.spellDmgAppliesToDot ||
+            skillData.dotIsSpell ||
+            skillDb.flag('SpellDamageAppliesToDot', flags, kwFlags) ||
+            skillDb.flag('SpellDamageAppliesToDoT', flags, kwFlags),
+        );
+        const dotIsArea =
+          skillData.dotIsArea !== undefined ? Boolean(skillData.dotIsArea) : (flags & ModFlag.Area) !== 0;
+        const dotIsProjectile =
+          skillData.dotIsProjectile !== undefined
+            ? Boolean(skillData.dotIsProjectile)
+            : (flags & ModFlag.Projectile) !== 0;
+        const dotCanStack = Boolean(skillData.dotCanStack || skillDb.flag('DotCanStack', flags, kwFlags));
+        // PoB1 CalcOffence.lua:5829-5852 — strip Hit & Attack (unless explicit dotIsAttack), keep Dot + WeaponMask + Area/Proj/Spell
+        const dotFlags =
+          ModFlag.Dot |
+          (flags & WEAPON_MOD_FLAGS) |
+          (spellApplies ? ModFlag.Spell : 0) |
+          (skillData.dotIsAttack ? ModFlag.Attack : 0) |
+          (dotIsArea ? ModFlag.Area : 0) |
+          (dotIsProjectile ? ModFlag.Projectile : 0);
+        // PoB1 CalcOffence.lua:5848-5852 — SpellDamageAppliesToDot does NOT apply to enemy damage taken (Unnerve must not leak!)
+        const dotTakenFlags = dotFlags & ~(ModFlag.Spell | ModFlag.Attack);
+        const baseDotKw =
+          (kwFlags & ~KeywordFlag.Hit) |
+          (isAttack ? KeywordFlag.Attack : 0) |
+          ((flags & ModFlag.Spell) !== 0 ? KeywordFlag.Spell : 0);
+
+        if (dotCanStack) {
+          const baseDur = Math.max(
+            0.1,
+            skillData.dotBaseDuration ??
+              (typeof skillData.duration === 'number' && skillData.duration > 0 ? skillData.duration : 1.0),
+          );
+          const durInc = skillDb.sum('INC', 'Duration', dotFlags, baseDotKw);
+          const durMore = skillDb.more('Duration', dotFlags, baseDotKw);
+          const effDur = baseDur * Math.max(0.1, 1 + durInc / 100) * durMore * debuffDurationMult;
+          const perUse = Math.max(1, skillData.dotHitsPerUse ?? 1);
+          const rawStacks = speed * perUse * effDur;
+          skillDotStacks =
+            skillData.dotMaxStacks !== undefined ? Math.min(skillData.dotMaxStacks, rawStacks) : rawStacks;
+        } else if (skillData.dotMaxStacks !== undefined && skillData.dotMaxStacks > 1) {
+          skillDotStacks = skillData.dotMaxStacks;
+        }
+
+        for (const dt of DAMAGE_TYPES) {
+          const baseDot = rawDots[dt] ?? 0;
+          if (baseDot <= 0) continue;
+          const isEle = dt === 'Fire' || dt === 'Cold' || dt === 'Lightning';
+          if (
+            (dt === 'Physical' && dealNoPhys) ||
+            (dt === 'Fire' && dealNoFire) ||
+            (dt === 'Cold' && dealNoCold) ||
+            (dt === 'Lightning' && dealNoLight) ||
+            (isEle && dealNoEle) ||
+            (dt === 'Chaos' && dealNoChaos) ||
+            (dealNoNonFire && dt !== 'Fire')
+          ) {
+            continue;
+          }
+          const dotKw = baseDotKw | DAMAGE_TYPE_TO_KEYWORD[dt];
+          const statNames = ['Damage', 'DotDamage', `${dt}Damage`, ...(isEle ? ['ElementalDamage'] : [])];
+          const inc = skillDb.sum('INC', statNames, dotFlags, dotKw);
+          const more = skillDb.more(statNames, dotFlags, dotKw);
+          const dotMultiOv = skillDb.override('DotMultiplier', dotFlags, dotKw);
+          const specDotMulti =
+            dotMultiOv !== null
+              ? dotMultiOv
+              : skillDb.sum('BASE', 'DotMultiplier', dotFlags, dotKw) +
+                skillDb.sum('BASE', `${dt}DotMultiplier`, dotFlags, dotKw);
+          const enemyRes = getEnemyResistForDot(dt, enemyDb, enemyConfig, dotTakenFlags, dotKw);
+          const enemyResMult = Math.max(0.05, 1 - enemyRes / 100);
+          const enemyTakenMult = getEnemyDotTakenMult(dt, null, enemyDb, dotTakenFlags, dotKw);
+
+          const dps =
+            baseDot *
+            Math.max(0, 1 + inc / 100) *
+            more *
+            Math.max(0, 1 + specDotMulti / 100) *
+            enemyResMult *
+            enemyTakenMult *
+            skillDotStacks;
+          skillDotByType[dt] = round2(dps);
+          totalSkillDotDps += dps;
+        }
+        totalSkillDotDps = Math.min(POE_DOT_DPS_CAP, totalSkillDotDps);
+      }
+
+      // PoB1 CalcOffence.lua:5755-5792 — Decay Support flat Chaos DoT
+      const decayBase = typeof skillData.decay === 'number' && skillData.decay > 0 ? skillData.decay : 0;
+      if (decayBase > 0 && !dealNoChaos && !dealNoNonFire) {
+        const decayKw = (kwFlags & ~KeywordFlag.Hit) | KeywordFlag.Chaos;
+        const inc = skillDb.sum('INC', ['Damage', 'DotDamage', 'ChaosDamage'], ModFlag.Dot, decayKw);
+        const more = skillDb.more(['Damage', 'DotDamage', 'ChaosDamage'], ModFlag.Dot, decayKw);
+        const mult =
+          skillDb.override('DotMultiplier', ModFlag.Dot, decayKw) ??
+          skillDb.sum('BASE', 'DotMultiplier', ModFlag.Dot, decayKw) +
+            skillDb.sum('BASE', 'ChaosDotMultiplier', ModFlag.Dot, decayKw);
+        const res = getEnemyResistForDot('Chaos', enemyDb, enemyConfig, ModFlag.Dot, decayKw);
+        const taken = getEnemyDotTakenMult('Chaos', null, enemyDb, ModFlag.Dot, decayKw);
+        const decayDps =
+          decayBase *
           Math.max(0, 1 + inc / 100) *
           more *
-          Math.max(0, 1 + specDotMulti / 100) *
-          enemyResMult *
-          enemyTakenMult *
-          skillDotStacks;
-        skillDotByType[dt] = round2(dps);
-        totalSkillDotDps += dps;
+          Math.max(0, 1 + mult / 100) *
+          Math.max(0.05, 1 - res / 100) *
+          taken;
+        skillDotByType.Chaos = round2(skillDotByType.Chaos + decayDps);
+        totalSkillDotDps = Math.min(POE_DOT_DPS_CAP, totalSkillDotDps + decayDps);
       }
     }
-  }
 
-  return {
-    poison: {
-      chancePct: poisonChancePct,
-      singleStackDps: round2(singleStackPoisonDps),
-      effectiveStacks: round2(effectivePoisonStacks),
-      maxStacks: maxPoisonStacks,
-      effectiveDurationSec: round2(effectivePoisonDurationSec),
-      fasterMult: round2(poisonFasterMult),
-      totalDps: round2(totalPoisonDps),
-      isSinglePoisonCap: cannotPoisonAlreadyPoisoned,
-    },
-    bleed: {
-      chancePct: bleedChancePct,
-      singleStackDps: round2(singleStackBleedDps),
-      effectiveStacks: round2(effectiveBleedStacks),
-      maxStacks: maxBleedStacks,
-      effectiveDurationSec: round2(effectiveBleedDurationSec),
-      fasterMult: round2(bleedFasterMult),
-      isAggravatedOrMoving,
-      isCrimsonDance,
-      totalDps: round2(totalBleedDps),
-    },
-    ignite: {
-      effectiveChancePct: round2(effIgniteChanceFrac * 100),
-      singleStackDps: round2(singleStackIgniteDps),
-      effectiveStacks: round2(effectiveIgniteStacks),
-      effectiveDurationSec: round2(effectiveIgniteDurationSec),
-      fasterMult: round2(igniteFasterMult),
-      totalDps: round2(totalIgniteDps),
-    },
-    skillDot: {
-      byType: skillDotByType,
-      effectiveStacks: round2(skillDotStacks),
-      totalDps: round2(totalSkillDotDps),
-    },
-    totalDotDps: round2(totalPoisonDps + totalBleedDps + totalIgniteDps + totalSkillDotDps),
-  };
+    return {
+      poison: {
+        chancePct: poisonChancePct,
+        singleStackDps: round2(singleStackPoisonDps),
+        effectiveStacks: round2(effectivePoisonStacks),
+        maxStacks: maxPoisonStacks,
+        effectiveDurationSec: round2(effectivePoisonDurationSec),
+        fasterMult: round2(poisonFasterMult),
+        totalDps: round2(totalPoisonDps),
+        isSinglePoisonCap: cannotPoisonAlreadyPoisoned,
+      },
+      bleed: {
+        chancePct: bleedChancePct,
+        singleStackDps: round2(singleStackBleedDps),
+        effectiveStacks: round2(effectiveBleedStacks),
+        maxStacks: maxBleedStacks,
+        effectiveDurationSec: round2(effectiveBleedDurationSec),
+        fasterMult: round2(bleedFasterMult),
+        isAggravatedOrMoving,
+        isCrimsonDance,
+        totalDps: round2(totalBleedDps),
+      },
+      ignite: {
+        effectiveChancePct: round2(effIgniteChanceFrac * 100),
+        singleStackDps: round2(singleStackIgniteDps),
+        effectiveStacks: round2(effectiveIgniteStacks),
+        effectiveDurationSec: round2(effectiveIgniteDurationSec),
+        fasterMult: round2(igniteFasterMult),
+        totalDps: round2(totalIgniteDps),
+      },
+      skillDot: {
+        byType: skillDotByType,
+        effectiveStacks: round2(skillDotStacks),
+        totalDps: round2(totalSkillDotDps),
+      },
+      ...(causticGroundDps > 0 ? { causticGroundDps: round2(causticGroundDps) } : {}),
+      ...(burningGroundDps > 0 ? { burningGroundDps: round2(burningGroundDps) } : {}),
+      totalDotDps: round2(
+        Math.min(
+          POE_DOT_DPS_CAP,
+          totalPoisonDps +
+            totalBleedDps +
+            totalIgniteDps +
+            totalSkillDotDps +
+            causticGroundDps +
+            burningGroundDps,
+        ),
+      ),
+    };
+  });
 }
 
 // ============================================================================
@@ -2378,7 +3573,7 @@ export function computeMinionGroupOffence(input: MinionOffenceInput): MinionGrou
     addPacket(target, DMG_BIT[target], (totalPreMin * pct) / 100, (totalPreMax * pct) / 100);
   }
 
-  // Final converted base averages (for PoE 1 ailments)
+  // Final converted base averages & ranges (for PoE 1 ailments & top-roll selection)
   const convertedBaseAvg: Record<DamageType, number> = {
     Physical: 0,
     Lightning: 0,
@@ -2386,15 +3581,29 @@ export function computeMinionGroupOffence(input: MinionOffenceInput): MinionGrou
     Fire: 0,
     Chaos: 0,
   };
+  const convertedBaseRange: Record<DamageType, [number, number]> = {
+    Physical: [0, 0],
+    Lightning: [0, 0],
+    Cold: [0, 0],
+    Fire: [0, 0],
+    Chaos: [0, 0],
+  };
   for (const dt of DAMAGE_TYPES) {
     for (const [mn, mx] of packets[dt].values()) {
+      convertedBaseRange[dt][0] += mn;
+      convertedBaseRange[dt][1] += mx;
       convertedBaseAvg[dt] += (mn + mx) / 2;
     }
   }
 
   // Step C: Minion Accuracy / Hit Chance (Lv.20 minion gem summons Lv.70 monster per PoB monsterAccuracyTable)
   let hitChance = 100;
-  const enemyEva = Math.max(0, (enemyConfig?.enemyEvasion ?? 0) + enemyDb.sum('BASE', 'Evasion'));
+  const enemyEva = Math.max(
+    0,
+    ((enemyConfig?.enemyEvasion ?? 0) + enemyDb.sum('BASE', 'Evasion')) *
+      Math.max(0, 1 + enemyDb.sum('INC', 'Evasion') / 100) *
+      enemyDb.more('Evasion'),
+  );
   if (!isSpell && enemyEva > 0 && !minionDb.flag('HitsCantBeEvaded', flags, kwFlags)) {
     const monsterLv = effLevel <= 20 ? Math.round(4 + effLevel * 3.3) : 70 + (effLevel - 20) * 2;
     const inherentMonsterAcc = Math.round(200 * Math.pow(1.07, monsterLv));
@@ -2412,9 +3621,7 @@ export function computeMinionGroupOffence(input: MinionOffenceInput): MinionGrou
 
   // Step D: Minion Crit Chance & Crit Multiplier
   const neverCrit = minionDb.flag('NeverCrit', flags, kwFlags);
-  const noCritExtra =
-    minionDb.flag('NoCritExtraDamage', flags, kwFlags) ||
-    minionDb.flag('NoExtraDamageFromCrits', flags, kwFlags);
+  const noCritExtra = minionDb.flag('NoCritExtraDamage', flags, kwFlags);
   const enemyCritBonus = enemyDb.sum('BASE', 'SelfCritChance', flags, kwFlags);
   const enemyCritMulti = enemyDb.sum('BASE', 'SelfCritMultiplier', flags, kwFlags);
   const baseCrit = Math.max(
@@ -2469,8 +3676,12 @@ export function computeMinionGroupOffence(input: MinionOffenceInput): MinionGrou
   }
 
   // Step E: Scaled Hit Damage + Enemy Mitigation (Resistances, Curses, Penetration, Armour, Damage Taken)
-  const doubleDamagePct = clamp(minionDb.sum('BASE', 'DoubleDamageChance', flags, kwFlags), 0, 100);
-  const doubleDamageMult = 1 + doubleDamagePct / 100;
+  const doubleDamageBasePct = minionDb.sum('BASE', 'DoubleDamageChance', flags, kwFlags);
+  const doubleDamageOnCritPct = minionDb.sum('BASE', 'DoubleDamageChanceOnCrit', flags, kwFlags);
+  const doubleDamagePct = clamp(doubleDamageBasePct + (doubleDamageOnCritPct * critChance) / 100, 0, 100);
+  const tripleDamagePct = clamp(minionDb.sum('BASE', 'TripleDamageChance', flags, kwFlags), 0, 100);
+  const doubleDamageMult =
+    1 + (tripleDamagePct / 100) * 2 + (Math.max(0, Math.min(100 - tripleDamagePct, doubleDamagePct)) / 100);
   const dealNoPhys = minionDb.flag('DealNoPhysical', flags, kwFlags);
   const dealNoFire = minionDb.flag('DealNoFire', flags, kwFlags);
   const dealNoCold = minionDb.flag('DealNoCold', flags, kwFlags);
@@ -2534,6 +3745,10 @@ export function computeMinionGroupOffence(input: MinionOffenceInput): MinionGrou
       rawMin += pMin * mult;
       rawMax += pMax * mult;
     }
+    const minMore = minionDb.more(['MinDamage', `Min${dt}Damage`, `${dt}MinDamage`], flags, kwFlags);
+    const maxMore = minionDb.more(['MaxDamage', `Max${dt}Damage`, `${dt}MaxDamage`], flags, kwFlags);
+    rawMin *= minMore;
+    rawMax *= maxMore;
 
     const rawAvg = (rawMin + rawMax) / 2;
     preMitigationHitByType[dt] = rawAvg * effectiveCritMultiplier * doubleDamageMult;
@@ -2573,17 +3788,29 @@ export function computeMinionGroupOffence(input: MinionOffenceInput): MinionGrou
           : dt === 'Cold'
             ? (enemyConfig?.enemyColdResist ?? 0)
             : (enemyConfig?.enemyLightningResist ?? 0);
-      const baseRes = Math.min(enemyMaxRes, cfgRes + enemyDb.sum('BASE', `${dt}Resist`, flags, kwFlags));
+      const resNames = [`${dt}Resist`, 'ElementalResist'];
+      const ovRes = enemyDb.override(`${dt}Resist`, flags, kwFlags);
+      const rawBaseRes =
+        ovRes !== null
+          ? ovRes
+          : (cfgRes + enemyDb.sum('BASE', resNames, flags, kwFlags)) *
+            Math.max(0, 1 + enemyDb.sum('INC', resNames, flags, kwFlags) / 100) *
+            enemyDb.more(resNames, flags, kwFlags);
+      const baseRes = Math.min(enemyMaxRes, rawBaseRes);
       const pen = minionDb.sum('BASE', [`${dt}Penetration`, 'ElementalPenetration'], flags, kwFlags);
       const effRes = clamp(baseRes - pen, -200, enemyMaxRes);
       enemyFactor = 1 - effRes / 100;
     } else {
       typeTakenInc += enemyDb.sum('INC', 'ChaosDamageTaken', flags, kwFlags);
       typeTakenMore *= enemyDb.more('ChaosDamageTaken', flags, kwFlags);
-      const baseRes = Math.min(
-        enemyMaxRes,
-        (enemyConfig?.enemyChaosResist ?? 0) + enemyDb.sum('BASE', 'ChaosResist', flags, kwFlags),
-      );
+      const ovRes = enemyDb.override('ChaosResist', flags, kwFlags);
+      const rawBaseRes =
+        ovRes !== null
+          ? ovRes
+          : ((enemyConfig?.enemyChaosResist ?? 0) + enemyDb.sum('BASE', 'ChaosResist', flags, kwFlags)) *
+            Math.max(0, 1 + enemyDb.sum('INC', 'ChaosResist', flags, kwFlags) / 100) *
+            enemyDb.more('ChaosResist', flags, kwFlags);
+      const baseRes = Math.min(enemyMaxRes, rawBaseRes);
       const pen = minionDb.sum('BASE', 'ChaosPenetration', flags, kwFlags);
       const effRes = clamp(baseRes - pen, -200, enemyMaxRes);
       enemyFactor = 1 - effRes / 100;
@@ -2604,7 +3831,10 @@ export function computeMinionGroupOffence(input: MinionOffenceInput): MinionGrou
       : Math.max(0.01, minionBase.attacksPerSecond) * (1 + (minionBase.moreAttackSpeedPct ?? 0) / 100);
   const speedInc = minionDb.sum('INC', 'Speed', flags, kwFlags);
   const speedMore = minionDb.more('Speed', flags, kwFlags);
-  const speedExact = Math.max(0.01, baseRate * Math.max(0.1, 1 + speedInc / 100) * speedMore);
+  const actionSpeedMult =
+    Math.max(0.1, 1 + minionDb.sum('INC', 'ActionSpeed', flags, kwFlags) / 100) *
+    minionDb.more('ActionSpeed', flags, kwFlags);
+  const speedExact = Math.max(0.01, baseRate * Math.max(0.1, 1 + speedInc / 100) * speedMore * actionSpeedMult);
 
   const avgHitWithCrit = totalAvgHit * effectiveCritMultiplier * doubleDamageMult;
   const perMinionHitDps = avgHitWithCrit * speedExact * (hitChance / 100);
@@ -2629,7 +3859,9 @@ export function computeMinionGroupOffence(input: MinionOffenceInput): MinionGrou
     skillDb: minionDb,
     enemyDb,
     baseDamageByType: convertedBaseAvg,
+    baseDamageRangeByType: convertedBaseRange,
     preMitigationHitByType,
+    hitDamageRangeByType: damageByType,
     flags,
     keywordFlags: kwFlags,
     speed: speedExact,

@@ -22,11 +22,13 @@ const RARITY_MAP: Record<string, ItemRarity> = {
   magic: 'MAGIC',
   rare: 'RARE',
   unique: 'UNIQUE',
+  relic: 'UNIQUE',
   普通: 'NORMAL',
   魔法: 'MAGIC',
   稀有: 'RARE',
   传奇: 'UNIQUE',
   暗金: 'UNIQUE',
+  古物: 'UNIQUE',
 };
 
 const SLOT_KEYWORDS: Array<{ pattern: RegExp; slot: EquipmentSlotId | 'Any'; weaponType?: WeaponBaseStats['weaponType']; twoHanded?: boolean }> = [
@@ -57,12 +59,19 @@ const SLOT_KEYWORDS: Array<{ pattern: RegExp; slot: EquipmentSlotId | 'Any'; wea
   { pattern: /flask|药剂/i, slot: 'Flask 1' },
 ];
 
-function inferSlotAndWeapon(hintText: string): {
+function inferSlotAndWeapon(hintText: string, game: GameId = 'poe1'): {
   slotType: EquipmentSlotId | 'Any';
   weaponType?: WeaponBaseStats['weaponType'];
   twoHanded?: boolean;
 } {
   const normalizedHint = toSimplifiedZh(hintText);
+  if (game === 'poe2' && /\btalisman\b|魔符/i.test(normalizedHint) && !/\bamulet\b|项链/i.test(normalizedHint)) {
+    return {
+      slotType: 'Weapon 1',
+      weaponType: 'Talisman',
+      twoHanded: true,
+    };
+  }
   for (const entry of SLOT_KEYWORDS) {
     if (entry.pattern.test(normalizedHint)) {
       return {
@@ -208,7 +217,7 @@ export function parseItemText(
     const expectedHeaderLines = rarity === 'NORMAL' || rarity === 'MAGIC' ? 1 : 2;
     for (let k = 0; k < expectedHeaderLines && idx < lines.length; k++) {
       const candidate = lines[idx]!;
-      if (/^(?:Unique ID|Item Level|Quality|Sockets|LevelReq|Implicits|Armour|Evasion|Energy Shield|Physical Damage)\s*[:：]/i.test(candidate)) {
+      if (/^(?:Unique ID|Item Level|Quality|Sockets|LevelReq|Implicits|Armour|Evasion|Energy Shield|Runic Ward|Ward|Physical Damage)\s*[:：]/i.test(candidate)) {
         break;
       }
       nameCandidates.push(candidate);
@@ -345,12 +354,20 @@ export function parseItemText(
       continue;
     }
 
+    const qualModMatch = line.match(/^Quality\s*\(([^)]*Modifiers)\)\s*[:：]\s*\+?(\d+)%?/i);
+    if (qualModMatch) {
+      const catKind = qualModMatch[1]!.trim();
+      const catVal = Number(qualModMatch[2]);
+      if (catKind && !catalyst) catalyst = catKind;
+      if (Number.isFinite(catVal) && catalystQuality === undefined) catalystQuality = catVal;
+      continue;
+    }
+
     if (
       /^(?:Unique ID|Requirements|需求|Item Level|物品等级|Requires|需求等级|Note|备注|Weapon Range|攻击范围|Limited to|仅限|Radius|影响范围|ArmourBasePercentile|EvasionBasePercentile|EnergyShieldBasePercentile|WardBasePercentile|<ModRange\b)/i.test(line) ||
       /^(?:Rune|符文|Crafted|Prefix|Suffix|League|Source|Upgrade|Unreleased|Catalyst|CatalystQuality|Cluster Jewel Skill|Cluster Jewel Node Count|Talisman Tier|Memory Strands|Has Alt Variant(?:\s+(?:Two|Three|Four|Five))?|Allow Duplicate Variants|Has Variants|Selected Variants)\s*[:：]/i.test(line) ||
-      /^Quality\s*\([^)]*Modifiers\)\s*[:：]/i.test(line) ||
       /^(?:Str|Dex|Int|Strength|Dexterity|Intelligence|力量|敏捷|智慧|Class|职业)\s*[:：]\s*\d+/i.test(line) ||
-      /^(?:Unidentified|未鉴定|Mirrored|已复制|Split|已分裂|Historic|Foulborn Unique|Foil Unique|Synthesised Item|追忆物品|Fractured Item|分裂物品|Searing Exarch Item|Eater of Worlds Item|Shaper Item|Elder Item|Crusader Item|Hunter Item|Redeemer Item|Warlord Item)$/i.test(line)
+      /^(?:Unidentified|未鉴定|Mirrored|已复制|Split|已分裂|Sanctified|Historic|Foulborn Unique|Foil Unique(?:\s*\([^)]*\))?|Synthesised Item|追忆物品|Fractured Item|分裂物品|Searing Exarch Item|Eater of Worlds Item|Shaper Item|Elder Item|Crusader Item|Hunter Item|Redeemer Item|Warlord Item)$/i.test(line)
     ) {
       continue;
     }
@@ -374,7 +391,7 @@ export function parseItemText(
       hasArmourStats = true;
       continue;
     }
-    const wardMatch = line.match(/^(?:Ward|符文结界|结界)\s*[:：]\s*(\d+)/i);
+    const wardMatch = line.match(/^(?:Runic Ward|Ward|符文结界|结界)\s*[:：]\s*(\d+)/i);
     if (wardMatch) {
       armourStats.ward = Number(wardMatch[1]);
       hasArmourStats = true;
@@ -444,9 +461,14 @@ export function parseItemText(
       continue;
     }
 
-    // Skip standalone weapon class lines like "Wand" or "One Handed Sword"
-    if (/^(?:One Handed|Two Handed|Bow|Wand|Staff|Quarterstaff|Crossbow|Spear|Sceptre|Flail|Dagger|Claw|单手|双手|法杖|魔杖|细杖|长杖|权杖|战矛|战弩|十字弓)/i.test(line) && !/\d/.test(line)) {
-      itemClassHint = itemClassHint || line;
+    // Skip standalone weapon class lines like "Wand" or "One Handed Sword" (only before Implicits marker!)
+    if (
+      !afterImplicitsMarker &&
+      /^(?:(?:One Handed|Two Handed)\s+(?:Sword|Axe|Mace|Staff)|Bow|Bows|Wand|Wands|Staff|Staves|Warstaff|Warstaves|Quarterstaff|Quarterstaves|Crossbow|Crossbows|Spear|Spears|Sceptre|Sceptres|Flail|Flails|Dagger|Daggers|Rune Dagger|Claw|Claws|Talisman|Talismans|单手剑|单手斧|单手锤|双手剑|双手斧|双手锤|弓|法杖|魔杖|细杖|长杖|权杖|战矛|战弩|十字弓|爪|匕首|魔符)$/i.test(
+        line.trim(),
+      )
+    ) {
+      itemClassHint = itemClassHint || line.trim();
       continue;
     }
 
@@ -486,6 +508,36 @@ export function parseItemText(
   let runeImplicitsCount = 0;
   const isRuneLine = (rawLine: string): boolean => /\{rune\}|\(rune\)|（符文）/i.test(rawLine);
 
+  const CATALYST_TAG_GROUPS: Readonly<Record<string, readonly string[]>> = {
+    abrasive: ['attack'],
+    attack: ['attack'],
+    accelerating: ['speed'],
+    speed: ['speed'],
+    fertile: ['resource', 'life', 'mana'],
+    'life and mana': ['resource', 'life', 'mana'],
+    imbued: ['caster'],
+    caster: ['caster'],
+    intrinsic: ['jewellery_attribute', 'attribute'],
+    attribute: ['jewellery_attribute', 'attribute'],
+    noxious: ['physical_damage', 'chaos_damage', 'physical', 'chaos'],
+    'physical and chaos': ['physical_damage', 'chaos_damage', 'physical', 'chaos'],
+    prismatic: ['jewellery_resistance', 'elemental_resistance', 'chaos_resistance', 'resistance'],
+    resistance: ['jewellery_resistance', 'elemental_resistance', 'chaos_resistance', 'resistance'],
+    tempering: ['jewellery_defense', 'defences'],
+    defence: ['jewellery_defense', 'defences'],
+    turbulent: ['jewellery_elemental', 'elemental_damage', 'elemental'],
+    elemental: ['jewellery_elemental', 'elemental_damage', 'elemental'],
+    unstable: ['critical'],
+    critical: ['critical'],
+  };
+  const normCatalystKey = catalyst
+    ? catalyst.trim().toLowerCase().replace(/\s*modifiers\s*$/i, '')
+    : '';
+  const activeCatalystTags =
+    game === 'poe1' && normCatalystKey && catalystQuality && catalystQuality > 0
+      ? CATALYST_TAG_GROUPS[normCatalystKey]
+      : undefined;
+
   const resolveAndNormalizeModLine = (rawLine: string, rawModIndex?: number): string | null => {
     if (!shouldIncludeVariantLine(rawLine, variantSelection)) {
       return null;
@@ -496,7 +548,32 @@ export function parseItemText(
     const inlineRanges = parseModLineRangeTag(rawLine);
     const modRangeOverride =
       inlineRanges ?? (rawModIndex !== undefined ? modRanges.get(rawModIndex) : undefined);
-    const interpolated = interpolateModRanges(rawLine, modRangeOverride);
+    let interpolated = interpolateModRanges(rawLine, modRangeOverride);
+    if (activeCatalystTags && catalystQuality && /\(\d/.test(rawLine)) {
+      const mTags = rawLine.match(/\{tags:([^}]*)\}/i);
+      if (mTags?.[1]) {
+        const lineTags = mTags[1]
+          .toLowerCase()
+          .split(',')
+          .map((t) => t.trim());
+        if (activeCatalystTags.some((ct) => lineTags.includes(ct))) {
+          const catMult = 1 + catalystQuality / 100;
+          interpolated = interpolated.replace(
+            /([+-]?)(\d+(?:\.\d+)?)/g,
+            (_full, sign: string, numStr: string) => {
+              const val = Number(numStr);
+              const dotIdx = numStr.indexOf('.');
+              if (dotIdx === -1) {
+                return `${sign}${Math.trunc(val * catMult + 1e-9)}`;
+              }
+              const decimals = numStr.length - dotIdx - 1;
+              const factor = Math.pow(10, decimals);
+              return `${sign}${Math.trunc(val * catMult * factor + 1e-9) / factor}`;
+            },
+          );
+        }
+      }
+    }
     const normalized = normalizeStatLineToEn(interpolated);
     return normalized || null;
   };
@@ -544,13 +621,18 @@ export function parseItemText(
     }
   }
 
-  const inferred = inferSlotAndWeapon(`${itemClassHint} ${baseName} ${name}`);
+  const inferred = inferSlotAndWeapon(`${itemClassHint} ${baseName} ${name}`, game);
   const explicitWeaponInHeader = Boolean(
     physDamage || Object.keys(eleDamage).length > 0 || aps !== null || critChance !== null,
   );
   const explicitArmourInHeader = hasArmourStats;
-  const localStatsPrecomputed = explicitWeaponInHeader || explicitArmourInHeader;
-  const officialBase = getBaseItemStats(baseName, localStatsPrecomputed ? quality : 0, game);
+  const rawOfficialBase = getBaseItemStats(baseName, 0, game);
+  const recomputePoe2XmlLocal =
+    game === 'poe2' && !hasSeparators && Boolean(rawOfficialBase?.armour || rawOfficialBase?.weapon);
+  const localStatsPrecomputed = recomputePoe2XmlLocal
+    ? false
+    : explicitWeaponInHeader || explicitArmourInHeader;
+  const officialBase = localStatsPrecomputed ? getBaseItemStats(baseName, quality, game) : rawOfficialBase;
 
   let weaponStats: WeaponBaseStats | undefined;
   if (explicitWeaponInHeader) {

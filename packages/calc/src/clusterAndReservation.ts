@@ -1,4 +1,5 @@
 import {
+  KeywordFlag,
   ModFlag,
   type Build,
   type CompiledGemMod,
@@ -14,6 +15,7 @@ import {
 import {
   getClusterNotable,
   getGemById,
+  resolveGemFromPobRef,
   type ClusterNotableDef,
 } from '@webpob/data';
 import { normalizeStatLineToEn } from '@webpob/i18n';
@@ -463,13 +465,15 @@ function detectClusterJewelSizeIndex(jewel: Item, totalAdded: number, socketCoun
   return 0;
 }
 
-function isClusterJewelItem(jewel: Item): boolean {
+export function isClusterJewelItem(jewel: Item): boolean {
   const lowerBase = jewel.baseName.toLowerCase();
-  if (lowerBase.includes('cluster jewel')) return true;
+  const lowerName = jewel.name.toLowerCase();
+  if (lowerBase.includes('cluster jewel') || lowerName === 'voices') return true;
   const lines = collectCleanItemLines(jewel);
   return lines.some(
     (l) =>
       /^Adds \d+ Passive Skills$/i.test(l) ||
+      /^Adds \d+ Jewel Socket(?: Passive Skills)?s?$/i.test(l) ||
       /^Added Small Passive Skills (?:also )?grant:/i.test(l),
   );
 }
@@ -488,6 +492,7 @@ function parseClusterJewelMeta(jewel: Item): ParsedClusterJewelMeta {
   const allLines = collectCleanItemLines(jewel);
   let totalAdded = 0;
   let socketCount = 0;
+  let nothingCount = 0;
   let smallEffectPct = 0;
   const notableNames: string[] = [];
   const smallGrants: string[] = [];
@@ -503,9 +508,14 @@ function parseClusterJewelMeta(jewel: Item): ParsedClusterJewelMeta {
       socketCount = Number(m[1]);
       continue;
     }
-    m = line.match(/^Adds (\d+) Jewel Sockets?$/i);
+    m = line.match(/^Adds (\d+) Jewel Socket(?: Passive Skills)?s?$/i);
     if (m) {
       socketCount = Number(m[1]);
+      continue;
+    }
+    m = line.match(/^Adds (\d+) Small Passive Skills? which grant Nothing$/i);
+    if (m) {
+      nothingCount = Number(m[1]);
       continue;
     }
     m = line.match(/^1 Added Passive Skill is (.+)$/i);
@@ -534,6 +544,9 @@ function parseClusterJewelMeta(jewel: Item): ParsedClusterJewelMeta {
     if (mCount) {
       totalAdded = Number(mCount[1]);
     }
+  }
+  if (totalAdded === 0 && socketCount > 0) {
+    totalAdded = socketCount + nothingCount;
   }
   // Unique keystone small cluster jewels (1 added passive skill with no `Adds N Passive Skills` line)
   if (totalAdded === 0 && notableNames.length > 0 && socketCount === 0) {
@@ -732,8 +745,12 @@ export function evaluateAllocatedClusterJewels(
       }
 
       if (resolved) {
-        resolvedCoords.set(i, resolved);
-        claimedSubgraphKeys.add(resolved.key);
+        if (claimedSubgraphKeys.has(resolved.key)) {
+          resolvedCoords.set(i, null);
+        } else {
+          resolvedCoords.set(i, resolved);
+          claimedSubgraphKeys.add(resolved.key);
+        }
       }
     }
 
@@ -1075,17 +1092,21 @@ export function applyPoolZeroingAndKeystoneRules(
   }
 
   // --- 2. PoE 2 Infernalist Pyromantic Pact ---
+  // Note: Official PoB 2 preserves `output.Mana` (does NOT override Mana to 0 unless `Removes all Mana` is present).
   const pyromanticPact =
     hasNode('pyromantic pact') ||
-    hasLine(/Maximum Mana is replaced by .*Maximum Infernal Flame/i) ||
-    (game === 'poe2' && hasLine(/^Removes all Mana$/i));
+    hasLine(/Maximum Mana is replaced by .*Maximum Infernal Flame/i);
+  const poe2RemovesAllMana = game === 'poe2' && hasLine(/^Removes all Mana$/i);
+
+  if (poe2RemovesAllMana) {
+    if (db.override('Mana') !== 0) {
+      db.addMod(mkMod('Mana', 'OVERRIDE', 0, 'Removes all Mana'));
+    }
+    manaZeroed = true;
+  }
 
   if (pyromanticPact) {
     const src = 'Ascendancy: Pyromantic Pact';
-    if (db.override('Mana') !== 0) {
-      db.addMod(mkMod('Mana', 'OVERRIDE', 0, src));
-    }
-    manaZeroed = true;
     if (!db.flag('PyromanticPact')) {
       db.addMod(mkMod('PyromanticPact', 'FLAG', true, src));
     }
@@ -2026,12 +2047,57 @@ export function evaluateAurasAndWatchersEye(
   const globalBloodMagic = playerDb.flag('BloodMagic');
   const supremeEgo = playerDb.flag('SupremeEgo') || playerDb.flag('SelfAurasOnlyAffectYou');
 
-  const baseAuraEffectPct = playerDb.sum('INC', 'AuraEffect') + (ctx.extraAuraEffectPct ?? 0);
-  const baseCurseEffectPct = playerDb.sum('INC', 'CurseEffect') + (ctx.extraCurseEffectPct ?? 0);
-
-  const genericResEff = playerDb.sum('INC', 'ReservationEfficiency');
-  const globalManaResEff = playerDb.sum('INC', 'ManaReservationEfficiency') + genericResEff;
-  const globalLifeResEff = playerDb.sum('INC', 'LifeReservationEfficiency') + genericResEff;
+  const savedPlayerCtx = playerDb.getEvalContext();
+  playerDb.setEvalContext({
+    ...savedPlayerCtx,
+    skillTypes: {
+      ...(savedPlayerCtx.skillTypes ?? {}),
+      Aura: true,
+      aura: true,
+      Spell: true,
+      spell: true,
+      Area: true,
+      area: true,
+      Buff: true,
+      buff: true,
+      HasReservation: true,
+      hasreservation: true,
+    },
+  });
+  const auraQueryFlags = ModFlag.Spell | ModFlag.Area;
+  const auraQueryKw = KeywordFlag.Aura;
+  const baseAuraEffectPct =
+    playerDb.sum('INC', 'AuraEffect', auraQueryFlags, auraQueryKw) + (ctx.extraAuraEffectPct ?? 0);
+  const selfOnlyAuraEffectPct = playerDb.sum(
+    'INC',
+    'AuraEffectOnSelf',
+    auraQueryFlags,
+    auraQueryKw,
+  );
+  const genericResEff = playerDb.sum('INC', 'ReservationEfficiency', auraQueryFlags, auraQueryKw);
+  const globalManaResEff =
+    playerDb.sum('INC', 'ManaReservationEfficiency', auraQueryFlags, auraQueryKw) + genericResEff;
+  const globalLifeResEff =
+    playerDb.sum('INC', 'LifeReservationEfficiency', auraQueryFlags, auraQueryKw) + genericResEff;
+  playerDb.setEvalContext({
+    ...savedPlayerCtx,
+    skillTypes: {
+      ...(savedPlayerCtx.skillTypes ?? {}),
+      Curse: true,
+      curse: true,
+      Hex: true,
+      hex: true,
+      Mark: true,
+      mark: true,
+      Spell: true,
+      spell: true,
+    },
+  });
+  const baseCurseEffectPct =
+    playerDb.sum('INC', 'CurseEffect', ModFlag.Spell, KeywordFlag.Curse) +
+    (ctx.extraCurseEffectPct ?? 0);
+  const baseMarkEffectPct = baseCurseEffectPct + playerDb.sum('INC', 'MarkEffect');
+  playerDb.setEvalContext(savedPlayerCtx);
 
   interface CandidateAura {
     def: GemDefinition;
@@ -2042,6 +2108,12 @@ export function evaluateAurasAndWatchersEye(
     isCurseOrMark: boolean;
     isHerald: boolean;
     isEnemyOnlyAura: boolean;
+    isMark: boolean;
+    effQuality: number;
+    groupCurseEffectInc: number;
+    groupHasBonechill: boolean;
+    groupBonechillColdTakenInc: number;
+    groupSkitterbotAilmentEffectInc: number;
     groupHasGenerosity: boolean;
     generosityEffectPct: number;
     groupHasArrogance: boolean;
@@ -2051,6 +2123,7 @@ export function evaluateAurasAndWatchersEye(
     blessingName?: string;
     blessingEffectPct: number;
     groupHasPrismGuardian: boolean;
+    groupHasAtziriCommunion: boolean;
     localResEffPct: number;
     enlightenMult: number;
   }
@@ -2077,6 +2150,7 @@ export function evaluateAurasAndWatchersEye(
     const slotAuraInfo = inspectSlotItemAuraModifiers(slotItem);
 
     let groupEmpowerBonus = 0;
+    let groupEnhanceQualityBonus = 0;
     let groupAwakenedGenAuraLevelBonus = 0;
     let groupEnlightenMult = 1;
     let groupHasGenerosity = false;
@@ -2087,6 +2161,11 @@ export function evaluateAurasAndWatchersEye(
     let groupHasBlessing = false;
     let blessingName: string | undefined;
     let blessingEffectPct = 0;
+    let groupCurseEffectInc = 0;
+    let groupHasBonechill = false;
+    let groupBonechillColdTakenInc = 0;
+    let groupSkitterbotAilmentEffectInc = 0;
+    let groupHasAtziriCommunion = false;
 
     const applySupportByName = (
       rawName: string,
@@ -2097,6 +2176,29 @@ export function evaluateAurasAndWatchersEye(
       const lower = stripSupportSuffix(rawName);
       if (lower === 'empower' || lower === 'awakened empower') {
         groupEmpowerBonus += Math.max(0, effLevel - 1);
+      } else if (lower === 'enhance' || lower === 'awakened enhance') {
+        groupEnhanceQualityBonus += Math.max(0, effLevel - 1) * 8;
+      } else if (lower === 'mark on hit') {
+        // Official PoB1 Mark On Hit Support: -(40 - effLevel) INC CurseEffect at Lv1..20 (Lv20 = -16% + 0.25% per quality)
+        const basePenalty = -(36 - effLevel);
+        const qualBonus = Math.trunc(Math.max(0, effQuality) * 0.25);
+        groupCurseEffectInc += basePenalty + qualBonus;
+      } else if (lower === 'hextouch' || lower === 'awakened hextouch') {
+        const isAwk = lower === 'awakened hextouch';
+        const basePenalty = isAwk ? -(25 - effLevel) : -(35 - Math.floor(effLevel / 2));
+        const qualBonus = Math.trunc(Math.max(0, effQuality) * 0.25);
+        groupCurseEffectInc += basePenalty + qualBonus;
+      } else if (lower === 'blasphemy' || lower === 'awakened blasphemy') {
+        const isAwk = lower === 'awakened blasphemy';
+        const basePenalty = isAwk ? -(22 - Math.floor(effLevel / 2)) : -(25 - Math.floor(effLevel / 4));
+        const qualBonus = Math.trunc(Math.max(0, effQuality) * 0.5);
+        groupCurseEffectInc += basePenalty + qualBonus;
+      } else if (lower === 'bonechill') {
+        groupHasBonechill = true;
+        groupBonechillColdTakenInc = Math.max(0, 9 + Math.floor(effLevel / 2));
+      } else if (lower === 'unbound ailments' || lower === 'awakened unbound ailments') {
+        const isAwk = lower === 'awakened unbound ailments';
+        groupSkitterbotAilmentEffectInc += (isAwk ? 55 + effLevel * 2 : 35 + effLevel) + Math.trunc(Math.max(0, effQuality) * 0.5);
       } else if (lower === 'enlighten' || lower === 'awakened enlighten') {
         groupEnlightenMult *= Math.max(0.5, 1 - Math.max(0, effLevel - 1) * 0.04);
       } else if (lower === 'generosity' || lower === 'awakened generosity') {
@@ -2138,6 +2240,8 @@ export function evaluateAurasAndWatchersEye(
         const qualBonus =
           lower === 'eternal blessing' ? Math.trunc(Math.max(0, effQuality) * 0.25) : 0;
         blessingEffectPct += baseEff + qualBonus;
+      } else if (lower === "atziri's communion" || lower === 'atziris communion') {
+        groupHasAtziriCommunion = true;
       }
     };
 
@@ -2147,6 +2251,7 @@ export function evaluateAurasAndWatchersEye(
     }
 
     // Linked support gems in this skill group
+    const poe2PersistentPlayerSupportMods: Array<{ def: GemDefinition; effLevel: number; effQuality: number }> = [];
     for (const supInst of group.gems) {
       if (!supInst.enabled) continue;
       const supDef = lookupGem(build.game, supInst.gemId);
@@ -2156,66 +2261,268 @@ export function evaluateAurasAndWatchersEye(
       const effSupQuality = supInst.quality + supBon.qualityBonus;
       const supStats = resolveAuraLevelStats(supDef, effSupLevel);
       applySupportByName(supDef.name.en, effSupLevel, effSupQuality, supStats);
+      if (build.game === 'poe2') {
+        const supNameL = stripSupportSuffix(supDef.name.en);
+        if (supNameL === 'fire exposure') {
+          enemyDb.addMod({ name: 'FireExposure', type: 'BASE', value: 20, flags: 0, keywordFlags: 0, source: 'Support: Fire Exposure' });
+        } else if (supNameL === 'cold exposure') {
+          enemyDb.addMod({ name: 'ColdExposure', type: 'BASE', value: 20, flags: 0, keywordFlags: 0, source: 'Support: Cold Exposure' });
+        } else if (supNameL === 'lightning exposure') {
+          enemyDb.addMod({ name: 'LightningExposure', type: 'BASE', value: 20, flags: 0, keywordFlags: 0, source: 'Support: Lightning Exposure' });
+        } else if (supNameL === 'potent exposure') {
+          enemyDb.addMod({ name: 'ExposureEffect', type: 'INC', value: 20, flags: 0, keywordFlags: 0, source: 'Support: Potent Exposure' });
+        }
+        if (
+          supNameL === 'blazing critical' ||
+          supNameL === 'direstrike' ||
+          supNameL === 'direstrike i' ||
+          supNameL === 'direstrike ii' ||
+          supNameL === 'ice bite' ||
+          supNameL === 'ice bite i' ||
+          supNameL === 'ice bite ii'
+        ) {
+          const globalSupCmods = resolveAuraLevelCompiledMods(supDef, effSupLevel);
+          if (globalSupCmods && globalSupCmods.length > 0) {
+            const pMods = globalSupCmods.filter((m) => m.target === 'player');
+            if (pMods.length > 0) {
+              injectCompiledGemMods(playerDb, enemyDb, minionDb, pMods, `Support Buff: ${supDef.name.en}`, {
+                game: 'poe2',
+              });
+            }
+          }
+        }
+        if (
+          supNameL === 'precision' ||
+          supNameL === 'precision i' ||
+          supNameL === 'precision ii' ||
+          supNameL === 'clarity' ||
+          supNameL === 'clarity i' ||
+          supNameL === 'clarity ii' ||
+          supNameL === 'vitality' ||
+          supNameL === 'vitality i' ||
+          supNameL === 'vitality ii' ||
+          supNameL === 'mysticism' ||
+          supNameL === 'mysticism i' ||
+          supNameL === 'mysticism ii' ||
+          supNameL === 'herbalism' ||
+          supNameL === 'herbalism i' ||
+          supNameL === 'herbalism ii' ||
+          supNameL === 'cannibalism' ||
+          supNameL === 'cannibalism i' ||
+          supNameL === 'cannibalism ii'
+        ) {
+          poe2PersistentPlayerSupportMods.push({ def: supDef, effLevel: effSupLevel, effQuality: effSupQuality });
+        }
+      }
+    }
+    if (build.game === 'poe2' && poe2PersistentPlayerSupportMods.length > 0) {
+      const groupHasPersistentActive = group.gems.some((g) => {
+        if (!g.enabled) return false;
+        const gd = lookupGem('poe2', g.gemId);
+        if (!gd || gd.category !== 'active') return false;
+        const tl = new Set(gd.tags.map((t) => t.toLowerCase()));
+        return Boolean(gd.isAuraOrBuff || (gd.spiritReservation ?? 0) > 0 || tl.has('persistent') || tl.has('aura') || tl.has('herald'));
+      });
+      if (groupHasPersistentActive) {
+        for (const ps of poe2PersistentPlayerSupportMods) {
+          const cmods = resolveAuraLevelCompiledMods(ps.def, ps.effLevel);
+          if (cmods && cmods.length > 0) {
+            const pMods = cmods.filter((m) => m.target === 'player');
+            if (pMods.length > 0) {
+              injectCompiledGemMods(playerDb, enemyDb, minionDb, pMods, `Support Buff: ${ps.def.name.en}`, {
+                game: 'poe2',
+              });
+            }
+          }
+        }
+      }
     }
 
     // Evaluate active auras / buffs / curses in this skill group
     for (const gemInst of group.gems) {
       if (!gemInst.enabled) continue;
-      const def = lookupGem(build.game, gemInst.gemId);
-      if (!def) continue;
+      const rawDef = lookupGem(build.game, gemInst.gemId);
+      if (!rawDef) continue;
 
-      const tags = new Set(def.tags.map((t) => t.toLowerCase()));
-      const canonicalAuraName =
-        WATCHERS_EYE_AURA_BY_LOWER.get(def.name.en.trim().toLowerCase()) ?? null;
-      const isCurseOrMark = tags.has('curse') || tags.has('mark');
-      const isHerald = tags.has('herald');
-      const isAura =
-        !isCurseOrMark &&
-        !isHerald &&
-        (tags.has('aura') || (def.manaReservationPct ?? 0) > 0 || canonicalAuraName !== null);
-      const isGlobalBuff =
-        Boolean(def.isAuraOrBuff) ||
-        (def.category === 'active' && (isAura || isCurseOrMark || (def.spiritReservation ?? 0) > 0));
-      if (!isGlobalBuff) continue;
+      const subGems: Array<{ def: GemDefinition; fromVaalGem: boolean }> = [];
+      if (build.game === 'poe1' && /^Vaal\s+/i.test(rawDef.name.en)) {
+        // In PoB 1 SkillsTab/CalcSetup, Vaal aura/buff gems list Base skill as [1] (enableGlobal1, default ON)
+        // and the temporary Vaal active skill as [2] (enableGlobal2, default OFF unless explicitly true).
+        if (gemInst.enableGlobal1 !== false) {
+          const baseName = rawDef.name.en
+            .replace(/^Vaal\s+Impurity\s+of\s+/i, 'Purity of ')
+            .replace(/^Vaal\s+/i, '')
+            .trim();
+          const slug = `poe1_${baseName.toLowerCase().replace(/[^a-z0-9]+/g, '')}`;
+          const baseDef =
+            lookupGem('poe1', slug) ??
+            resolveGemFromPobRef('poe1', { nameSpec: baseName });
+          if (baseDef && baseDef.id !== rawDef.id) {
+            subGems.push({ def: baseDef, fromVaalGem: true });
+          }
+        }
+        if (gemInst.enableGlobal2 === true) {
+          subGems.push({ def: rawDef, fromVaalGem: true });
+        }
+      } else {
+        if (gemInst.enableGlobal1 === false) continue;
+        subGems.push({ def: rawDef, fromVaalGem: false });
+      }
 
-      const isEnemyOnlyAura = canonicalAuraName === 'Pride';
-      const gemBon = resolveGemBonuses(def, playerDb, groupSocketedRules);
-      const awakenedBonus = isAura && !isEnemyOnlyAura ? groupAwakenedGenAuraLevelBonus : 0;
-      const effLevel = Math.min(
-        40,
-        Math.max(1, gemInst.level + gemBon.levelBonus + groupEmpowerBonus + awakenedBonus),
-      );
+      for (const { def, fromVaalGem } of subGems) {
+        const tags = new Set(def.tags.map((t) => t.toLowerCase()));
+        const lowerGemName = def.name.en.trim().toLowerCase();
+        const canonicalAuraName =
+          WATCHERS_EYE_AURA_BY_LOWER.get(lowerGemName) ?? null;
+        const isMark = tags.has('mark');
+        const isCurseOrMark = tags.has('curse') || isMark;
+        const isHerald = tags.has('herald');
+        const isRighteousFireBuff =
+          build.game === 'poe1' &&
+          (lowerGemName === 'righteous fire' || lowerGemName === 'righteous fire of arcane devotion');
+        const isSmiteBuff = build.game === 'poe1' && lowerGemName === 'smite';
+        const isBloodRageBuff = build.game === 'poe1' && lowerGemName === 'blood rage';
+        const isFlameSurgeBuff = build.game === 'poe1' && lowerGemName === 'flame surge';
+        const isFlameWallBuff =
+          build.game === 'poe2' &&
+          lowerGemName === 'flame wall' &&
+          Boolean(
+            playerDb.getEvalContext().conditions.FlameWallAddedDamage ||
+              build.config.rawInputs?.flameWallAddedDamage,
+          );
+        const isArcaneCloakBuff =
+          build.game === 'poe1' &&
+          lowerGemName === 'arcane cloak' &&
+          (Boolean(
+            playerDb.getEvalContext().conditions.ArcaneCloakUsedRecently ||
+              build.config.activeGuardSkill === 'ArcaneCloak',
+          ) ||
+            (build.config.activeGuardSkill !== 'MoltenShell' &&
+              build.config.activeGuardSkill !== 'Steelskin' &&
+              build.config.rawInputs?.arcaneCloakUsedRecentlyCheck !== false));
+        if (isArcaneCloakBuff) {
+          playerDb.setCondition('ArcaneCloakUsedRecently', true);
+        }
+        const isSigilOfPowerBuff =
+          lowerGemName === 'sigil of power' &&
+          (build.game === 'poe2' || (playerDb.getEvalContext().multipliers.SigilOfPowerStage ?? 0) > 0);
+        if (
+          isSigilOfPowerBuff &&
+          build.game === 'poe2' &&
+          (playerDb.getEvalContext().multipliers.SigilOfPowerStage ?? 0) <= 0
+        ) {
+          playerDb.setMultiplier('SigilOfPowerStage', 1);
+        }
+        if (isCurseOrMark) {
+          const cleanCurseKey = def.name.en.replace(/[^A-Za-z]/g, '');
+          if (cleanCurseKey) {
+            playerDb.setCondition(`SelfCast${cleanCurseKey}`, true);
+          }
+        }
+        const isElementalConfluxBuff =
+          build.game === 'poe2' && lowerGemName === 'elemental conflux';
+        const hasGlobalEffectCmod =
+          build.game === 'poe2' &&
+          def.category === 'active' &&
+          Boolean(
+            def.compiledMods?.some(
+              (m) =>
+                m.target === 'enemy' &&
+                (m.name.endsWith('Exposure') ||
+                  m.name === 'DamageTaken' ||
+                  m.name === 'SelfCritChance' ||
+                  m.name === 'SelfCritMultiplier'),
+            ) ||
+              def.compiledMods?.some(
+                (m) =>
+                  m.target === 'player' &&
+                  (lowerGemName === 'charged staff' ||
+                    lowerGemName === 'war banner' ||
+                    lowerGemName === 'electrocuting arrow' ||
+                    lowerGemName === 'voltaic mark' ||
+                    lowerGemName === 'freezing mark' ||
+                    lowerGemName === 'pain offering' ||
+                    (lowerGemName === 'demon form' && Boolean(playerDb.getEvalContext().conditions.DemonForm))),
+              ) ||
+              def.compiledMods?.some((m) => m.target === 'minion' && lowerGemName === 'pain offering'),
+          );
+        const isAura =
+          !isCurseOrMark &&
+          !isHerald &&
+          !isRighteousFireBuff &&
+          !isBloodRageBuff &&
+          !isFlameWallBuff &&
+          !isArcaneCloakBuff &&
+          !isSigilOfPowerBuff &&
+          !isElementalConfluxBuff &&
+          !hasGlobalEffectCmod &&
+          (isSmiteBuff || tags.has('aura') || (def.manaReservationPct ?? 0) > 0 || canonicalAuraName !== null);
+        const isGlobalBuff =
+          Boolean(def.isAuraOrBuff) ||
+          isHerald ||
+          isRighteousFireBuff ||
+          isBloodRageBuff ||
+          isFlameWallBuff ||
+          isSmiteBuff ||
+          isFlameSurgeBuff ||
+          isArcaneCloakBuff ||
+          isSigilOfPowerBuff ||
+          isElementalConfluxBuff ||
+          hasGlobalEffectCmod ||
+          (def.category === 'active' && (isAura || isCurseOrMark || (def.spiritReservation ?? 0) > 0));
+        if (!isGlobalBuff) continue;
 
-      const candidate: CandidateAura = {
-        def,
-        gemInst,
-        effLevel,
-        canonicalAuraName,
-        isAura,
-        isCurseOrMark,
-        isHerald,
-        isEnemyOnlyAura,
-        groupHasGenerosity,
-        generosityEffectPct,
-        groupHasArrogance,
-        arroganceEffectPct,
-        arroganceResMult,
-        groupHasBlessing,
-        blessingName,
-        blessingEffectPct,
-        groupHasPrismGuardian: slotAuraInfo.reservesLifeInsteadOfMana,
-        localResEffPct: slotAuraInfo.localReservationEfficiencyPct,
-        enlightenMult: groupEnlightenMult,
-      };
+        const isEnemyOnlyAura = canonicalAuraName === 'Pride';
+        const defForBonus =
+          fromVaalGem && !tags.has('vaal')
+            ? { ...def, tags: [...def.tags, 'vaal'] }
+            : def;
+        const gemBon = resolveGemBonuses(defForBonus, playerDb, groupSocketedRules);
+        const awakenedBonus = isAura && !isEnemyOnlyAura ? groupAwakenedGenAuraLevelBonus : 0;
+        const effLevel = Math.min(
+          40,
+          Math.max(1, gemInst.level + gemBon.levelBonus + groupEmpowerBonus + awakenedBonus),
+        );
+        const effQuality = Math.max(0, (gemInst.quality ?? 0) + gemBon.qualityBonus + groupEnhanceQualityBonus);
 
-      const prev = deduped.get(def.id);
-      if (
-        !prev ||
-        candidate.effLevel > prev.effLevel ||
-        (candidate.effLevel === prev.effLevel &&
-          candidate.enlightenMult < prev.enlightenMult)
-      ) {
-        deduped.set(def.id, candidate);
+        const candidate: CandidateAura = {
+          def,
+          gemInst,
+          effLevel,
+          effQuality,
+          canonicalAuraName,
+          isAura,
+          isCurseOrMark,
+          isMark,
+          isHerald,
+          isEnemyOnlyAura,
+          groupCurseEffectInc,
+          groupHasBonechill,
+          groupBonechillColdTakenInc,
+          groupSkitterbotAilmentEffectInc,
+          groupHasGenerosity,
+          generosityEffectPct,
+          groupHasArrogance,
+          arroganceEffectPct,
+          arroganceResMult,
+          groupHasBlessing,
+          blessingName,
+          blessingEffectPct,
+          groupHasPrismGuardian: slotAuraInfo.reservesLifeInsteadOfMana,
+          groupHasAtziriCommunion,
+          localResEffPct: slotAuraInfo.localReservationEfficiencyPct,
+          enlightenMult: groupEnlightenMult,
+        };
+
+        const prev = deduped.get(def.id);
+        if (
+          !prev ||
+          candidate.effLevel > prev.effLevel ||
+          (candidate.effLevel === prev.effLevel &&
+            candidate.enlightenMult < prev.enlightenMult)
+        ) {
+          deduped.set(def.id, candidate);
+        }
       }
     }
   }
@@ -2235,16 +2542,248 @@ export function evaluateAurasAndWatchersEye(
   const maxMana = ctx.maxMana ?? Math.round(playerDb.calcStat('Mana').total);
   const maxLife = ctx.maxLife ?? Math.round(playerDb.calcStat('Life').total);
 
-  for (const cand of deduped.values()) {
-    const { def, gemInst, effLevel, isAura, isCurseOrMark, isHerald, isEnemyOnlyAura } = cand;
-    const windDancerDisallowed =
-      def.id === 'poe2_winddancer' &&
-      (ctx.mainWeaponType === 'Quarterstaff' || ctx.mainWeaponType === 'Wand');
-    const rawStats = windDancerDisallowed ? [] : resolveAuraLevelStats(def, effLevel);
-    const compiledMods = windDancerDisallowed ? undefined : resolveAuraLevelCompiledMods(def, effLevel);
+  const curseLimit = playerDb.flag('CurseLimitIsMaximumPowerCharges')
+    ? Math.max(
+        1,
+        3 + Math.round(playerDb.sum('BASE', ['MaxPowerCharges', 'PowerChargesMax'])),
+      )
+    : Math.max(
+        1,
+        1 + Math.round(playerDb.sum('BASE', ['AdditionalCurse', 'CurseLimit'])),
+      );
+  let appliedHexCount = 0;
+  let appliedMarkCount = 0;
+  if (!playerDb.flag('ChaosInoculation') && (playerDb.getEvalContext().stats.LifeUnreserved ?? 0) <= 0) {
+    playerDb.setStat('LifeUnreserved', Math.max(2, maxLife));
+  }
+  if ((playerDb.getEvalContext().stats.ManaUnreserved ?? 0) <= 0 && maxMana > 0) {
+    playerDb.setStat('ManaUnreserved', maxMana);
+  }
+
+  const hexPriority = (cand: CandidateAura): number => {
+    if (!cand.isCurseOrMark || cand.isMark) return 0;
+    const nm = cand.def.name.en.trim().toLowerCase();
+    if (
+      nm === 'elemental weakness' ||
+      nm === 'conductivity' ||
+      nm === 'flammability' ||
+      nm === 'frostbite' ||
+      nm === 'despair' ||
+      nm === 'vulnerability' ||
+      nm === 'punishment'
+    ) {
+      return 1;
+    }
+    return 2;
+  };
+  const orderedCandidates = [...deduped.values()].sort((a, b) => hexPriority(a) - hexPriority(b));
+
+  for (const cand of orderedCandidates) {
+    const { def, gemInst, effLevel, effQuality, isAura, isCurseOrMark, isMark, isHerald, isEnemyOnlyAura } = cand;
+    if (isCurseOrMark) {
+      const lowerCurseMark = def.name.en.trim().toLowerCase();
+      // PoE 2 Freezing Mark / Voltaic Mark grant a 10s player buff on activation; Pounce (Predator's Mark) stacks with utility marks
+      const isPoe2SecondaryMarkBuff =
+        build.game === 'poe2' &&
+        (lowerCurseMark === 'freezing mark' ||
+          lowerCurseMark === 'voltaic mark' ||
+          lowerCurseMark === 'pounce');
+      if (isMark) {
+        if (appliedMarkCount >= 1 && !isPoe2SecondaryMarkBuff) continue;
+        if (!isPoe2SecondaryMarkBuff) appliedMarkCount++;
+      } else {
+        if (appliedHexCount >= curseLimit) continue;
+        appliedHexCount++;
+      }
+      if (build.game === 'poe2' && lowerCurseMark === 'pounce') {
+        const capVal = 45 + Math.floor(Math.max(0, effQuality) * 0.75);
+        const perVal = 3 + Math.max(0, effQuality) * 0.05;
+        const rawMinions =
+          typeof build.config.rawInputs?.multiplierMinionsInPresence === 'number'
+            ? build.config.rawInputs.multiplierMinionsInPresence
+            : build.skills.some(
+                  (grp) =>
+                    grp.enabled &&
+                    grp.gems.some((gm) => {
+                      if (!gm.enabled) return false;
+                      const gd = lookupGem('poe2', gm.gemId);
+                      return Boolean(gd && (gd.minionBase || gd.tags.some((t) => /minion|companion/i.test(t))));
+                    }),
+                )
+              ? 15
+              : 8;
+        const markEffInc =
+          baseMarkEffectPct + cand.groupCurseEffectInc + playerDb.sum('INC', 'MarkEffect');
+        const rawPredTaken = Math.min(capVal, Math.floor(rawMinions * perVal + 1e-9));
+        const scaledPredTaken = Math.floor(rawPredTaken * Math.max(0, 1 + markEffInc / 100) + 1e-9);
+        if (scaledPredTaken > 0) {
+          enemyDb.addMod({
+            name: 'DamageTaken',
+            type: 'INC',
+            value: scaledPredTaken,
+            flags: 0,
+            keywordFlags: 0,
+            source: `Predator's Mark (Pounce Q${effQuality})`,
+          });
+        }
+        enemyDb.setCondition('Marked', true);
+        playerDb.setCondition('EnemyMarked', true);
+        continue;
+      }
+      enemyDb.setCondition('Cursed', true);
+      playerDb.setCondition('EnemyCursed', true);
+      if (isMark) {
+        enemyDb.setCondition('Marked', true);
+        playerDb.setCondition('EnemyMarked', true);
+      }
+    }
+    const rawStats = resolveAuraLevelStats(def, effLevel);
+    const baseCompiledMods = resolveAuraLevelCompiledMods(def, effLevel);
+    let qualCurseEffInc = 0;
+    const scaledQualityMods =
+      effQuality > 0 && def.qualityCompiledMods
+        ? def.qualityCompiledMods
+            .map((qm) => {
+              if (qm.name === 'CurseEffect' && qm.type === 'INC' && typeof qm.value === 'number') {
+                qualCurseEffInc += Math.trunc(qm.value * effQuality + Math.sign(qm.value) * 1e-9);
+                return null;
+              }
+              if (typeof qm.value === 'number') {
+                const v = Math.trunc(qm.value * effQuality + Math.sign(qm.value) * 1e-9);
+                return v !== 0 ? { ...qm, value: v } : null;
+              }
+              return qm;
+            })
+            .filter((m): m is NonNullable<typeof m> => m !== null)
+        : [];
+    const rawCombinedMods =
+      baseCompiledMods && baseCompiledMods.length > 0
+        ? [...baseCompiledMods, ...scaledQualityMods]
+        : scaledQualityMods.length > 0
+          ? scaledQualityMods
+          : undefined;
+    const compiledMods =
+      rawCombinedMods && def.name.en.trim().toLowerCase() === 'sigil of power'
+        ? rawCombinedMods.filter((m, idx, arr) => {
+            const sig = `${m.name}|${m.type}|${m.value}|${m.flags ?? 0}|${m.keywordFlags ?? 0}|${m.target ?? ''}|${JSON.stringify(m.tags ?? [])}`;
+            return (
+              arr.findIndex(
+                (x) =>
+                  `${x.name}|${x.type}|${x.value}|${x.flags ?? 0}|${x.keywordFlags ?? 0}|${x.target ?? ''}|${JSON.stringify(x.tags ?? [])}` ===
+                  sig,
+              ) === idx
+            );
+          })
+        : rawCombinedMods;
     const sourceLabel = `Aura/Buff: ${def.name.en}${effLevel !== gemInst.level ? ` (Lv.${effLevel})` : ''}`;
     const parsedBaseMods =
       compiledMods && compiledMods.length > 0 ? [] : parseModLines(rawStats, sourceLabel);
+
+    // Summon Skitterbots (PoB1 CalcPerform.lua:1436-1460): guaranteed Shock & Chill aura on enemies
+    const lowerAuraName = def.name.en.trim().toLowerCase();
+    // PoE 1 Flame Surge: creates Burning Ground dealing 25% of Ignite DPS (unscalable global buff)
+    if (build.game === 'poe1' && lowerAuraName === 'flame surge') {
+      enemyDb.addMod({
+        name: 'IgniteDpsAsBurningGround',
+        type: 'MAX',
+        value: 25,
+        flags: 0,
+        keywordFlags: 0,
+        source: sourceLabel,
+      });
+    }
+    // PoE 1 Alchemist's Mark: Caustic Ground (% of single Poison DPS) & Burning Ground (% of Ignite DPS)
+    if (build.game === 'poe1' && lowerAuraName === "alchemist's mark") {
+      const clampedLv = Math.min(40, Math.max(1, effLevel));
+      const baseCausticPct = 59 + clampedLv;
+      const baseBurningPct =
+        clampedLv >= 36 ? 31 : clampedLv >= 30 ? 30 : 20 + Math.floor(clampedLv / 3);
+      const effectiveMarkQualInc =
+        qualCurseEffInc !== 0 ? qualCurseEffInc : Math.trunc(Math.max(0, effQuality) * 0.5);
+      const totalMarkEffInc = baseMarkEffectPct + cand.groupCurseEffectInc + effectiveMarkQualInc;
+      const markEffMult = Math.max(0, 1 + totalMarkEffInc / 100);
+      const causticPct = Math.floor(baseCausticPct * markEffMult + 1e-9);
+      const burningPct = Math.floor(baseBurningPct * markEffMult + 1e-9);
+      if (causticPct > 0) {
+        enemyDb.addMod({
+          name: 'PoisonDpsAsCausticGround',
+          type: 'MAX',
+          value: causticPct,
+          flags: 0,
+          keywordFlags: 0,
+          source: sourceLabel,
+        });
+      }
+      if (burningPct > 0) {
+        enemyDb.addMod({
+          name: 'IgniteDpsAsBurningGround',
+          type: 'MAX',
+          value: burningPct,
+          flags: 0,
+          keywordFlags: 0,
+          source: sourceLabel,
+        });
+      }
+    }
+    // PoE 2 Elemental Conflux (act_int.lua:5652, ConfigOptions.lua:401-419): Average divides by 3 (`invert = true`)
+    if (build.game === 'poe2' && lowerAuraName === 'elemental conflux') {
+      const clampedLv = Math.min(40, Math.max(1, effLevel));
+      const lvBase =
+        clampedLv <= 30 ? 39 + clampedLv : 69 + Math.floor((clampedLv - 30) / 2);
+      const qualMore = Math.trunc(Math.max(0, effQuality) * 0.5);
+      const fullMore = lvBase + qualMore;
+      const confluxMode = Number(build.config.rawInputs?.elementalConfluxElement ?? 1);
+      if (confluxMode === 2) {
+        playerDb.addMod({ name: 'LightningDamage', type: 'MORE', value: fullMore, flags: 0, keywordFlags: 0, source: sourceLabel });
+      } else if (confluxMode === 3) {
+        playerDb.addMod({ name: 'ColdDamage', type: 'MORE', value: fullMore, flags: 0, keywordFlags: 0, source: sourceLabel });
+      } else if (confluxMode === 4) {
+        playerDb.addMod({ name: 'FireDamage', type: 'MORE', value: fullMore, flags: 0, keywordFlags: 0, source: sourceLabel });
+      } else {
+        const avgMore = Math.round((fullMore / 3) * 100) / 100;
+        playerDb.addMod({ name: 'LightningDamage', type: 'MORE', value: avgMore, flags: 0, keywordFlags: 0, source: sourceLabel });
+        playerDb.addMod({ name: 'ColdDamage', type: 'MORE', value: avgMore, flags: 0, keywordFlags: 0, source: sourceLabel });
+        playerDb.addMod({ name: 'FireDamage', type: 'MORE', value: avgMore, flags: 0, keywordFlags: 0, source: sourceLabel });
+      }
+    }
+    if (build.game === 'poe1' && lowerAuraName === 'summon skitterbots') {
+      const skitterShockInc =
+        (baseCompiledMods?.find((m) => m.name === 'EnemyShockEffect' && typeof m.value === 'number')?.value as number | undefined) ??
+        Math.min(20, Math.floor(effLevel));
+      const skitterChillInc =
+        (baseCompiledMods?.find((m) => m.name === 'EnemyChillEffect' && typeof m.value === 'number')?.value as number | undefined) ??
+        Math.min(20, Math.floor(effLevel));
+      const totalSkitterAilInc =
+        playerDb.sum('INC', 'SkitterbotAilmentEffect') + cand.groupSkitterbotAilmentEffectInc;
+      const shockEff = Math.floor(15 * Math.max(0, 1 + (skitterShockInc + totalSkitterAilInc) / 100));
+      const chillEff = Math.floor(10 * Math.max(0, 1 + (skitterChillInc + totalSkitterAilInc) / 100));
+      if (shockEff > 0) {
+        playerDb.addMod({
+          name: 'ShockOverride',
+          type: 'BASE',
+          value: shockEff,
+          flags: 0,
+          keywordFlags: 0,
+          source: 'Summon Skitterbots',
+        });
+        playerDb.setCondition('EnemyShocked', true);
+        enemyDb.setCondition('Shocked', true);
+      }
+      if (chillEff > 0) {
+        playerDb.setCondition('EnemyChilled', true);
+        enemyDb.setCondition('Chilled', true);
+        if (cand.groupHasBonechill) {
+          enemyDb.addMod({
+            name: 'ColdDamageTaken',
+            type: 'INC',
+            value: chillEff + cand.groupBonechillColdTakenInc,
+            flags: 0,
+            keywordFlags: 0,
+            source: 'Summon Skitterbots (Bonechill)',
+          });
+        }
+      }
+    }
 
     const blockedFromPlayerBy: EvaluatedAuraEntry['blockedFromPlayerBy'] = [];
     const affectedByGenerosity = isAura && !isEnemyOnlyAura && cand.groupHasGenerosity;
@@ -2259,7 +2798,7 @@ export function evaluateAurasAndWatchersEye(
     const appliesToMinions = isAura && !isEnemyOnlyAura && !supremeEgo;
 
     const auraEffectPctForPlayer = isAura
-      ? baseAuraEffectPct + cand.arroganceEffectPct + cand.blessingEffectPct
+      ? baseAuraEffectPct + selfOnlyAuraEffectPct + cand.arroganceEffectPct + cand.blessingEffectPct
       : 0;
     const auraEffectPctForMinions = isAura
       ? baseAuraEffectPct +
@@ -2357,8 +2896,14 @@ export function evaluateAurasAndWatchersEye(
       const allyCmods = compiledMods.filter((m) => m.target === 'player');
 
       if (enemyCmods.length > 0) {
+        const poe2BossHexMult =
+          build.game === 'poe2' && isCurseOrMark && !isMark && build.config.enemyIsBoss !== 'None'
+            ? 0.5
+            : 1;
+        const totalCurseInc =
+          (isMark ? baseMarkEffectPct : baseCurseEffectPct) + cand.groupCurseEffectInc + qualCurseEffInc;
         const enemyMult = isCurseOrMark
-          ? 1 + baseCurseEffectPct / 100
+          ? Math.max(0, 1 + totalCurseInc / 100) * poe2BossHexMult
           : (1 + auraEffectPctForPlayer / 100) * supremeEgoMoreMult;
         injectCompiledGemMods(playerDb, enemyDb, minionDb, enemyCmods, sourceLabel, {
           game: build.game,
@@ -2367,20 +2912,62 @@ export function evaluateAurasAndWatchersEye(
         });
       }
 
-      if (allyCmods.length > 0 && appliesToPlayer) {
+      const isPoe2MinionOffering =
+        build.game === 'poe2' && lowerAuraName === 'pain offering';
+      if (allyCmods.length > 0 && isPoe2MinionOffering) {
+        const forcedMinionOffering = allyCmods.map((m) => ({
+          ...m,
+          target: 'player' as const,
+        }));
+        const tmpMin = new ModDB();
+        const tmpUnused = new ModDB();
+        injectCompiledGemMods(tmpMin, tmpUnused, tmpUnused, forcedMinionOffering, `${sourceLabel} [Minion Offering]`, {
+          game: build.game,
+        });
+        minionMods = collectModsFromDb(tmpMin);
+        minionDb.addMods(minionMods);
+      } else if (allyCmods.length > 0 && appliesToPlayer) {
         const tmpPlayer = new ModDB();
         const tmpEnemy = new ModDB();
         const tmpMinion = new ModDB();
-        const playerMult = isAura
-          ? (1 + auraEffectPctForPlayer / 100) * supremeEgoMoreMult
-          : isCurseOrMark
-            ? 1 + baseCurseEffectPct / 100
+        tmpPlayer.setEvalContext(playerDb.getEvalContext());
+        const poe2BossHexMult =
+          build.game === 'poe2' && isCurseOrMark && !isMark && build.config.enemyIsBoss !== 'None'
+            ? 0.5
             : 1;
-        injectCompiledGemMods(tmpPlayer, tmpEnemy, tmpMinion, allyCmods, sourceLabel, {
-          game: build.game,
-          effectMultiplier: playerMult,
-          scaleMore: isAura,
-        });
+        const totalCurseInc =
+          (isMark ? baseMarkEffectPct : baseCurseEffectPct) + cand.groupCurseEffectInc + qualCurseEffInc;
+        const heraldEffectMult = isHerald
+          ? Math.max(0, 1 + playerDb.sum('INC', ['HeraldBuffEffect', 'BuffEffectOnSelf']) / 100)
+          : 1;
+        const isBannerAura =
+          build.game === 'poe1' &&
+          (lowerAuraName === 'war banner' ||
+            lowerAuraName === 'dread banner' ||
+            lowerAuraName === 'defiance banner');
+        const bannerValourMult = isBannerAura
+          ? playerDb.getEvalContext().conditions.BannerPlanted
+            ? 1 + 0.1 * Math.max(0, playerDb.getEvalContext().multipliers.BannerValour ?? 0)
+            : 0
+          : 1;
+        const playerMult = isAura
+          ? (1 + auraEffectPctForPlayer / 100) * supremeEgoMoreMult * bannerValourMult
+          : isHerald
+            ? heraldEffectMult
+            : isCurseOrMark
+              ? Math.max(0, 1 + totalCurseInc / 100) * poe2BossHexMult
+              : 1;
+        const shouldScaleMore =
+          (isAura || isHerald) &&
+          def.name.en.trim().toLowerCase() !== 'righteous fire' &&
+          def.name.en.trim().toLowerCase() !== 'righteous fire of arcane devotion';
+        if (playerMult > 0) {
+          injectCompiledGemMods(tmpPlayer, tmpEnemy, tmpMinion, allyCmods, sourceLabel, {
+            game: build.game,
+            effectMultiplier: playerMult,
+            scaleMore: shouldScaleMore,
+          });
+        }
         playerMods = collectModsFromDb(tmpPlayer);
         playerDb.addMods(playerMods);
         enemyDb.addMods(collectModsFromDb(tmpEnemy));
@@ -2427,15 +3014,21 @@ export function evaluateAurasAndWatchersEye(
       }
     }
 
-    // Track active canonical aura names for Watcher's Eye & condition evaluation
-    const auraKey = cand.canonicalAuraName ?? (isAura ? def.name.en : null);
+    // Track active canonical aura names for Watcher's Eye & condition evaluation (incl. Heralds for Coming Calamity!)
+    const auraKey = cand.canonicalAuraName ?? (isAura || isHerald ? def.name.en : null);
     if (auraKey) {
       activeAurasAll.add(auraKey);
       // Pride triggers "while using Pride" on Watcher's Eye when active on the player's skills;
-      // all other auras trigger "while affected by <Aura>" ONLY when actually affecting the player.
-      if (appliesToPlayer || isEnemyOnlyAura) {
+      // all other auras & heralds trigger "while affected by <Aura/Herald>" when affecting the player.
+      if (appliesToPlayer || isEnemyOnlyAura || isHerald) {
         activeAurasAffectingPlayer.add(auraKey);
-        playerDb.setCondition(`AffectedBy${auraKey.replace(/\s+/g, '')}`, true);
+        const noSpace = auraKey.replace(/\s+/g, '');
+        playerDb.setCondition(`AffectedBy${noSpace}`, true);
+        if (isHerald) {
+          playerDb.setCondition('AffectedByHerald', true);
+          playerDb.setCondition(`AffectedBy${noSpace.replace(/Of/g, 'of')}`, true);
+          playerDb.setCondition(`AffectedBy${noSpace.replace(/of/g, 'Of')}`, true);
+        }
       }
       if (appliesToMinions) {
         activeAurasAffectingMinions.add(auraKey);
@@ -2446,7 +3039,34 @@ export function evaluateAurasAndWatchersEye(
     const spiritUnitCost = gemInst.spiritReservationOverride ?? def.spiritReservation ?? 0;
     if (spiritUnitCost > 0) {
       const spiritCount = def.minionBase && (gemInst.count ?? 1) > 1 ? Math.floor(gemInst.count!) : 1;
-      totalSpiritReserved += spiritUnitCost * spiritCount;
+      const totalUnitSpirit = spiritUnitCost * spiritCount;
+      // PoE 2 Atziri's Communion (`LifeReservePercentPerSpirit = 0.66`): converts Spirit reservation into % Life reservation!
+      if (build.game === 'poe2' && cand.groupHasAtziriCommunion) {
+        const baseLifePct = Math.round(totalUnitSpirit * 0.66 * 100) / 100;
+        const { effectivePct, effectiveFlat } = computeReservationAmounts(
+          baseLifePct,
+          0,
+          1,
+          globalLifeResEff + cand.localResEffPct,
+          maxLife,
+        );
+        lifeReservations.push({
+          gemId: def.id,
+          gemName: def.name.en,
+          pool: 'Life',
+          basePct: baseLifePct,
+          baseFlat: 0,
+          multiplier: 1,
+          localEfficiencyPct: cand.localResEffPct,
+          effectivePct,
+          effectiveFlat,
+          zeroedByBlessing: false,
+        });
+        totalLifeReservedPct += effectivePct;
+        totalLifeReservedFlat += effectiveFlat;
+      } else {
+        totalSpiritReserved += totalUnitSpirit;
+      }
     }
 
     auras.push({
@@ -2474,6 +3094,11 @@ export function evaluateAurasAndWatchersEye(
     });
   }
 
+  if (appliedHexCount + appliedMarkCount > 0) {
+    playerDb.setMultiplier('CurseOnEnemy', appliedHexCount + appliedMarkCount);
+    enemyDb.setMultiplier('CurseOnSelf', appliedHexCount + appliedMarkCount);
+  }
+
   // Evaluate Watcher's Eye jewels (from explicit socketedJewels override or build.tree.socketedJewels)
   const jewelsToScan: Item[] = [];
   if (ctx.socketedJewels) {
@@ -2496,7 +3121,11 @@ export function evaluateAurasAndWatchersEye(
       const parsedCond = parseWatchersEyeCondition(line);
       if (!parsedCond) continue;
 
-      const active = activeAurasAffectingPlayer.has(parsedCond.requiredAura);
+      const condKey = `AffectedBy${parsedCond.requiredAura.replace(/\s+/g, '')}`;
+      const active =
+        activeAurasAffectingPlayer.has(parsedCond.requiredAura) ||
+        Boolean(playerDb.getEvalContext().conditions[condKey]) ||
+        playerDb.flag(condKey);
       const mods = active
         ? parseWatchersEyeEffectLine(
             parsedCond.strippedModLine,
@@ -2505,8 +3134,21 @@ export function evaluateAurasAndWatchersEye(
         : [];
 
       if (active && mods.length > 0) {
-        playerDb.addMods(mods);
-        watchersEyeMods.push(...mods);
+        const jewelNameLower = jewel.name.trim().toLowerCase();
+        const dedupedMods = mods.filter((m) => {
+          const existingEntry = playerDb.entriesByPrefix(m.name).find(([k]) => k === m.name);
+          const existing = existingEntry ? existingEntry[1] : [];
+          return !existing.some(
+            (em) =>
+              em.type === m.type &&
+              em.value === m.value &&
+              em.source.toLowerCase().includes(jewelNameLower),
+          );
+        });
+        if (dedupedMods.length > 0) {
+          playerDb.addMods(dedupedMods);
+          watchersEyeMods.push(...dedupedMods);
+        }
       }
 
       watchersEyeLines.push({

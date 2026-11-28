@@ -41,14 +41,19 @@ export type CalcWorkerResponse =
 
 const loadedGames = new Set<GameId>();
 
-async function ensureWorkerData(game: GameId) {
-  if (loadedGames.has(game)) return;
+const loadedTreeKeys = new Set<string>();
+
+async function ensureWorkerData(game: GameId, treeVersion?: string) {
+  const key = `${game}:${treeVersion ?? ''}`;
+  if (loadedTreeKeys.has(key)) return;
   await Promise.all([
-    loadOfficialTree(game),
-    loadOfficialGems(game),
-    loadOfficialBaseItems(game),
+    loadOfficialTree(game, '/data', treeVersion),
+    ...(loadedGames.has(game)
+      ? []
+      : [loadOfficialGems(game), loadOfficialBaseItems(game)]),
   ]);
   loadedGames.add(game);
+  loadedTreeKeys.add(key);
 }
 
 self.onmessage = async (ev: MessageEvent<CalcWorkerRequest>) => {
@@ -56,10 +61,10 @@ self.onmessage = async (ev: MessageEvent<CalcWorkerRequest>) => {
   if (msg.type === 'HEATMAP') {
     const t0 = performance.now();
     try {
-      await ensureWorkerData(msg.build.game);
+      await ensureWorkerData(msg.build.game, msg.build.tree.treeVersion);
       const baseline = calculateBuild(msg.build);
       const baseEhp = Math.max(1, baseline.defence.effectiveHitPool);
-      const tree = getTreeForGame(msg.build.game);
+      const tree = getTreeForGame(msg.build.game, msg.build.tree.treeVersion);
       const allAllocated = new Set<number>([
         ...msg.build.tree.allocatedNodeIds,
         ...(msg.build.game === 'poe2'

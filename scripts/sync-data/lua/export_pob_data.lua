@@ -92,6 +92,7 @@ local function mapWeaponType(rawType, tags)
   if lt:find("sword") or lt:find("spear") then return "Sword" end
   if lt:find("dagger") then return "Dagger" end
   if lt:find("claw") then return "Claw" end
+  if isPoe2 and lt:find("talisman") then return "Talisman" end
   return nil
 end
 
@@ -116,7 +117,7 @@ for name, base in pairs(data.itemBases or {}) do
     if base.weapon and ((base.weapon.PhysicalMax and base.weapon.PhysicalMax > 0) or (base.weapon.LightningMax and base.weapon.LightningMax > 0) or (base.weapon.FireMax and base.weapon.FireMax > 0) or (base.weapon.ColdMax and base.weapon.ColdMax > 0) or (base.weapon.ChaosMax and base.weapon.ChaosMax > 0)) then
       local wt = mapWeaponType(base.type, base.tags)
       if wt then
-        local twoH = (base.tags and (base.tags.two_hand_weapon or base.tags.twohand or base.tags.bow or base.tags.staff or base.tags.crossbow or base.tags.quarterstaff or base.tags.warstaff)) and 1 or 0
+        local twoH = (base.tags and (base.tags.two_hand_weapon or base.tags.twohand or base.tags.bow or base.tags.staff or base.tags.crossbow or base.tags.quarterstaff or base.tags.warstaff or (isPoe2 and base.tags.talisman))) and 1 or 0
         entry.w = {
           base.weapon.PhysicalMin or 0,
           base.weapon.PhysicalMax or 0,

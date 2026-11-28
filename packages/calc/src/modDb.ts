@@ -56,6 +56,33 @@ export class ModDB {
       this.store.set(mod.name, bucket);
     }
     bucket.push(mod);
+
+    // Mirror PoB Condition:<Var> and Multiplier:<Var> modifiers into evalContext
+    if (mod.name.startsWith('Condition:') && mod.type === 'FLAG' && typeof mod.value === 'boolean') {
+      const evalRes = evaluateModTags(mod, this.evalContext);
+      if (evalRes.active) {
+        const condVar = mod.name.slice('Condition:'.length);
+        if (condVar) {
+          this.evalContext.conditions[condVar] = mod.value;
+          if (condVar === 'AlreadyShocked' && mod.value) {
+            this.evalContext.conditions.Shocked = true;
+          }
+        }
+      }
+    } else if (
+      mod.name.startsWith('Multiplier:') &&
+      mod.type === 'BASE' &&
+      typeof mod.value === 'number'
+    ) {
+      const evalRes = evaluateModTags(mod, this.evalContext);
+      if (evalRes.active) {
+        const multVar = mod.name.slice('Multiplier:'.length);
+        if (multVar) {
+          this.evalContext.multipliers[multVar] =
+            (this.evalContext.multipliers[multVar] ?? 0) + applyModTagEval(mod.value, evalRes);
+        }
+      }
+    }
   }
 
   addMods(mods: readonly Mod[]): void {
@@ -193,6 +220,25 @@ export class ModDB {
       }
     }
     return value;
+  }
+
+  max(
+    names: string | readonly string[],
+    flags = 0,
+    keywordFlags = 0,
+  ): number | null {
+    let best: number | null = null;
+    for (const mod of this.collect(names, flags, keywordFlags)) {
+      if (mod.type === 'MAX' && typeof mod.value === 'number') {
+        const evalRes = evaluateModTags(mod, this.evalContext);
+        if (!evalRes.active) continue;
+        const val = applyModTagEval(mod.value, evalRes);
+        if (best === null || val > best) {
+          best = val;
+        }
+      }
+    }
+    return best;
   }
 
   /**

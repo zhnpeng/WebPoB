@@ -643,4 +643,73 @@ describe('Structured Gem SkillStatMap Contract, Hydrator & Transfigured Gem Look
     expect(getGemById('poe1', 'poe1_arc')?.name.en).toBe('Arc');
     expect(getGemById('poe2', 'poe2_spark')?.name.en).toBe('Spark');
   });
+
+  it('remaps PoE 2 legacy v0.1/v0.2 support gems to canonical poe2-gems.json entries without obsolete MORE hijacking', () => {
+    const realPoe2Gems = JSON.parse(
+      fs.readFileSync(path.join(PUBLIC_DATA_DIR, 'poe2-gems.json'), 'utf8'),
+    ) as CompactGemsPayload;
+    registerGemsData('poe2', realPoe2Gems);
+
+    try {
+      const martialTempo = resolveGemFromPobRef('poe2', {
+        gemId: 'Metadata/Items/Gems/SupportGemMartialTempo',
+        nameSpec: 'Martial Tempo',
+        skillId: 'SupportFasterAttackPlayer',
+      });
+      expect(martialTempo?.id).toBe('poe2_rapidattackssupport');
+      expect(martialTempo?.name.en).toBe('Rapid Attacks I');
+      expect(martialTempo?.compiledMods?.some((m) => m.name === 'Speed' && m.type === 'INC' && m.value === 15)).toBe(true);
+      expect(martialTempo?.compiledMods?.some((m) => m.name === 'Speed' && m.type === 'MORE')).toBe(false);
+
+      const arcaneTempo = resolveGemFromPobRef('poe2', {
+        gemId: 'Metadata/Items/Gems/SupportGemArcaneTempo',
+        nameSpec: 'Arcane Tempo',
+        skillId: 'SupportFasterCastPlayer',
+      });
+      expect(arcaneTempo?.id).toBe('poe2_rapidcastingsupport');
+      expect(arcaneTempo?.name.en).toBe('Rapid Casting I');
+      expect(arcaneTempo?.compiledMods?.some((m) => m.name === 'Speed' && m.type === 'INC' && m.value === 15)).toBe(true);
+
+      const primalArmament = resolveGemFromPobRef('poe2', {
+        gemId: 'Metadata/Items/Gems/SupportGemPrimalArmament',
+        nameSpec: 'Primal Armament',
+      });
+      expect(primalArmament?.id).toBe('poe2_elementalarmamentsupport');
+      expect(primalArmament?.name.en).toBe('Elemental Armament I');
+      expect(primalArmament?.compiledMods?.some((m) => m.name === 'ElementalDamage' && m.type === 'MORE' && m.value === 20)).toBe(true);
+
+      const concEffect = resolveGemFromPobRef('poe2', {
+        gemId: 'Metadata/Items/Gems/SupportGemConcentratedEffect',
+        nameSpec: 'Concentrated Effect',
+      });
+      expect(concEffect?.id).toBe('poe2_concentratedareasupport');
+
+      const scattershot = resolveGemFromPobRef('poe2', {
+        gemId: 'Metadata/Items/Gems/SupportGemScattershot',
+        nameSpec: 'Scattershot',
+      });
+      expect(scattershot?.id).toBe('poe2_multishotsupport');
+
+      const precision = resolveGemFromPobRef('poe2', { nameSpec: 'Precision' });
+      expect(precision?.id).toBe('poe2_heightenedaccuracysupport');
+
+      const inspiration = resolveGemFromPobRef('poe2', { nameSpec: 'Inspiration' });
+      expect(inspiration?.id).toBe('poe2_efficiencysupport');
+
+      const magnified = resolveGemFromPobRef('poe2', { nameSpec: 'Magnified Effect' });
+      expect(magnified?.id).toBe('poe2_magnifiedareasupport');
+
+      const spellTotem = resolveGemFromPobRef('poe2', {
+        skillId: 'SupportMetaTotemSpellTotemPlayer',
+        nameSpec: 'Spell Totem',
+      });
+      expect(spellTotem?.id).toBe('poe2_metaspelltotem');
+
+      // Sample build backward compatibility for poe2_sup_* IDs
+      expect(getGemById('poe2', 'poe2_sup_arcane_tempo')?.id).toBe('poe2_rapidcastingsupport');
+      expect(getGemById('poe2', 'poe2_sup_lightning_infusion')?.id).toBe('poe2_addedlightningdamagesupport');
+    } finally {
+      setRegisteredGems('poe2', POE2_GEMS);
+    }
+  });
 });

@@ -6,6 +6,7 @@ import {
   applyPoolConversionsAndKeystones,
   countItemSockets,
   evaluateBuildEnablingUniques,
+  evaluateEquippedFocusScaling,
   evaluateIngenuityAndRingBonuses,
   evaluateMagebloodFlasks,
   evaluatePerSocketItemModifiers,
@@ -574,6 +575,153 @@ describe('uniqueMechanicsRuntime — 4. Build-Enabling Uniques (Pre-Stat & Post-
     expect(db.sum('INC', 'PhysicalDamage', ModFlag.Melee)).toBe(160);
   });
 
+  it("reconciles Replica Alberon's Warpath continuous FlatMaxPerAttr scaling to exact stepped ChaosMax without double-counting", () => {
+    const db = new ModDB();
+    const str = 2154; // floor(2154 / 80) = 26 -> exact stepped 26..2080 (continuous FlatMaxPerAttr = 2154)
+    const alberon = makeItem({
+      id: 'boots',
+      name: "Replica Alberon's Warpath",
+      baseName: 'Soldier Boots',
+      explicits: [
+        'Adds 1 to 80 Chaos Damage to Attacks per 80 Strength',
+        'Cannot deal Non-Chaos Damage',
+      ],
+    });
+
+    // Step 1: Parse item mods as engine.ts does
+    const itemSrc = `Item (Boots): ${alberon.name}`;
+    db.addMods(parseModLines(alberon.explicits, itemSrc));
+
+    // Step 2: Simulate engine.ts injectAttributeScaling continuous FlatMinPerAttr / FlatMaxPerAttr expansion
+    for (const prefix of ['FlatMinPerAttr:', 'FlatMaxPerAttr:'] as const) {
+      for (const [key, mods] of db.entriesByPrefix(prefix)) {
+        const [, dmgType] = key.split(':');
+        for (const mod of mods) {
+          if (mod.type !== 'BASE' || typeof mod.value !== 'number') continue;
+          const scaled = Math.floor(str * mod.value + 1e-9);
+          if (scaled === 0) continue;
+          db.addMod({
+            name: `${dmgType}${prefix === 'FlatMinPerAttr:' ? 'Min' : 'Max'}`,
+            type: 'BASE',
+            value: scaled,
+            flags: mod.flags,
+            keywordFlags: mod.keywordFlags,
+            source: `${mod.source} (Strength ${str})`,
+          });
+        }
+      }
+    }
+    // Sanity check: continuous expansion produced 26..2154 before post-pool unique reconciliation
+    expect(db.sum('BASE', 'ChaosMin', ModFlag.Attack)).toBe(26);
+    expect(db.sum('BASE', 'ChaosMax', ModFlag.Attack)).toBe(2154);
+
+    // Step 3: Post-pool unique evaluation must reconcile to exact stepped 26..2080 (NEVER 4234!)
+    const res = evaluatePostPoolBuildEnablingUniques({
+      db,
+      equippedItems: [{ slot: 'Boots', item: alberon }],
+      str,
+      dex: 100,
+      int: 100,
+      life: 5000,
+      mana: 500,
+      energyShield: 0,
+      armour: 20000,
+      evasion: 0,
+    });
+    expect(res.replicaAlberonsChaosMin).toBe(26);
+    expect(res.replicaAlberonsChaosMax).toBe(2080);
+    expect(db.sum('BASE', 'ChaosMin', ModFlag.Attack)).toBe(26);
+    expect(db.sum('BASE', 'ChaosMax', ModFlag.Attack)).toBe(2080);
+    expect(db.sum('BASE', 'ChaosMax')).toBe(2080);
+
+    // Idempotent on second pass
+    evaluatePostPoolBuildEnablingUniques({
+      db,
+      equippedItems: [{ slot: 'Boots', item: alberon }],
+      str,
+      dex: 100,
+      int: 100,
+      life: 5000,
+      mana: 500,
+      energyShield: 0,
+      armour: 20000,
+      evasion: 0,
+    });
+    expect(db.sum('BASE', 'ChaosMin', ModFlag.Attack)).toBe(26);
+    expect(db.sum('BASE', 'ChaosMax', ModFlag.Attack)).toBe(2080);
+  });
+
+  it("handles The Iron Fortress canonical '3% increased Melee Physical Damage' wording and avoids double-counting when StrDmgBonusRatioOverride is already applied", () => {
+    const fortress = makeItem({
+      id: 'body',
+      name: 'The Iron Fortress',
+      baseName: 'Crusader Plate',
+      explicits: [
+        '+1% Chance to Block Attack Damage per 50 Strength',
+        "Strength's Damage Bonus instead grants 3% increased Melee Physical Damage per 10 Strength",
+      ],
+    });
+
+    // Standalone (no engine StrDmgBonusRatioOverride yet) -> adds extra +1% per 10 Str = +215% (for 2154 Str: 645 - 430 = 215)
+    const dbStandalone = new ModDB();
+    evaluatePostPoolBuildEnablingUniques({
+      db: dbStandalone,
+      equippedItems: [{ slot: 'Body Armour', item: fortress }],
+      str: 2154,
+      dex: 100,
+      int: 100,
+      life: 5000,
+      mana: 500,
+      energyShield: 0,
+      armour: 20000,
+      evasion: 0,
+    });
+    expect(dbStandalone.sum('BASE', 'BlockChance')).toBe(43);
+    expect(dbStandalone.sum('INC', 'PhysicalDamage', ModFlag.Melee)).toBe(215);
+
+    // When engine already applied StrDmgBonusRatioOverride (0.3) -> 0 extra added (no double-count!)
+    const dbWithOverride = new ModDB();
+    dbWithOverride.addMod({
+      name: 'StrDmgBonusRatioOverride',
+      type: 'BASE',
+      value: 0.3,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Item (Body Armour): The Iron Fortress',
+    });
+    dbWithOverride.addMod({
+      name: 'PhysicalDamage',
+      type: 'INC',
+      value: 646,
+      flags: ModFlag.Melee,
+      keywordFlags: 0,
+      source: 'Strength (Iron Fortress 2154)',
+    });
+    // Also simulate BlockChancePerAttr already expanded by injectAttributeScaling
+    dbWithOverride.addMod({
+      name: 'BlockChance',
+      type: 'BASE',
+      value: 43,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Item (Body Armour): The Iron Fortress (Strength 2154)',
+    });
+    evaluatePostPoolBuildEnablingUniques({
+      db: dbWithOverride,
+      equippedItems: [{ slot: 'Body Armour', item: fortress }],
+      str: 2154,
+      dex: 100,
+      int: 100,
+      life: 5000,
+      mana: 500,
+      energyShield: 0,
+      armour: 20000,
+      evasion: 0,
+    });
+    expect(dbWithOverride.sum('BASE', 'BlockChance')).toBe(43);
+    expect(dbWithOverride.sum('INC', 'PhysicalDamage', ModFlag.Melee)).toBe(646);
+  });
+
   it('evaluates Crown of Eyes (150% Spell Damage -> Attack Damage) without double-counting', () => {
     const db = new ModDB();
     db.addMods(parseModLines(['120% increased Spell Damage', '50% increased Damage'], 'Tree'));
@@ -620,7 +768,7 @@ describe('uniqueMechanicsRuntime — 4. Build-Enabling Uniques (Pre-Stat & Post-
     expect(db.sum('INC', 'Damage', ModFlag.Attack)).toBe(230);
   });
 
-  it('evaluates Ephemeral Edge and Energy Blade (with 20q 40% less ES) weapon transforms', () => {
+  it('evaluates Ephemeral Edge and Energy Blade (PoE 3.23+ fixed 50% less ES, level-scaled base lightning, 1.7x 2H, quality AS)', () => {
     const db = new ModDB();
     const ephemeral = makeItem({
       id: 'w1',
@@ -648,7 +796,7 @@ describe('uniqueMechanicsRuntime — 4. Build-Enabling Uniques (Pre-Stat & Post-
     expect(eeRes.ephemeralEdgeLightningMax).toBe(3000);
     expect(db.sum('BASE', 'LightningMax', ModFlag.Attack)).toBe(3000);
 
-    // Energy Blade 2H at 20% quality -> 40% less ES (10000 -> 6000 ES)
+    // Energy Blade 2H Lv20 at 20% quality -> ALWAYS 50% less ES (10000 -> 5000 ES), +10% Attack Speed
     const ebDb = new ModDB();
     ebDb.addMod({ name: 'EnergyShield', type: 'BASE', value: 10000, flags: 0, keywordFlags: 0, source: 'Gear' });
     const ebRes = evaluatePostPoolBuildEnablingUniques({
@@ -662,18 +810,66 @@ describe('uniqueMechanicsRuntime — 4. Build-Enabling Uniques (Pre-Stat & Post-
       energyShield: 10000,
       armour: 0,
       evasion: 0,
-      energyBlade: { active: true, twoHanded: true, gemQuality: 20 },
+      energyBlade: { active: true, twoHanded: true, gemLevel: 20, gemQuality: 20 },
     });
 
     expect(ebRes.energyBlade).not.toBeNull();
-    expect(ebRes.energyBlade!.lessEsPct).toBe(40);
-    expect(ebRes.energyBlade!.postBladeEs).toBe(6000);
+    expect(ebRes.energyBlade!.gemLevel).toBe(20);
+    expect(ebRes.energyBlade!.lessEsPct).toBe(50);
+    expect(ebRes.energyBlade!.postBladeEs).toBe(5000);
     expect(ebRes.energyBlade!.aps).toBe(1.6);
     expect(ebRes.energyBlade!.critChance).toBe(7);
-    // 2H: min = round((2 + 0.02 * 6000) * 2) = 244; max = round((40 + 0.40 * 6000) * 2) = 4880
-    expect(ebRes.energyBlade!.lightningMin).toBe(244);
-    expect(ebRes.energyBlade!.lightningMax).toBe(4880);
-    expect(ebDb.calcStat('EnergyShield').total).toBe(6000);
+    // 2H Lv20 (12..235 base + ceil(2%/40% of 5000) = 100..2000) * 1.7 (70% more) -> floor(190.4)=190, floor(3799.5)=3799
+    expect(ebRes.energyBlade!.lightningMin).toBe(190);
+    expect(ebRes.energyBlade!.lightningMax).toBe(3799);
+    expect(ebDb.calcStat('EnergyShield').total).toBe(5000);
+    expect(ebDb.sum('INC', 'Speed', ModFlag.Attack)).toBe(10); // floor(20 * 0.5) = 10% AS
+
+    // Verified against live PoB1 LuaJIT on 1H Lv21 Q44 (pre-blade ES 17662 -> post-blade ES 8831 -> 190..3783, +22% AS)
+    const eb1hDb = new ModDB();
+    eb1hDb.addMod({ name: 'EnergyShield', type: 'BASE', value: 17662, flags: 0, keywordFlags: 0, source: 'Gear' });
+    const eb1hRes = evaluatePostPoolBuildEnablingUniques({
+      db: eb1hDb,
+      equippedItems: [],
+      str: 200,
+      dex: 200,
+      int: 800,
+      life: 1,
+      mana: 1000,
+      energyShield: 17662,
+      armour: 0,
+      evasion: 0,
+      activeSkills: [{ name: 'Energy Blade', level: 21, quality: 44, enabled: true }],
+      isTwoHanded: false,
+    });
+    expect(eb1hRes.energyBlade!.lessEsPct).toBe(50);
+    expect(eb1hRes.energyBlade!.postBladeEs).toBe(8831);
+    expect(eb1hRes.energyBlade!.aps).toBe(1.7);
+    expect(eb1hRes.energyBlade!.lightningMin).toBe(190); // 13 + ceil(8831 * 0.02) = 13 + 177
+    expect(eb1hRes.energyBlade!.lightningMax).toBe(3783); // 250 + ceil(8831 * 0.40) = 250 + 3533
+    expect(eb1hDb.sum('INC', 'Speed', ModFlag.Attack)).toBe(22);
+
+    // Verified against live PoB1 LuaJIT on 1H Lv20 Q54 (pre-blade ES 11194 -> post-blade ES 5597 -> 124..2474, +27% AS)
+    const eb20Db = new ModDB();
+    eb20Db.addMod({ name: 'EnergyShield', type: 'BASE', value: 11194, flags: 0, keywordFlags: 0, source: 'Gear' });
+    const eb20Res = evaluatePostPoolBuildEnablingUniques({
+      db: eb20Db,
+      equippedItems: [],
+      str: 500,
+      dex: 100,
+      int: 500,
+      life: 3000,
+      mana: 1000,
+      energyShield: 11194,
+      armour: 0,
+      evasion: 0,
+      activeSkills: [{ name: 'Energy Blade', level: 20, quality: 54, enabled: true }],
+      isTwoHanded: false,
+    });
+    expect(eb20Res.energyBlade!.postBladeEs).toBe(5597);
+    expect(eb20Res.energyBlade!.lightningMin).toBe(124); // 12 + ceil(5597 * 0.02) = 12 + 112
+    expect(eb20Res.energyBlade!.lightningMax).toBe(2474); // 235 + ceil(5597 * 0.40) = 235 + 2239
+    expect(eb20Db.sum('INC', 'Speed', ModFlag.Attack)).toBe(27);
   });
 
   it('evaluates Rathpith Globe, Perseverance, HoWA, Brutus\' Lead Sprinkler, and Pillar of the Caged God', () => {
@@ -875,5 +1071,149 @@ describe('uniqueMechanicsRuntime — 5. Pool-Conversion Keystones & Faithguard',
     // Ward gets +200% INC (total 250% INC) -> 1000 * 3.5 = 3500
     expect(res.resolvedPools.ward).toBe(3500);
     expect(db.calcStat('Ward').incPct).toBe(250);
+  });
+
+  it("handles PoE 2 Doryani's Prototype Presence wording down to -200% and ignores Rune: None in socket counts", () => {
+    const db = new ModDB();
+    const poe2Doryani = makeItem({
+      id: 'body-dory2',
+      name: "Doryani's Prototype",
+      baseName: 'Scale Mail',
+      slotType: 'Body Armour',
+      explicits: ['Enemies in your Presence have Lightning Resistance equal to yours'],
+      rawText: [
+        'Sockets: S S S S',
+        'Rune: Greater Iron Rune',
+        'Rune: None',
+        'Rune: None',
+        'Rune: None',
+      ].join('\n'),
+    });
+
+    // Only 1 filled rune socket (the 3 `Rune: None` lines must not count as filled!)
+    expect(countItemSockets(poe2Doryani)).toEqual({
+      totalSockets: 4,
+      filledSockets: 1,
+      emptySockets: 3,
+    });
+
+    const pre = evaluatePreStatBuildEnablingUniques({
+      db,
+      equippedItems: [{ slot: 'Body Armour', item: poe2Doryani }],
+      game: 'poe2',
+    });
+    expect(pre.doryanisPrototypeActive).toBe(true);
+
+    // Syncs negative player Lightning Resistance down to -200% clamp
+    const post = evaluatePostPoolBuildEnablingUniques({
+      db,
+      equippedItems: [{ slot: 'Body Armour', item: poe2Doryani }],
+      str: 100,
+      dex: 100,
+      int: 100,
+      life: 2000,
+      mana: 500,
+      energyShield: 0,
+      armour: 5000,
+      evasion: 0,
+      playerLightningResist: -230,
+    });
+    expect(post.enemyLightningResistOverride).toBe(-200);
+    expect(db.override('EnemyLightningResist')).toBe(-200);
+  });
+
+  it('evaluates Disciple of Varashta Instruments of Power (-50% Equipped Focus bonuses) with PoB 2 truncation', () => {
+    const focus = makeItem({
+      id: 'w2-focus',
+      name: 'Ghoul Chant',
+      baseName: 'Tasalian Focus',
+      rarity: 'RARE',
+      slotType: 'Weapon 2',
+      explicits: [
+        '+140 to maximum Energy Shield',
+        '83% increased Spell Damage',
+        '31% increased Critical Spell Damage Bonus',
+      ],
+    });
+    const instrumentsNode = makeNode('Instruments of Power', [
+      '50% reduced bonuses gained from Equipped Focus',
+    ]);
+
+    const db = new ModDB();
+    db.addMods(
+      parseModLines(
+        ['83% increased Spell Damage', '31% increased Critical Spell Damage Bonus'],
+        'Focus',
+      ),
+    );
+
+    const res = evaluateEquippedFocusScaling([{ slot: 'Weapon 2', item: focus }], db, {
+      allocatedNodes: [instrumentsNode],
+    });
+
+    expect(res.focusEffectPct).toBe(-50);
+    expect(res.multiplier).toBe(0.5);
+    expect(db.sum('INC', 'Damage', ModFlag.Spell)).toBe(42); // 83 - trunc(41.5) = 42
+    expect(
+      db.sum('INC', 'CritDamageBonusInc', ModFlag.Spell) +
+        db.sum('INC', 'CritMultiplier', ModFlag.Spell),
+    ).toBe(16); // 31 - trunc(15.5) = 16
+
+    // Second call is a no-op because FocusEffectApplied prevents double-scaling
+    const second = evaluateEquippedFocusScaling([{ slot: 'Weapon 2', item: focus }], db, {
+      allocatedNodes: [instrumentsNode],
+    });
+    expect(second.mods).toHaveLength(0);
+    expect(db.sum('INC', 'Damage', ModFlag.Spell)).toBe(42);
+  });
+
+  it('emits EnemyAffectedByEleAilmentCountsAsMoving for The Tempest Rising (3.25+ Presence wording) and counts exact 5 filled sockets on Morior Invictus', () => {
+    const tempestDb = new ModDB();
+    const tempestBoots = makeItem({
+      id: 'boots-tr',
+      name: 'The Tempest Rising',
+      baseName: 'Goliath Greaves',
+      slotType: 'Boots',
+      explicits: [
+        '120% increased Armour',
+        '30% increased Movement Speed',
+        'Damaging Ailments deal damage 24% Faster',
+        'You and Enemies in your Presence count as moving while affected by Elemental Ailments',
+      ],
+    });
+    evaluatePreStatBuildEnablingUniques({
+      db: tempestDb,
+      equippedItems: [{ slot: 'Boots', item: tempestBoots }],
+      game: 'poe1',
+    });
+    expect(tempestDb.flag('EnemyAffectedByEleAilmentCountsAsMoving')).toBe(true);
+
+    // Morior Invictus with 5 filled Soul Cores: exact +25% Attributes and +50% all Ele Res (no overcount)
+    const morior = makeItem({
+      id: 'body-mi5',
+      name: 'Morior Invictus',
+      baseName: 'Grand Regalia',
+      slotType: 'Body Armour',
+      explicits: [
+        '247% increased Armour, Evasion and Energy Shield',
+        '5% increased Attributes per Socketed Rune or Soul Core',
+        '+10% to all Elemental Resistances per Socketed Rune or Soul Core',
+      ],
+      rawText: [
+        'Sockets: S S S S S',
+        'Rune: Soul Core of Citaqualotl',
+        'Rune: Soul Core of Citaqualotl',
+        'Rune: Soul Core of Citaqualotl',
+        'Rune: Soul Core of Citaqualotl',
+        'Rune: Soul Core of Citaqualotl',
+      ].join('\n'),
+    });
+    expect(countItemSockets(morior)).toEqual({ totalSockets: 5, filledSockets: 5, emptySockets: 0 });
+    const moriorDb = new ModDB();
+    evaluatePerSocketItemModifiers([{ slot: 'Body Armour', item: morior }], moriorDb);
+    expect(moriorDb.sum('INC', 'Str')).toBe(25);
+    expect(moriorDb.sum('INC', 'Dex')).toBe(25);
+    expect(moriorDb.sum('INC', 'Int')).toBe(25);
+    expect(moriorDb.sum('BASE', 'FireResist')).toBe(50);
   });
 });

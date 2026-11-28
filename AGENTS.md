@@ -77,6 +77,21 @@ If personal metadata or a secret is ever committed to a public branch or tag:
 | **ANY release to Production (code, UI, or data)** | Above **+** **mandatory Staging deploy & QA release gate (`READY TO RELEASE`)** via maintainer runbook **before** proposing or running `pnpm release:deploy` (no exceptions unless user explicitly approves emergency bypass) |
 | **Docs-only (`*.md`)** | Verify relative Markdown links + Privacy Gate (§2) |
 
+### 3.1 Mechanism-Layer & Bug-to-Regression Standard (Binding)
+
+Modeled on upstream PathOfBuilding's `spec/System/` architecture plus WebPoB's real-build Oracle benchmark corpus, **every bug fix and new game mechanic MUST leave behind permanent automated regression coverage**:
+
+1. **Bug-to-Regression Rule (Zero Exceptions)**:
+   - **Calculation, Mod-Parsing, Equipment-Slot, or Codec Bug**: MUST add **both**:
+     1. A minimal, deterministic mechanism unit test in `packages/calc/src/mechanicsRegression.test.ts` (or the relevant `packages/codec/src/*.test.ts`) using synthetic items/mods/keystones with zero noise.
+     2. An upstream PoB1/PoB2 LuaJIT-verified golden snapshot in `scripts/oracle-diff/src/benchmarks.ts` + `fixtures/oracle/snapshots.json` (`oracle.test.ts` parity `≤ 0.5%`). When triggered by a real community build, also append the verified build to the control-plane regression shard (`state/oracle-corpus/{poe1,poe2}-regression-bugs.json`).
+   - **UI, Import, i18n, or RWD Bug**: MUST add a targeted unit test (e.g., `apps/web/src/utils/*.test.ts`) or functional assertion in `scripts/verify-ninja-e2e.mjs`.
+2. **Three-Layer Testing Pyramid**:
+   - **Layer 1 — Mechanism Unit Suite (`packages/calc/src/mechanicsRegression.test.ts`)**: Fast, isolated, deterministic checks covering core PoE 1 & PoE 2 mechanics (slot/weapon rules, keystones, pool conversions, resist/block/suppression caps, crit/accuracy/conversion chains, ailments/impale, Spirit/weapon sets, EN/ZH-CN/ZH-TW parity).
+   - **Layer 2 — Golden Upstream-PoB Oracle Snapshots (`fixtures/oracle/snapshots.json`)**: Minimal XML benchmarks locked to upstream PoB1/PoB2 LuaJIT ground truth.
+   - **Layer 3 — Real Endgame & Bug-Regression Corpus (`state/oracle-corpus/`)**: Multi-mechanic real community builds catching cross-system interaction drift.
+3. **Semantic-Flag First for Special Uniques**: Follow upstream PoB's `ModParser → semantic Flag / Condition / DisablesItem → CalcSetup / ItemsTab / CalcPerform` pipeline. Never scatter unique-name string hacks when a modifier text can be modeled as a reusable semantic flag.
+
 ---
 
 ## 4. Production Release & Rollback SOP

@@ -237,6 +237,10 @@ export const STAGE1_PREFIX_RULES: readonly Stage1Rule[] = [
     apply: () => ({ tags: [{ type: 'Condition', var: 'OnConsecratedGround' }] }),
   },
   {
+    regex: /^While (?:you are )?affected by Herald of (Thunder|Ice|Ash|Plague),\s*/i,
+    apply: (m) => ({ tags: [{ type: 'Condition', var: `AffectedByHeraldOf${capFirst(m[1]!)}` }] }),
+  },
+  {
     regex: /^While a Pinnacle (?:Atlas )?Boss is in your Presence,\s*/i,
     apply: () => ({ tags: [{ type: 'Condition', var: 'EnemyPinnacleBoss' }] }),
   },
@@ -439,6 +443,10 @@ export const STAGE1_PREFIX_RULES: readonly Stage1Rule[] = [
   // Ally / Totem / Subject-Hinted Prefixes
   {
     regex: /^You and (?:Nearby )?Allies(?: in your Presence)? (?:have |deal |gain )?/i,
+    apply: () => ({}),
+  },
+  {
+    regex: /^You and your Totems /i,
     apply: () => ({}),
   },
   {
@@ -803,6 +811,14 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
     apply: () => ({ tags: [{ type: 'Multiplier', var: 'ActiveGolem' }] }),
   },
   {
+    regex: /(?:\s*,\s*|\s+)(?:for each|per)\s+(?:Summoned\s+)?Totem$/i,
+    apply: () => ({ tags: [{ type: 'Multiplier', var: 'SummonedTotem' }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)(?:for each|per)\s+Fortification$/i,
+    apply: () => ({ tags: [{ type: 'Multiplier', var: 'Fortification' }] }),
+  },
+  {
     regex: /(?:\s*,\s*|\s+)(?:for each|per)\s+(?:of your )?Aura or Herald Skills? affecting you$/i,
     apply: () => ({ tags: [{ type: 'Multiplier', var: 'AuraOrHeraldAffectingSelf' }] }),
   },
@@ -1020,7 +1036,7 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
     }),
   },
   {
-    regex: /(?:\s*,\s*|\s+)while\s+(Channelling|Stationary|Moving|Focused|Focussed|Shapeshifted|Fortified|Phasing|Elusive)$/i,
+    regex: /(?:\s*,\s*|\s+)while\s+(Channelling|Stationary|Moving|Focused|Focussed|Shapeshifted|Fortified|Phasing|Elusive|Unbound)$/i,
     apply: (m) => {
       const k = m[1]!.toLowerCase();
       return { tags: [{ type: 'Condition', var: k === 'focussed' ? 'Focused' : capFirst(k) }] };
@@ -1051,7 +1067,11 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
     apply: () => ({ tags: [{ type: 'Condition', var: 'UsingFlask' }] }),
   },
   {
-    regex: /(?:\s*,\s*|\s+)while\s+affected\s+by\s+([A-Za-z][A-Za-z ']*?)$/i,
+    regex: /(?:\s*,\s*|\s+)while\s+(?:you\s+are\s+)?affected\s+by\s+Herald\s+of\s+(Thunder|Ice|Ash|Plague)$/i,
+    apply: (m) => ({ tags: [{ type: 'Condition', var: `AffectedByHeraldOf${capFirst(m[1]!)}` }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)while\s+(?:you\s+are\s+)?affected\s+by\s+([A-Za-z][A-Za-z ']*?)$/i,
     apply: (m) => ({ tags: [{ type: 'Condition', var: `AffectedBy${toPascalCase(m[1]!)}` }] }),
   },
   {
@@ -1074,6 +1094,10 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
   {
     regex: /(?:\s*,\s*|\s+)while\s+at\s+Maximum\s+Rage$/i,
     apply: () => ({ tags: [{ type: 'Condition', var: 'HaveMaximumRage' }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)while\s+at\s+Maximum\s+Fortification$/i,
+    apply: () => ({ tags: [{ type: 'Condition', var: 'HaveMaximumFortification' }] }),
   },
   {
     regex: /(?:\s*,\s*|\s+)while\s+in\s+(Blood|Sand)\s+Stance$/i,
@@ -1207,7 +1231,7 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
     }),
   },
   {
-    regex: /(?:\s*,\s*|\s+)from\s+(?:your\s+)?Equipped\s+(Body Armour|Shield|Helmet|Focus|Boots|Gloves)$/i,
+    regex: /(?<!bonuses gained)(?<!bonus gained)(?:\s*,\s*|\s+)from\s+(?:your\s+)?Equipped\s+(Body Armour|Shield|Helmet|Focus|Boots|Gloves)$/i,
     apply: (m) => ({ slotScope: normalizeSlotScope(m[1]!) }),
   },
   {
@@ -1637,11 +1661,29 @@ export const MOD_NAME_TABLE: Record<string, ModNameTarget> = {
   // --- Damage (Basic & Typed) ---
   damage: { names: ['Damage'] },
   'global damage': { names: ['Damage'] },
+  'minimum damage': { names: ['MinDamage'] },
+  'maximum damage': { names: ['MaxDamage'] },
+  'minimum attack damage': { names: ['MinDamage'], flags: ModFlag.Attack },
+  'maximum attack damage': { names: ['MaxDamage'], flags: ModFlag.Attack },
+  'minimum spell damage': { names: ['MinDamage'], flags: ModFlag.Spell },
+  'maximum spell damage': { names: ['MaxDamage'], flags: ModFlag.Spell },
   'physical damage': { names: ['PhysicalDamage'] },
+  'minimum physical damage': { names: ['PhysicalMinDamage'] },
+  'maximum physical damage': { names: ['PhysicalMaxDamage'] },
+  'minimum physical attack damage': { names: ['PhysicalMinDamage'], flags: ModFlag.Attack },
+  'maximum physical attack damage': { names: ['PhysicalMaxDamage'], flags: ModFlag.Attack },
   'fire damage': { names: ['FireDamage'] },
+  'minimum fire damage': { names: ['FireMinDamage'] },
+  'maximum fire damage': { names: ['FireMaxDamage'] },
   'cold damage': { names: ['ColdDamage'] },
+  'minimum cold damage': { names: ['ColdMinDamage'] },
+  'maximum cold damage': { names: ['ColdMaxDamage'] },
   'lightning damage': { names: ['LightningDamage'] },
+  'minimum lightning damage': { names: ['LightningMinDamage'] },
+  'maximum lightning damage': { names: ['LightningMaxDamage'] },
   'chaos damage': { names: ['ChaosDamage'] },
+  'minimum chaos damage': { names: ['ChaosMinDamage'] },
+  'maximum chaos damage': { names: ['ChaosMaxDamage'] },
   'elemental damage': { names: ['ElementalDamage'] },
   'spell damage': { names: ['Damage'], flags: ModFlag.Spell },
   'attack damage': { names: ['Damage'], flags: ModFlag.Attack },
@@ -2067,6 +2109,11 @@ export const MOD_NAME_TABLE: Record<string, ModNameTarget> = {
   'effect of fully broken armour': { names: ['FullyBrokenArmourEffect'] },
   'effect of small passive skills': { names: ['SmallPassiveEffect'] },
   'bonuses gained from equipped quiver': { names: ['QuiverEffect'] },
+  'bonus gained from equipped quiver': { names: ['QuiverEffect'] },
+  'bonuses gained from equipped amulet': { names: ['AmuletEffect'] },
+  'bonus gained from equipped amulet': { names: ['AmuletEffect'] },
+  'bonuses gained from equipped focus': { names: ['EffectOfBonusesFromFocus'] },
+  'bonus gained from equipped focus': { names: ['EffectOfBonusesFromFocus'] },
   'effect of socketed jewels': { names: ['SocketedJewelEffect'] },
   'effect of buffs granted by your golems': { names: ['GolemBuffEffect'] },
   'effect of consecrated ground you create': { names: ['ConsecratedGroundEffect'] },

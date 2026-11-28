@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { KeywordFlag, ModFlag, type Mod, type PassiveNode } from '@webpob/core';
 import { ModDB } from './modDb.js';
+import { parseModLine, parseModLines } from './modParser.js';
 import {
   SUPPORTED_ASCENDANCY_NOTABLES,
   applyPostLifeAscendancyMechanics,
@@ -148,6 +149,69 @@ describe('ascendancyMods', () => {
         maxMana: 800,
       });
       expect(db05.sum('BASE', 'CritMultiplier')).toBe(86); // Math.floor(4300 / 50)
+
+      // Also verify PoE 2 Gore Spike deduplicates when tree stat line already parsed into CritDamageBonusInc
+      const dbGoreParsed = new ModDB();
+      const goreNode04 = mkNode('Gore Spike', ['1% increased Critical Damage Bonus per 40 Life'], 'Blood Mage', 52703);
+      dbGoreParsed.addMods(parseModLines(goreNode04.stats, 'Passive: Gore Spike'));
+      applyPostLifeAscendancyMechanics({
+        game: 'poe2',
+        db: dbGoreParsed,
+        allocatedNodes: [goreNode04],
+        str: 200,
+        dex: 100,
+        int: 160,
+        maxLife: 4000,
+        maxMana: 800,
+      });
+      dbGoreParsed.setStat('Life', 4000);
+      expect(dbGoreParsed.sum('INC', 'CritDamageBonusInc')).toBe(100);
+      expect(dbGoreParsed.sum('BASE', 'CritMultiplier')).toBe(0);
+
+      // Verify PoE 2 Herald-of-X conditional parsing (Coming Calamity)
+      expect(parseModLine('30% increased Lightning Damage while affected by Herald of Thunder', 'item')).toEqual([
+        expect.objectContaining({
+          name: 'LightningDamage',
+          type: 'INC',
+          value: 30,
+          tags: [{ type: 'Condition', var: 'AffectedByHeraldOfThunder' }],
+        }),
+      ]);
+      expect(parseModLine('While affected by Herald of Ice, 25% increased Cold Damage', 'item')).toEqual([
+        expect.objectContaining({
+          name: 'ColdDamage',
+          type: 'INC',
+          value: 25,
+          tags: [{ type: 'Condition', var: 'AffectedByHeraldOfIce' }],
+        }),
+      ]);
+
+      // Verify PoE 2 Disciple of Varashta Instruments of Power (-50% Focus bonus scaling & deduplication)
+      expect(parseModLine('50% reduced bonuses gained from Equipped Focus', 'Passive: Instruments of Power')).toEqual([
+        expect.objectContaining({ name: 'EffectOfBonusesFromFocus', type: 'INC', value: -50 }),
+      ]);
+      const dbVarashtaFallback = new ModDB();
+      applyPreStatAscendancyMechanics({
+        game: 'poe2',
+        db: dbVarashtaFallback,
+        allocatedNodes: [mkNode('Instruments of Power', [], 'Disciple of Varashta', 1)],
+      });
+      expect(dbVarashtaFallback.sum('INC', 'EffectOfBonusesFromFocus')).toBe(-50);
+
+      const dbVarashtaParsed = new ModDB();
+      const instNode = mkNode(
+        'Instruments of Power',
+        ['50% reduced bonuses gained from Equipped Focus'],
+        'Disciple of Varashta',
+        1,
+      );
+      dbVarashtaParsed.addMods(parseModLines(instNode.stats, 'Passive: Instruments of Power'));
+      applyPreStatAscendancyMechanics({
+        game: 'poe2',
+        db: dbVarashtaParsed,
+        allocatedNodes: [instNode],
+      });
+      expect(dbVarashtaParsed.sum('INC', 'EffectOfBonusesFromFocus')).toBe(-50);
     });
 
     it("Infernalist: Beidat's Hand, Will, Gaze & Altered Flesh", () => {
@@ -208,11 +272,12 @@ describe('ascendancyMods', () => {
       applyPreStatAscendancyMechanics({ game: 'poe2', db, allocatedNodes: nodes });
 
       expect(db.flag('HasTailwind')).toBe(true);
-      expect(db.more('Speed', ModFlag.Attack)).toBeCloseTo(1.1, 5);
-      expect(db.more('Speed', ModFlag.Spell)).toBeCloseTo(1.1, 5);
+      expect(db.sum('INC', 'Speed', ModFlag.Attack)).toBe(20);
+      expect(db.sum('INC', 'Speed', ModFlag.Cast)).toBe(20);
+      expect(db.sum('INC', 'DeflectEffect')).toBe(10);
       expect(db.sum('INC', 'MovementSpeed')).toBe(10);
-      expect(db.sum('INC', 'Evasion')).toBe(150);
-      expect(db.more('Damage', ModFlag.Projectile | ModFlag.Hit)).toBeCloseTo(1.2, 5);
+      expect(db.sum('INC', 'Evasion')).toBe(100);
+      expect(db.flag('PointBlank')).toBe(true);
       expect(db.sum('BASE', 'ProjectileCount')).toBe(1);
     });
 
@@ -224,8 +289,9 @@ describe('ascendancyMods', () => {
       ];
       applyPreStatAscendancyMechanics({ game: 'poe2', db, allocatedNodes: nodes });
       expect(db.flag('HasArcaneSurge')).toBe(true);
-      expect(db.more('Speed', ModFlag.Spell)).toBeCloseTo(1.1, 5);
-      expect(db.more('ManaRegen')).toBeCloseTo(1.2, 5);
+      expect(db.getEvalContext().conditions.AffectedByArcaneSurge).toBe(true);
+      expect(db.sum('INC', 'Speed', ModFlag.Spell)).toBe(15);
+      expect(db.sum('INC', 'ManaRegen')).toBe(20);
       expect(db.sum('BASE', 'DamageTakenFromManaBeforeLife')).toBe(20);
 
       applyPostLifeAscendancyMechanics({
@@ -239,6 +305,31 @@ describe('ascendancyMods', () => {
         maxMana: 3402,
       });
       expect(db.sum('INC', 'ArcaneSurgeEffect')).toBe(226); // Math.floor(3402 / 15)
+
+      // PoE 2 v0.3-v0.5 reworked Force of Will ("per ten percent missing Mana") must NOT add max-Mana ArcaneSurgeEffect
+      const db05 = new ModDB();
+      const nodes05 = [
+        mkNode(
+          'Force of Will',
+          [
+            '20% of Damage is taken from Mana before Life',
+            '20% increased Effect of Arcane Surge on you per ten percent missing Mana',
+          ],
+          'Stormweaver',
+          1,
+        ),
+      ];
+      applyPostLifeAscendancyMechanics({
+        game: 'poe2',
+        db: db05,
+        allocatedNodes: nodes05,
+        str: 60,
+        dex: 80,
+        int: 340,
+        maxLife: 1400,
+        maxMana: 3402,
+      });
+      expect(db05.sum('INC', 'ArcaneSurgeEffect')).toBe(0);
     });
 
     it('Lich (PoE 2): Soulless Form & Eldritch Empowerment', () => {
@@ -301,16 +392,26 @@ describe('ascendancyMods', () => {
     });
 
     it('Amazon (PoE 2): Critical Strike & Predatory Instinct', () => {
-      const db = new ModDB();
+      const dbOff = new ModDB();
       const nodes = [
         mkNode('Critical Strike', [], 'Amazon', 1),
         mkNode('Predatory Instinct', [], 'Amazon', 2),
       ];
       applyPreStatAscendancyMechanics({
         game: 'poe2',
-        db,
+        db: dbOff,
         allocatedNodes: nodes,
         config: { enemyIsBoss: 'Pinnacle' },
+      });
+      // Predatory Instinct defaults OFF unless conditionEnemyOpenWeakness is explicitly enabled
+      expect(dbOff.more('Damage')).toBe(1);
+
+      const db = new ModDB();
+      applyPreStatAscendancyMechanics({
+        game: 'poe2',
+        db,
+        allocatedNodes: nodes,
+        config: { enemyIsBoss: 'Pinnacle', rawInputs: { conditionEnemyOpenWeakness: true } },
       });
       expect(db.flag('ExcessAccuracyToCrit', ModFlag.Attack)).toBe(true);
       expect(db.more('Damage')).toBeCloseTo(1.5, 5);
@@ -472,6 +573,8 @@ describe('ascendancyMods', () => {
         allocatedNodes: nodes,
         config: { conditionLowLife: false },
       });
+      expect(db.more('Damage')).toBeCloseTo(1, 5);
+      db.setCondition('EnemyRareOrUnique', true);
       expect(db.more('Damage')).toBeCloseTo(1.25, 5);
       expect(db.sum('BASE', 'CritMultiplier')).toBe(100);
       expect(3 + db.sum('BASE', 'MaxPowerCharges')).toBe(8); // 3 base + 4 + 1 Unstable Infusion
@@ -490,6 +593,62 @@ describe('ascendancyMods', () => {
       // +100 (For the Jugular) + 8*5 (Deadly Infusion) = 140; at max Power Charges -> +1.5% Base Crit
       expect(db.sum('BASE', 'CritMultiplier')).toBe(140);
       expect(db.sum('BASE', 'BaseCritChance')).toBe(1.5);
+
+      // Deduplicate For the Jugular when passive tree stats already parsed +100% CritMultiplier
+      const dbDedup = new ModDB();
+      const ftjStats = [
+        '+100% to Critical Strike Multiplier against Enemies that are not on Low Life',
+        '100% more Critical Strike Chance against Enemies that are on Low Life',
+        'Critical Strikes have Culling Strike',
+      ];
+      for (const s of ftjStats) {
+        dbDedup.addMods(parseModLine(s, 'Tree: For the Jugular'));
+      }
+      applyPreStatAscendancyMechanics({
+        game: 'poe1',
+        db: dbDedup,
+        allocatedNodes: [mkNode('For the Jugular', ftjStats, 'Assassin', 2)],
+        config: { rawInputs: {} },
+      });
+      // Must be 100 (not double-counted 200!) when EnemyLowLife is false
+      expect(dbDedup.sum('BASE', 'CritMultiplier')).toBe(100);
+      expect(dbDedup.more('CritChance')).toBeCloseTo(1, 5);
+      // When EnemyLowLife is true, CritMultiplier drops to 0 and CritChance gets 100% MORE
+      dbDedup.setCondition('EnemyLowLife', true);
+      expect(dbDedup.sum('BASE', 'CritMultiplier')).toBe(0);
+      expect(dbDedup.more('CritChance')).toBeCloseTo(2, 5);
+
+      // Ascendant Necromancer wrapped "Cast\nSpeed" stat -> Speed INC 2 * AuraAffectingSelf
+      const dbAscNecro = new ModDB();
+      dbAscNecro.setMultiplier('AuraAffectingSelf', 5);
+      applyPreStatAscendancyMechanics({
+        game: 'poe1',
+        db: dbAscNecro,
+        allocatedNodes: [
+          mkNode(
+            'Necromancer',
+            ['Auras from your Skills grant 2% increased Attack and Cast\nSpeed to you and Allies'],
+            'Ascendant',
+            10099,
+          ),
+        ],
+      });
+      expect(dbAscNecro.sum('INC', 'Speed', ModFlag.Attack)).toBe(10);
+      expect(dbAscNecro.sum('INC', 'Speed', ModFlag.Spell)).toBe(10);
+
+      // Berserker Rite of Ruin dedup + Crave the Slaughter 3.25+ does NOT inject phantom +10 Max Rage
+      const dbZerk = new ModDB();
+      dbZerk.addMods(parseModLine('50% increased Rage Effect', 'Tree: Rite of Ruin'));
+      applyPreStatAscendancyMechanics({
+        game: 'poe1',
+        db: dbZerk,
+        allocatedNodes: [
+          mkNode('Rite of Ruin', ['50% increased Rage Effect'], 'Berserker', 57560),
+          mkNode('Crave the Slaughter', ['Every Rage also grants 1% increased Attack Speed'], 'Berserker', 24528),
+        ],
+      });
+      expect(dbZerk.sum('INC', 'RageEffect')).toBe(50);
+      expect(dbZerk.sum('BASE', 'MaximumRage')).toBe(0);
     });
 
     it('Elementalist: Shaper of Flames, Mastermind of Discord, Heart of Destruction & Liege of the Primordial', () => {
@@ -538,8 +697,27 @@ describe('ascendancyMods', () => {
       expect(db.sum('INC', 'Speed', ModFlag.Spell)).toBe(12);
       expect(db.sum('BASE', 'GemLevel:minion')).toBe(2);
       expect(db.flag('MinionUnholyMight')).toBe(true);
+      expect(db.sum('BASE', 'PhysicalDamageConvertToChaos')).toBe(100);
       expect(db.more('MinionDamage')).toBeCloseTo(1.1, 5);
       expect(db.more('MinionLife')).toBeCloseTo(1.2, 5);
+
+      // PoE 1 Deadeye Endless Munitions (+2 ProjectileCount, deduplicated if already parsed from tree)
+      const dbEm = new ModDB();
+      applyPreStatAscendancyMechanics({
+        game: 'poe1',
+        db: dbEm,
+        allocatedNodes: [mkNode('Endless Munitions', ['Skills fire 2 additional Projectiles'], 'Deadeye', 9)],
+      });
+      expect(dbEm.sum('BASE', 'ProjectileCount')).toBe(2);
+      // Deduplicate when tree already parsed it
+      const dbEmDup = new ModDB();
+      dbEmDup.addMods(parseModLine('Skills fire 2 additional Projectiles', 'Tree: Endless Munitions'));
+      applyPreStatAscendancyMechanics({
+        game: 'poe1',
+        db: dbEmDup,
+        allocatedNodes: [mkNode('Endless Munitions', ['Skills fire 2 additional Projectiles'], 'Deadeye', 9)],
+      });
+      expect(dbEmDup.sum('BASE', 'ProjectileCount')).toBe(2);
     });
 
     it('Deadeye (PoE 1), Champion, Inquisitor, Trickster, Gladiator & Pathfinder', () => {
@@ -625,12 +803,308 @@ describe('ascendancyMods', () => {
       expect(dbPf.more('Damage', ModFlag.Ailment | ModFlag.Dot, KeywordFlag.Poison)).toBeCloseTo(1.2, 5);
     });
 
-    it('exports complete metadata registry covering all 59 PoE 1 & PoE 2 ascendancy notables', () => {
+    it('exports complete metadata registry covering all 62 PoE 1 & PoE 2 ascendancy notables', () => {
       const poe1Count = SUPPORTED_ASCENDANCY_NOTABLES.filter((n) => n.game === 'poe1').length;
       const poe2Count = SUPPORTED_ASCENDANCY_NOTABLES.filter((n) => n.game === 'poe2').length;
       expect(poe1Count).toBe(35);
-      expect(poe2Count).toBe(24);
-      expect(SUPPORTED_ASCENDANCY_NOTABLES.length).toBe(59);
+      expect(poe2Count).toBe(27);
+      expect(SUPPORTED_ASCENDANCY_NOTABLES.length).toBe(62);
+    });
+
+    it('deduplicates Juggernaut Undeniable IAS, Inquisitor Augury of Penitence, and Assassin Deadly Infusion when node stats are parsed', () => {
+      // Undeniable with parsed tree stats (PerStat:Accuracy) must NOT double-count Attack Speed
+      const dbJug = new ModDB();
+      dbJug.addMod({ name: 'Accuracy', type: 'BASE', value: 1500, flags: 0, keywordFlags: 0, source: 'Base' });
+      const undeniableNode = mkNode(
+        'Undeniable',
+        ['+500 to Accuracy Rating', '1% increased Attack Speed per 150 Accuracy Rating', 'Gain Accuracy Rating equal to twice your Strength'],
+        'Juggernaut',
+        44297,
+      );
+      dbJug.addMods(parseModLines(undeniableNode.stats, 'Passive: Undeniable'));
+      applyPreStatAscendancyMechanics({ game: 'poe1', db: dbJug, allocatedNodes: [undeniableNode] });
+      applyPostLifeAscendancyMechanics({
+        game: 'poe1',
+        db: dbJug,
+        allocatedNodes: [undeniableNode],
+        str: 500,
+        dex: 100,
+        int: 100,
+        maxLife: 4000,
+        maxMana: 600,
+        accuracy: 2000,
+      });
+      // Accuracy = 1500 + 500 + 1000 = 3000; once stats.Accuracy = 3000 is populated, PerStat gives exactly 20% (not 40%)
+      dbJug.setStat('Accuracy', Math.round(dbJug.calcStat('Accuracy').total));
+      expect(dbJug.sum('BASE', 'Accuracy')).toBe(3000);
+      expect(dbJug.sum('INC', 'Speed', ModFlag.Attack)).toBe(20);
+
+      // Augury of Penitence parsed from tree must NOT double-count 16% -> 32%
+      const dbInq = new ModDB();
+      const auguryNode = mkNode(
+        'Augury of Penitence',
+        ['Nearby Enemies take 16% increased Elemental Damage', 'Nearby Enemies deal 8% less Elemental Damage'],
+        'Inquisitor',
+        40059,
+      );
+      dbInq.addMods(parseModLines(auguryNode.stats, 'Passive: Augury of Penitence'));
+      applyPreStatAscendancyMechanics({ game: 'poe1', db: dbInq, allocatedNodes: [auguryNode] });
+      expect(dbInq.sum('INC', 'EnemyElementalDamageTaken')).toBe(16);
+
+      // Assassin Deadly Infusion parsed from tree must NOT double-count +5% CritMulti per Power Charge
+      const dbAss = new ModDB();
+      const deadlyNode = mkNode(
+        'Deadly Infusion',
+        ['+5% to Critical Strike Multiplier per Power Charge', '+1.5% Critical Strike Chance while at maximum Power Charges'],
+        'Assassin',
+        10,
+      );
+      dbAss.addMods(parseModLines(deadlyNode.stats, 'Passive: Deadly Infusion'));
+      applyPostLifeAscendancyMechanics({
+        game: 'poe1',
+        db: dbAss,
+        allocatedNodes: [deadlyNode],
+        str: 100,
+        dex: 200,
+        int: 200,
+        maxLife: 3500,
+        maxMana: 700,
+        maxPowerCharges: 6,
+        activePowerCharges: 6,
+      });
+      expect(dbAss.sum('BASE', 'CritMultiPerPowerCharge')).toBe(5);
+      expect(dbAss.sum('BASE', 'CritMultiplier')).toBe(0);
+      expect(dbAss.sum('BASE', 'BaseCritChance')).toBe(1.5);
+    });
+
+    it('emits Deadeye Far Shot flag (delegating distance ramp to engine.ts) and Focal Point MarkEffect', () => {
+      const farShot = mkNode(
+        'Far Shot',
+        ['Projectiles gain Damage as they travel farther, dealing up\nto 30% more Damage with Hits and Ailments'],
+        'Deadeye',
+        45313,
+      );
+      const focalPoint = mkNode('Focal Point', ['75% increased Effect of your Marks'], 'Deadeye', 5443);
+
+      const db50 = new ModDB();
+      applyPreStatAscendancyMechanics({
+        game: 'poe1',
+        db: db50,
+        allocatedNodes: [farShot, focalPoint],
+        config: { rawInputs: { projectileDistance: 50 } },
+      });
+      expect(db50.flag('FarShot')).toBe(true);
+      // With BuildConfig present, engine.ts evaluates the PoB 1 Far Shot ramp via FarShot flag (zero double-count)
+      expect(db50.more('Damage', ModFlag.Projectile)).toBe(1);
+      expect(db50.sum('INC', 'MarkEffect')).toBe(75);
+
+      // Focal Point deduplicates when node stats are already parsed into db
+      const dbFocalParsed = new ModDB();
+      dbFocalParsed.addMods(parseModLines(focalPoint.stats, 'Passive: Focal Point'));
+      applyPreStatAscendancyMechanics({ game: 'poe1', db: dbFocalParsed, allocatedNodes: [focalPoint] });
+      expect(dbFocalParsed.sum('INC', 'MarkEffect')).toBe(75);
+
+      // Trickster One Step Ahead emits OneStepAhead flag (without double-counting ActionSpeed when config present)
+      const dbOsa = new ModDB();
+      applyPreStatAscendancyMechanics({
+        game: 'poe1',
+        db: dbOsa,
+        allocatedNodes: [mkNode('One Step Ahead', ['Your Action Speed is at least 105% of base value'], 'Trickster', 23225)],
+        config: { rawInputs: {} },
+      });
+      expect(dbOsa.flag('OneStepAhead')).toBe(true);
+      expect(dbOsa.sum('INC', 'ActionSpeed')).toBe(0);
+
+      // Assassin Opportunistic deduplicates with parsed tree stat & Toxic Delivery emits cap from wrapped stat
+      const dbAss2 = new ModDB();
+      const oppNode = mkNode(
+        'Opportunistic',
+        ['25% more Damage while there is at most one Rare or Unique Enemy within 6 metres'],
+        'Assassin',
+        19083,
+      );
+      const tdNode = mkNode(
+        'Toxic Delivery',
+        ['5% increased Poison Duration for each Poison you have inflicted Recently, up\nto a maximum of 100%'],
+        'Assassin',
+        19598,
+      );
+      dbAss2.addMods(parseModLines(oppNode.stats, 'Tree: Opportunistic'));
+      applyPreStatAscendancyMechanics({
+        game: 'poe1',
+        db: dbAss2,
+        allocatedNodes: [oppNode, tdNode],
+        config: { rawInputs: {} },
+      });
+      dbAss2.setCondition('EnemyRareOrUnique', true);
+      expect(dbAss2.more('Damage')).toBeCloseTo(1.25, 5);
+      expect(dbAss2.sum('BASE', 'ToxicDeliveryPoisonDurCap')).toBe(100);
+    });
+
+    it('handles Hierophant Ritual of Awakening, Arcane Blessing, Warden Avatar of the Wilds, and Champion Adrenaline / Celestial Brace', () => {
+      // Hierophant Ritual of Awakening + Arcane Blessing
+      const dbHiero = new ModDB();
+      const ritualNode = mkNode('Ritual of Awakening', ['3% more Damage per Summoned Totem'], 'Hierophant', 34434);
+      const blessingNode = mkNode(
+        'Arcane Blessing',
+        ['Arcane Surge also grants 20% more Spell Damage to you'],
+        'Hierophant',
+        40510,
+      );
+      const pursuitNode = mkNode('Pursuit of Faith', ['+1 to maximum number of Summoned Totems'], 'Hierophant', 1105);
+      dbHiero.addMods(parseModLines(ritualNode.stats, 'Passive: Ritual of Awakening'));
+      dbHiero.addMods(parseModLines(blessingNode.stats, 'Passive: Arcane Blessing'));
+      dbHiero.addMods(parseModLines(pursuitNode.stats, 'Passive: Pursuit of Faith'));
+      applyPreStatAscendancyMechanics({ game: 'poe1', db: dbHiero, allocatedNodes: [ritualNode, blessingNode, pursuitNode] });
+      dbHiero.setMultiplier('SummonedTotem', 5);
+      // 3% * 5 = 15% MORE
+      expect(dbHiero.more('Damage')).toBeCloseTo(1.15, 5);
+      expect(dbHiero.max('ArcaneSurgeDamage')).toBe(20);
+      expect(dbHiero.flag('Condition:ArcaneSurge')).toBe(true);
+      expect(dbHiero.sum('BASE', 'ActiveTotemLimit')).toBe(1);
+
+      // Standalone Arcane Blessing (unparsed tree stats) emits ArcaneSurgeDamage BASE 20 + Condition:ArcaneSurge
+      const dbHieroRaw = new ModDB();
+      applyPreStatAscendancyMechanics({ game: 'poe1', db: dbHieroRaw, allocatedNodes: [blessingNode] });
+      expect(dbHieroRaw.sum('BASE', 'ArcaneSurgeDamage')).toBe(20);
+      expect(dbHieroRaw.flag('Condition:ArcaneSurge')).toBe(true);
+
+      // Warden Avatar of the Wilds (Unbound Avatar) — active vs inactive
+      const avatarNode = mkNode(
+        'Avatar of the Wilds',
+        ['Grants Level 20 Unbound Avatar', '100% more Elemental Damage while Unbound'],
+        'Raider',
+        55509,
+      );
+      const dbWardenOn = new ModDB();
+      dbWardenOn.addMods(parseModLines(avatarNode.stats, 'Passive: Avatar of the Wilds'));
+      applyPreStatAscendancyMechanics({
+        game: 'poe1',
+        db: dbWardenOn,
+        allocatedNodes: [avatarNode],
+        config: { rawInputs: { Unbound: true } },
+      });
+      expect(dbWardenOn.more('ElementalDamage')).toBeCloseTo(2.0, 5);
+
+      const dbWardenOff = new ModDB();
+      dbWardenOff.addMods(parseModLines(avatarNode.stats, 'Passive: Avatar of the Wilds'));
+      applyPreStatAscendancyMechanics({
+        game: 'poe1',
+        db: dbWardenOff,
+        allocatedNodes: [avatarNode],
+        config: { rawInputs: {} },
+      });
+      expect(dbWardenOff.more('ElementalDamage')).toBe(1);
+
+      // Champion First to Strike + Fortitude + The Celestial Brace
+      const dbChamp = new ModDB();
+      dbChamp.addMods(parseModLines(['1% increased Attack Speed per Fortification', '+10 to maximum Fortification'], 'Item: The Celestial Brace'));
+      applyPreStatAscendancyMechanics({
+        game: 'poe1',
+        db: dbChamp,
+        allocatedNodes: [
+          mkNode('Fortitude', [], 'Champion', 31700),
+          mkNode('First to Strike, Last to Fall', [], 'Champion', 27604),
+        ],
+        config: { rawInputs: { conditionAdrenaline: true } },
+      });
+      dbChamp.setMultiplier('Fortification', 30);
+      expect(dbChamp.sum('BASE', 'MaxFortification')).toBe(10);
+      expect(dbChamp.sum('INC', 'Damage')).toBe(100);
+      expect(dbChamp.sum('INC', 'Speed', ModFlag.Attack)).toBe(55); // 25 Adrenaline + 30 Celestial Brace
+    });
+
+    it('parses PoE 1 high-impact modParser rules (BifurcateCrit, Ryslatha, Echoes, ExertIncrease, Socketed Gems, Cull, Yoke, Consecrated Ground, MarkEffect)', () => {
+      expect(parseModLine('Spell Critical Strike Chance Bifurcates', 'tree')).toEqual([
+        expect.objectContaining({ name: 'BifurcateCrit', type: 'FLAG', value: true, flags: ModFlag.Spell }),
+      ]);
+      expect(parseModLine('Critical Strike Chance Bifurcates', 'item')).toEqual([
+        expect.objectContaining({ name: 'BifurcateCrit', type: 'FLAG', value: true, flags: 0 }),
+      ]);
+      expect(parseModLine('40% more Maximum Physical Attack Damage', 'item')).toEqual([
+        expect.objectContaining({ name: 'PhysicalMaxDamage', type: 'MORE', value: 40, flags: ModFlag.Attack }),
+      ]);
+      expect(parseModLine('30% less Minimum Physical Attack Damage', 'item')).toEqual([
+        expect.objectContaining({ name: 'PhysicalMinDamage', type: 'MORE', value: -30, flags: ModFlag.Attack }),
+      ]);
+      expect(parseModLine('25% more Maximum Physical Damage', 'item')).toEqual([
+        expect.objectContaining({ name: 'PhysicalMaxDamage', type: 'MORE', value: 25, flags: 0 }),
+      ]);
+      expect(parseModLine('Skills deal 15% more Damage for each Warcry Exerting them', 'item')).toEqual([
+        expect.objectContaining({ name: 'EchoesExertAverageIncrease', type: 'MORE', value: 15, flags: ModFlag.Attack }),
+      ]);
+      expect(parseModLine('Exerted Attacks deal 35% increased Damage', 'tree')).toEqual([
+        expect.objectContaining({ name: 'ExertIncrease', type: 'INC', value: 35, flags: ModFlag.Attack }),
+      ]);
+      expect(parseModLine('Socketed Gems deal 30% more Elemental Damage', 'item')).toEqual([
+        expect.objectContaining({
+          name: 'ElementalDamage',
+          type: 'MORE',
+          value: 30,
+          tags: [{ type: 'SocketedIn' }],
+        }),
+      ]);
+      expect(parseModLine('Socketed Gems deal 30% more Damage over Time', 'item')).toEqual([
+        expect.objectContaining({
+          name: 'Damage',
+          type: 'MORE',
+          value: 30,
+          flags: ModFlag.Dot,
+          tags: [{ type: 'SocketedIn' }],
+        }),
+      ]);
+      expect(parseModLine('Kill Enemies that have 15% or lower Life', 'item')).toEqual([
+        expect.objectContaining({ name: 'CullPercent', type: 'MAX', value: 15 }),
+      ]);
+      expect(
+        parseModLine('Enemies take 10% increased Damage for each type of Ailment you have inflicted on them', 'item'),
+      ).toEqual([
+        expect.objectContaining({ name: 'EnemyDamageTakenPerAilmentType', type: 'BASE', value: 10 }),
+      ]);
+      expect(parseModLine('Enemies on Consecrated Ground you create take 15% increased Damage', 'item')).toEqual([
+        expect.objectContaining({ name: 'DamageTakenConsecratedGround', type: 'INC', value: 15, target: 'enemy' }),
+      ]);
+      expect(parseModLine('Consecrated Ground you create applies 15% increased Damage taken to Enemies', 'tree')).toEqual([
+        expect.objectContaining({ name: 'DamageTakenConsecratedGround', type: 'INC', value: 15, target: 'enemy' }),
+      ]);
+      expect(parseModLine('75% increased Effect of your Marks', 'tree')).toEqual([
+        expect.objectContaining({ name: 'MarkEffect', type: 'INC', value: 75 }),
+      ]);
+      expect(parseModLine('20% increased Effect of your Mark Skills', 'tree')).toEqual([
+        expect.objectContaining({ name: 'MarkEffect', type: 'INC', value: 20 }),
+      ]);
+      expect(parseModLine('50% increased Effect of Arcane Surge on you', 'tree')).toEqual([
+        expect.objectContaining({ name: 'ArcaneSurgeEffect', type: 'INC', value: 50 }),
+      ]);
+      expect(parseModLine('Ignites you inflict with Attacks deal Damage 35% faster', 'item')).toEqual([
+        expect.objectContaining({ name: 'IgniteFaster', type: 'INC', value: 35, flags: ModFlag.Attack }),
+      ]);
+      expect(parseModLine('+25% to Damage over Time Multiplier with Melee Weapon Attacks', 'item')).toEqual([
+        expect.objectContaining({
+          name: 'DotMultiplier',
+          type: 'BASE',
+          value: 25,
+          flags: ModFlag.Attack | ModFlag.Melee,
+        }),
+      ]);
+      expect(parseModLine('60% increased Damage with Ignite from Melee Weapons', 'item')).toEqual([
+        expect.objectContaining({
+          name: 'Damage',
+          type: 'INC',
+          value: 60,
+          flags: ModFlag.Attack | ModFlag.Melee | ModFlag.Ailment,
+          keywordFlags: KeywordFlag.Ignite,
+        }),
+      ]);
+      expect(parseModLine('45% increased Damage with Ailments from Melee Weapons', 'item')).toEqual([
+        expect.objectContaining({
+          name: 'Damage',
+          type: 'INC',
+          value: 45,
+          flags: ModFlag.Attack | ModFlag.Melee | ModFlag.Ailment,
+          keywordFlags: 0,
+        }),
+      ]);
     });
   });
 });

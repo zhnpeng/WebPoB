@@ -1,15 +1,20 @@
 import { deflate, inflate } from 'pako';
-import type {
-  Build,
-  EquipmentSlotId,
-  GameId,
-  GemInstance,
-  Item,
-  ItemSetSpec,
-  SkillGroup,
-  SkillSetSpec,
-  TreeSpec,
-  WeaponSetId,
+import {
+  KeywordFlag,
+  ModFlag,
+  type Build,
+  type EquipmentSlotId,
+  type GameId,
+  type GemInstance,
+  type Item,
+  type ItemSetSpec,
+  type Mod,
+  type ModTag,
+  type ModType,
+  type SkillGroup,
+  type SkillSetSpec,
+  type TreeSpec,
+  type WeaponSetId,
 } from '@webpob/core';
 import {
   createDefaultConfig,
@@ -132,6 +137,7 @@ export function buildToPobXml(build: Build): string {
   lines.push(`  <Tree activeSpec="${activeSpecAttr}">`);
   for (const spec of specsToWrite) {
     const allNodesSet = new Set<number>(spec.allocatedNodeIds);
+    for (const cid of spec.clusterNodeIds ?? []) allNodesSet.add(cid);
     if (build.game === 'poe2') {
       for (const id of spec.weaponSet1NodeIds) allNodesSet.add(id);
       for (const id of spec.weaponSet2NodeIds) allNodesSet.add(id);
@@ -256,8 +262,13 @@ export function buildToPobXml(build: Build): string {
           gem.enableGlobal1 !== undefined ? ` enableGlobal1="${gem.enableGlobal1}"` : '';
         const global2Attr =
           gem.enableGlobal2 !== undefined ? ` enableGlobal2="${gem.enableGlobal2}"` : '';
+        const xmlBaseLevel = gem.corruptLevel ? gem.level - gem.corruptLevel : gem.level;
+        const corruptLevelAttr =
+          gem.corruptLevel !== undefined && gem.corruptLevel !== 0
+            ? ` corruptLevel="${gem.corruptLevel}"`
+            : '';
         lines.push(
-          `        <Gem gemId="${escapeXml(gem.gemId)}" nameSpec="${escapeXml(nameSpec)}" level="${gem.level}" quality="${gem.quality}" enabled="${gem.enabled}"${countAttr}${gemPartAttr}${gemStatSetAttr}${global1Attr}${global2Attr} />`,
+          `        <Gem gemId="${escapeXml(gem.gemId)}" nameSpec="${escapeXml(nameSpec)}" level="${xmlBaseLevel}"${corruptLevelAttr} quality="${gem.quality}" enabled="${gem.enabled}"${countAttr}${gemPartAttr}${gemStatSetAttr}${global1Attr}${global2Attr} />`,
         );
       }
       lines.push(`      </Skill>`);
@@ -507,7 +518,7 @@ export function xmlToBuild(xml: string): Build {
       const itemId = attrs.itemId ? numIdToItemId.get(attrs.itemId) : undefined;
       if (slotName && itemId) {
         eq[slotName] = itemId;
-        if (slotName.startsWith('Flask ') && attrs.active === 'true') {
+        if ((slotName.startsWith('Flask ') || slotName.startsWith('Charm ')) && attrs.active === 'true') {
           fl[slotName] = true;
         }
       }
@@ -534,9 +545,9 @@ export function xmlToBuild(xml: string): Build {
   const activeWeaponSet: WeaponSetId =
     buildAttrs.activeWeaponSet === '2' || itemSetWsFlags[activeItemSetIndex] ? 2 : 1;
 
-  // Parse <Tree activeSpec="..."> & ALL <Spec> elements (supports PoB multi-spec trees!)
-  const tree = getTreeForGame(game);
-  const startNodeId = tree.classStartNodeIds[classDef.id];
+  // Parse <Tree activeSpec="..."> & ALL <Spec> elements (supports PoB multi-spec & historical versioned trees!)
+  const defaultTree = getTreeForGame(game);
+  const defaultStartNodeId = defaultTree.classStartNodeIds[classDef.id];
   const treeHeaderMatch = xml.match(/<Tree\b([^>]*)>/i);
   const treeHeaderAttrs = treeHeaderMatch ? parseAttributes(treeHeaderMatch[1]!) : {};
   const requestedSpecIdx = Math.max(1, Number(treeHeaderAttrs.activeSpec ?? 1) || 1) - 1;
@@ -547,20 +558,25 @@ export function xmlToBuild(xml: string): Build {
   while ((spMatch = specBlockRegex.exec(xml)) !== null) {
     const specAttrs = parseAttributes(spMatch[1]!);
     const specInner = spMatch[2] ?? '';
+    const specTree = getTreeForGame(game, specAttrs.treeVersion);
+    const specStartNodeId = specTree.classStartNodeIds[classDef.id] ?? defaultStartNodeId;
     const ws1ChildMatch = specInner.match(/<WeaponSet1\b[^>]*\bnodes="([^"]*)"/i);
     const ws2ChildMatch = specInner.match(/<WeaponSet2\b[^>]*\bnodes="([^"]*)"/i);
     const weaponSet1NodeIds = parseNodeList(ws1ChildMatch?.[1] ?? specAttrs.weaponSet1Nodes).filter((id) =>
-      Boolean(tree.nodes[id]),
+      Boolean(specTree.nodes[id]),
     );
     const weaponSet2NodeIds = parseNodeList(ws2ChildMatch?.[1] ?? specAttrs.weaponSet2Nodes).filter((id) =>
-      Boolean(tree.nodes[id]),
+      Boolean(specTree.nodes[id]),
     );
     const wsExclusiveSet = new Set<number>([...weaponSet1NodeIds, ...weaponSet2NodeIds]);
-    let allocatedNodeIds = parseNodeList(specAttrs.nodes).filter(
-      (id) => Boolean(tree.nodes[id]) && !wsExclusiveSet.has(id),
+    const rawSpecNodes = parseNodeList(specAttrs.nodes);
+    let allocatedNodeIds = rawSpecNodes.filter(
+      (id) => Boolean(specTree.nodes[id]) && !wsExclusiveSet.has(id),
     );
-    if (startNodeId && !allocatedNodeIds.includes(startNodeId)) {
-      allocatedNodeIds = [startNodeId, ...allocatedNodeIds];
+    const clusterNodeIds =
+      game === 'poe1' ? rawSpecNodes.filter((id) => id >= 65536 && !specTree.nodes[id]) : [];
+    if (specStartNodeId && !allocatedNodeIds.includes(specStartNodeId)) {
+      allocatedNodeIds = [specStartNodeId, ...allocatedNodeIds];
     }
     // Preserve ALL <Spec><Sockets> jewel nodeIds (including Voices / cluster jewel / legacy socket IDs absent from tree.nodes)
     const specJewels: Record<number, string> = {};
@@ -583,12 +599,13 @@ export function xmlToBuild(xml: string): Build {
       for (const id of parseNodeList(attrs.dexNodes)) specAttributeOverrides[id] = 'dex';
       for (const id of parseNodeList(attrs.intNodes)) specAttributeOverrides[id] = 'int';
     }
-    const masteryEffects = parseMasteryEffectsAttr(specAttrs.masteryEffects, tree);
+    const masteryEffects = parseMasteryEffectsAttr(specAttrs.masteryEffects, specTree);
     const specNodeOverrides = parseNodeOverrides(specInner);
     treeSpecs.push({
       title: specAttrs.title || (treeSpecs.length === 0 ? 'Default' : `Spec ${treeSpecs.length + 1}`),
-      treeVersion: specAttrs.treeVersion || tree.version,
+      treeVersion: specAttrs.treeVersion || specTree.version,
       allocatedNodeIds,
+      ...(clusterNodeIds.length > 0 ? { clusterNodeIds } : {}),
       weaponSet1NodeIds,
       weaponSet2NodeIds,
       masteryEffects,
@@ -604,8 +621,8 @@ export function xmlToBuild(xml: string): Build {
   if (treeSpecs.length === 0) {
     treeSpecs.push({
       title: 'Default',
-      treeVersion: tree.version,
-      allocatedNodeIds: startNodeId ? [startNodeId] : [],
+      treeVersion: defaultTree.version,
+      allocatedNodeIds: defaultStartNodeId ? [defaultStartNodeId] : [],
       weaponSet1NodeIds: [],
       weaponSet2NodeIds: [],
       masteryEffects: {},
@@ -631,11 +648,12 @@ export function xmlToBuild(xml: string): Build {
       const attrs = parseAttributes(skillMatch[1]!);
       const inner = skillMatch[2] ?? '';
       const gems: GemInstance[] = [];
-      const gemRegex = /<Gem\b([^>]*)\/?>/gi;
+      const gemRegex = /<Gem(?=\s|>|\/)([^>]*?)(?:\/>|>([\s\S]*?)<\/Gem>)/gi;
       let gemMatch: RegExpExecArray | null;
       let gemCounter = 1;
       while ((gemMatch = gemRegex.exec(inner)) !== null) {
         const gAttrs = parseAttributes(gemMatch[1]!);
+        const gemInner = gemMatch[2] ?? '';
         const matchedId = matchGemId(
           game,
           gAttrs.gemId,
@@ -646,23 +664,51 @@ export function xmlToBuild(xml: string): Build {
         if (matchedId) {
           const parsedCount = Number(gAttrs.count ?? 1);
           const gemSkillPart =
-            parsePositiveIntAttr(gAttrs.skillPartCalcs) ?? parsePositiveIntAttr(gAttrs.skillPart);
-          const gemStatSetIndex =
-            parsePositiveIntAttr(gAttrs.statSetIndexCalcs) ??
-            parsePositiveIntAttr(gAttrs.statSetIndex);
+            parsePositiveIntAttr(gAttrs.skillPart) ?? parsePositiveIntAttr(gAttrs.skillPartCalcs);
+          const gemStageCount =
+            parsePositiveIntAttr(gAttrs.skillStageCount) ??
+            parsePositiveIntAttr(gAttrs.skillStageCountCalcs);
+          let gemStatSetIndex =
+            parsePositiveIntAttr(gAttrs.statSetIndex) ??
+            parsePositiveIntAttr(gAttrs.statSetIndexCalcs);
+          if (gemStatSetIndex === undefined && gemInner) {
+            const ssRegex = /<StatSetIndex\b([^>]*)\/?>/gi;
+            let ssm: RegExpExecArray | null;
+            while ((ssm = ssRegex.exec(gemInner)) !== null) {
+              const ssAttrs = parseAttributes(ssm[1]!);
+              const idxVal = parsePositiveIntAttr(ssAttrs.index);
+              if (idxVal === undefined) continue;
+              if (!gAttrs.skillId || !ssAttrs.grantedEffect || ssAttrs.grantedEffect === gAttrs.skillId) {
+                gemStatSetIndex = idxVal;
+                break;
+              }
+              if (gemStatSetIndex === undefined) {
+                gemStatSetIndex = idxVal;
+              }
+            }
+          }
           const enableGlobal1 =
             gAttrs.enableGlobal1 !== undefined ? gAttrs.enableGlobal1 !== 'false' : undefined;
           const enableGlobal2 =
             gAttrs.enableGlobal2 !== undefined ? gAttrs.enableGlobal2 === 'true' : undefined;
+          const baseGemLevel = Number(gAttrs.level ?? 20) || 20;
+          const rawCorruptLevel =
+            gAttrs.corruptLevel !== undefined ? Number(gAttrs.corruptLevel) : 0;
+          const corruptLevel = Number.isFinite(rawCorruptLevel) ? Math.round(rawCorruptLevel) : 0;
           gems.push({
             instanceId: `${prefix}_g_${groupCounter}_${gemCounter++}`,
             gemId: matchedId,
-            level: Number(gAttrs.level ?? 20) || 20,
+            level: Math.max(1, baseGemLevel + corruptLevel),
             quality: Number(gAttrs.quality ?? 0) || 0,
             enabled: gAttrs.enabled !== 'false',
+            ...(corruptLevel !== 0 ? { corruptLevel } : {}),
             ...(Number.isFinite(parsedCount) && parsedCount > 1 ? { count: Math.round(parsedCount) } : {}),
             ...(gemSkillPart !== undefined ? { skillPart: gemSkillPart } : {}),
             ...(gemStatSetIndex !== undefined ? { statSetIndex: gemStatSetIndex } : {}),
+            ...(gemStageCount !== undefined ? { stageCount: gemStageCount } : {}),
+            ...(gAttrs.fromItem === 'true' || Boolean(attrs.source && /^Item:/i.test(attrs.source))
+              ? { fromItem: true }
+              : {}),
             ...(enableGlobal1 !== undefined ? { enableGlobal1 } : {}),
             ...(enableGlobal2 !== undefined ? { enableGlobal2 } : {}),
           });
@@ -678,18 +724,100 @@ export function xmlToBuild(xml: string): Build {
             level: Number(attrs.level ?? 20) || 20,
             quality: 0,
             enabled: true,
+            ...(isFreeSceptreOrItemAura ? { fromItem: true } : {}),
             ...(isFreeSceptreOrItemAura && game === 'poe2' ? { spiritReservationOverride: 0 } : {}),
           });
+        }
+      }
+      if (gems.length === 0 && (attrs.source || attrs.slot)) {
+        // Resolve item-granted <Skill source="Item:1:Relic of the Pact, ..." slot="Weapon 1"/> when <Gem> & skillId are omitted
+        let sourceItem: Item | undefined;
+        const mSrcItem = attrs.source?.match(/^Item:(\d+):/i);
+        if (mSrcItem?.[1]) {
+          const mappedId = numIdToItemId.get(mSrcItem[1]);
+          if (mappedId) sourceItem = items[mappedId];
+        }
+        if (!sourceItem && attrs.slot) {
+          const slotItemId = equipped[attrs.slot as EquipmentSlotId];
+          if (slotItemId) sourceItem = items[slotItemId];
+        }
+        if (sourceItem) {
+          let grantedName: string | undefined;
+          let grantedLevel = Number(attrs.level ?? 0) || 0;
+          for (const rawLine of [...sourceItem.implicits, ...sourceItem.explicits]) {
+            const cleanLine = rawLine.replace(/\{[^}]*\}/g, '').trim();
+            let mGrant = cleanLine.match(/^Grants Skill:\s*Level\s+(\d+)\s+(.+)$/i);
+            if (mGrant) {
+              grantedLevel = Number(mGrant[1]);
+              grantedName = mGrant[2]!.trim();
+              break;
+            }
+            mGrant = cleanLine.match(/^Grants Level\s+(\d+)\s+(.+?)\s+Skill$/i);
+            if (mGrant) {
+              grantedLevel = Number(mGrant[1]);
+              grantedName = mGrant[2]!.trim();
+              break;
+            }
+            mGrant = cleanLine.match(/^Grants Skill:\s*(.+)$/i);
+            if (mGrant) {
+              grantedName = mGrant[1]!.trim();
+              break;
+            }
+            mGrant = cleanLine.match(/^Trigger Level\s+(\d+)\s+([A-Za-z ':-]+?)\s+(?:on|when|from)\b/i);
+            if (mGrant) {
+              grantedLevel = Number(mGrant[1]);
+              grantedName = mGrant[2]!.trim();
+              break;
+            }
+          }
+          if (!grantedName) {
+            const itemLower = sourceItem.name.trim().toLowerCase();
+            if (itemLower.includes('relic of the pact')) {
+              grantedName = 'Blood Sacrament';
+              grantedLevel = grantedLevel || 1;
+            } else if (itemLower.includes("death's oath")) {
+              grantedName = 'Death Aura';
+              grantedLevel = grantedLevel || 20;
+            } else if (itemLower.includes('whispering ice')) {
+              grantedName = 'Icestorm';
+              grantedLevel = grantedLevel || 1;
+            } else if (itemLower.includes("arakaali's fang")) {
+              grantedName = 'Raise Spiders';
+              grantedLevel = grantedLevel || 1;
+            } else if (itemLower.includes("doryani's fist")) {
+              grantedName = "Doryani's Touch";
+              grantedLevel = grantedLevel || 20;
+            }
+          }
+          if (grantedName) {
+            const itemSkillMatched =
+              matchGemId(game, undefined, grantedName, undefined, undefined) ??
+              matchGemId(game, undefined, attrs.label, grantedName.replace(/\s+/g, ''), undefined);
+            if (itemSkillMatched) {
+              gems.push({
+                instanceId: `${prefix}_g_${groupCounter}_1`,
+                gemId: itemSkillMatched,
+                level: grantedLevel || 20,
+                quality: 0,
+                enabled: true,
+                fromItem: true,
+                ...(game === 'poe2' ? { spiritReservationOverride: 0 } : {}),
+              });
+            }
+          }
         }
       }
       if (gems.length > 0) {
         const weaponSets = parseSkillWeaponSets(attrs, game);
         const mainActiveRaw = Number(attrs.mainActiveSkill ?? attrs.mainActiveSkillCalcs ?? 1);
         const groupSkillPart =
-          parsePositiveIntAttr(attrs.skillPartCalcs) ?? parsePositiveIntAttr(attrs.skillPart);
+          parsePositiveIntAttr(attrs.skillPart) ?? parsePositiveIntAttr(attrs.skillPartCalcs);
         const groupStatSetIndex =
-          parsePositiveIntAttr(attrs.statSetIndexCalcs) ??
-          parsePositiveIntAttr(attrs.statSetIndex);
+          parsePositiveIntAttr(attrs.statSetIndex) ??
+          parsePositiveIntAttr(attrs.statSetIndexCalcs);
+        const groupStageCount =
+          parsePositiveIntAttr(attrs.skillStageCount) ??
+          parsePositiveIntAttr(attrs.skillStageCountCalcs);
         const groupSource = attrs.source?.trim() || undefined;
         const groupEnabled =
           attrs.enabled !== undefined ? attrs.enabled !== 'false' : attrs.active !== 'false';
@@ -704,6 +832,7 @@ export function xmlToBuild(xml: string): Build {
           ...(Number.isFinite(mainActiveRaw) && mainActiveRaw > 1 ? { mainActiveSkillIndex: mainActiveRaw } : {}),
           ...(groupSkillPart !== undefined ? { skillPart: groupSkillPart } : {}),
           ...(groupStatSetIndex !== undefined ? { statSetIndex: groupStatSetIndex } : {}),
+          ...(groupStageCount !== undefined ? { stageCount: groupStageCount } : {}),
           ...(groupSource ? { source: groupSource } : {}),
           gems,
         });
@@ -772,12 +901,12 @@ export function xmlToBuild(xml: string): Build {
       skills[0]!.id;
   }
 
-  // Parse <Config> inputs using clean official PoB defaults (all optional buffs OFF unless specified in XML)
+  // Parse <Config> inputs using clean official PoB defaults (`enemyIsBoss` defaults to Pinnacle in both PoB1 & PoB2!)
   const ruleset = getRuleset(game);
   const config: Build['config'] = {
     ...createDefaultConfig(),
     enemyLevel: 84,
-    enemyIsBoss: 'None',
+    enemyIsBoss: 'Pinnacle',
     enemyFireResist: ruleset.defaultEnemyEleResist,
     enemyColdResist: ruleset.defaultEnemyEleResist,
     enemyLightningResist: ruleset.defaultEnemyEleResist,
@@ -793,29 +922,72 @@ export function xmlToBuild(xml: string): Build {
     enemyChilled: false,
   };
   let banditFromConfig: Build['bandit'] | undefined;
+  let explicitEnemyLevel = false;
+  let explicitEnemyEleRes = false;
+  let explicitEnemyChaosRes = false;
+  let explicitEnemyArmour = false;
+  let explicitEnemyEvasion = false;
   const questCustomModLines: string[] = [];
+  const rawInputs: Record<string, boolean | number | string> = {};
   const activeConfigXml = extractActiveConfigSetXml(xml);
-  const inputRegex = /<(?:Input|Placeholder)\b([^>]*)\/?>/gi;
+  const inputRegex = /<(Input|Placeholder)\b([^>]*)\/?>/gi;
   let inputMatch: RegExpExecArray | null;
   while ((inputMatch = inputRegex.exec(activeConfigXml)) !== null) {
-    const attrs = parseAttributes(inputMatch[1]!);
+    const elemTag = inputMatch[1]!.toLowerCase();
+    const attrs = parseAttributes(inputMatch[2]!);
     const key = attrs.name;
-    // PoE 2 optional campaign quest rewards stored as <Input name="quest..." string="..."/>
-    if (game === 'poe2' && key && /^quest/i.test(key) && attrs.string) {
-      for (const rawQuestLine of attrs.string.split(/\r?\n/)) {
-        const ql = rawQuestLine.trim();
-        if (!ql) continue;
-        // Skip fixed campaign baselines already baked into POE2_RULESET
-        if (
-          /^\+?100\s*(?:to\s+)?Spirit$/i.test(ql) ||
-          /^\+?20\s*to maximum Life$/i.test(ql) ||
-          /^5%\s*increased maximum (?:Life|Mana)$/i.test(ql) ||
-          /^\+10%\s*to (?:Fire|Cold|Lightning) Resistance$/i.test(ql) ||
-          /Charm Slot/i.test(ql)
-        ) {
-          continue;
+    // Official PoB <Placeholder> only stores UI placeholder hints (except WebPoB's own customMods serialization)
+    if (elemTag === 'placeholder') {
+      if (key === 'customMods' && attrs.string) {
+        config.customMods = attrs.string;
+      }
+      continue;
+    }
+    if (key && !/^quest/i.test(key) && key !== 'customMods') {
+      if (attrs.boolean !== undefined) {
+        rawInputs[key] = attrs.boolean === 'true';
+      } else if (attrs.number !== undefined) {
+        const parsedNum = Number(attrs.number);
+        if (Number.isFinite(parsedNum)) {
+          rawInputs[key] = parsedNum;
         }
-        questCustomModLines.push(ql);
+      } else if (attrs.string !== undefined) {
+        rawInputs[key] = attrs.string;
+      }
+    }
+    // PoE 2 campaign quest rewards stored as <Input name="quest..." boolean="false"|string="..."/>
+    // Skip legacy PoE 2 v0.1 Cruel difficulty quest rewards (removed in PoB 2 v0.3+/v0.5 Data/QuestRewards.lua)
+    if (game === 'poe2' && key && /^quest/i.test(key) && !/^questAct\d+Cruel/i.test(key)) {
+      if (attrs.boolean === 'false') {
+        if (/clearfell/i.test(key)) questCustomModLines.push('-10% to Cold Resistance');
+        else if (/freythorn|azak bog/i.test(key)) questCustomModLines.push('-30 to Spirit');
+        else if (/kriar village/i.test(key)) questCustomModLines.push('-40 to Spirit');
+        else if (/ogham manor/i.test(key)) questCustomModLines.push('-20 to maximum Life');
+        else if (/spires of deshar/i.test(key)) questCustomModLines.push('-10% to Lightning Resistance');
+        else if (/jiquani/i.test(key)) questCustomModLines.push('-10% to Fire Resistance');
+        else if (/eye of hinekora.*silent hall/i.test(key)) questCustomModLines.push('5% reduced maximum Mana');
+        else if (/khari crossing/i.test(key)) questCustomModLines.push('5% reduced maximum Life');
+      } else if (attrs.string) {
+        for (const rawQuestLine of attrs.string.split(/\r?\n/)) {
+          const ql = rawQuestLine.trim();
+          if (!ql) continue;
+          const mCharmSlot = ql.match(/^\+(\d+)\s*Charm Slots?$/i);
+          if (mCharmSlot) {
+            rawInputs.__questCharmSlots =
+              Number(rawInputs.__questCharmSlots ?? 0) + Number(mCharmSlot[1]);
+            continue;
+          }
+          if (
+            /^\+?100\s*(?:to\s+)?Spirit$/i.test(ql) ||
+            /^\+?20\s*to maximum Life$/i.test(ql) ||
+            /^5%\s*increased maximum (?:Life|Mana)$/i.test(ql) ||
+            /^\+10%\s*to (?:Fire|Cold|Lightning) Resistance$/i.test(ql) ||
+            /Charm Slot/i.test(ql)
+          ) {
+            continue;
+          }
+          questCustomModLines.push(ql);
+        }
       }
     }
     if (key === 'bandit' && attrs.string) {
@@ -823,7 +995,34 @@ export function xmlToBuild(xml: string): Build {
         banditFromConfig = attrs.string;
       }
     }
-    if (key === 'enemyLevel' && attrs.number) config.enemyLevel = Number(attrs.number);
+    if (key === 'enemyLevel' && attrs.number !== undefined) {
+      config.enemyLevel = Number(attrs.number);
+      explicitEnemyLevel = true;
+    }
+    if (key === 'enemyFireResist' && attrs.number !== undefined) {
+      config.enemyFireResist = Number(attrs.number);
+      explicitEnemyEleRes = true;
+    }
+    if (key === 'enemyColdResist' && attrs.number !== undefined) {
+      config.enemyColdResist = Number(attrs.number);
+      explicitEnemyEleRes = true;
+    }
+    if (key === 'enemyLightningResist' && attrs.number !== undefined) {
+      config.enemyLightningResist = Number(attrs.number);
+      explicitEnemyEleRes = true;
+    }
+    if (key === 'enemyChaosResist' && attrs.number !== undefined) {
+      config.enemyChaosResist = Number(attrs.number);
+      explicitEnemyChaosRes = true;
+    }
+    if (key === 'enemyArmour' && attrs.number !== undefined) {
+      config.enemyArmour = Number(attrs.number);
+      explicitEnemyArmour = true;
+    }
+    if (key === 'enemyEvasion' && attrs.number !== undefined) {
+      config.enemyEvasion = Number(attrs.number);
+      explicitEnemyEvasion = true;
+    }
     if (key === 'enemyIsBoss' && attrs.string) {
       const normalizedBoss = attrs.string.trim().toLowerCase();
       if (normalizedBoss === 'none') {
@@ -832,10 +1031,14 @@ export function xmlToBuild(xml: string): Build {
         config.enemyIsBoss = 'Guardian';
       } else if (
         normalizedBoss === 'pinnacle' ||
+        normalizedBoss === 'uber' ||
         normalizedBoss === 'shaper' ||
         normalizedBoss === 'sirus'
       ) {
         config.enemyIsBoss = 'Pinnacle';
+      }
+      if (normalizedBoss === 'uber') {
+        rawInputs.__enemyIsUber = true;
       }
     }
     if (key === 'usePowerCharges' && attrs.boolean) config.usePowerCharges = attrs.boolean === 'true';
@@ -921,6 +1124,313 @@ export function xmlToBuild(xml: string): Build {
   }
   if (customModParts.length > 0) {
     config.customMods = customModParts.join('\n');
+  }
+  // Apply PoB default enemy resistances when enemyIsBoss was explicitly set to None or Boss/Guardian without manual enemy*Resist
+  if (!explicitEnemyEleRes) {
+    if (config.enemyIsBoss === 'None') {
+      const normalEleRes = 0;
+      config.enemyFireResist = normalEleRes;
+      config.enemyColdResist = normalEleRes;
+      config.enemyLightningResist = normalEleRes;
+    } else if (config.enemyIsBoss === 'Guardian') {
+      const bossEleRes = game === 'poe2' ? 30 : 40;
+      config.enemyFireResist = bossEleRes;
+      config.enemyColdResist = bossEleRes;
+      config.enemyLightningResist = bossEleRes;
+    }
+  }
+  if (!explicitEnemyChaosRes) {
+    if (config.enemyIsBoss === 'None') {
+      config.enemyChaosResist = 0;
+    } else if (config.enemyIsBoss === 'Guardian') {
+      config.enemyChaosResist = game === 'poe2' ? 0 : 25;
+    }
+  }
+  // Resolve default enemyLevel per official PoB 1 (`CalcSetup.lua:523`) & PoB 2 (`ConfigOptions.lua:1987-2123`):
+  // - PoE 2 Pinnacle/Uber Bosses default to level 82 (minimum 82); Normal/Standard Bosses default to min(85, charLevel).
+  // - PoE 1 Pinnacle/Uber Bosses default to level 84; Normal/Guardian Bosses default to min(84, charLevel).
+  if (!explicitEnemyLevel) {
+    if (game === 'poe2') {
+      config.enemyLevel =
+        config.enemyIsBoss === 'Pinnacle' ? 82 : Math.min(85, Math.max(1, level));
+    } else {
+      config.enemyLevel =
+        config.enemyIsBoss === 'Pinnacle' ? 84 : Math.min(84, Math.max(1, level));
+    }
+  }
+  // Scale PoE 2 default enemy evasion & armour by `enemyLevel` & boss tier per official PoB2 `ConfigOptions.lua` & `Data/Bosses.lua`
+  if (game === 'poe2') {
+    const POE2_MONSTER_EVASION: readonly number[] = [
+      24, 30, 36, 43, 49, 56, 63, 70, 77, 84, 91, 98, 105, 113, 120, 128, 136, 144, 152, 160,
+      168, 176, 185, 193, 202, 211, 220, 229, 238, 247, 257, 266, 276, 286, 296, 306, 316, 326, 337, 347,
+      358, 369, 380, 391, 403, 414, 426, 438, 449, 462, 474, 486, 499, 511, 524, 537, 551, 564, 578, 591,
+      605, 619, 634, 648, 663, 677, 692, 708, 723, 738, 754, 770, 786, 803, 819, 836, 853, 870, 887, 905,
+      923, 941, 959, 977, 996, 1015, 1034, 1053, 1073, 1093, 1113, 1133, 1154, 1174, 1195, 1217, 1238, 1260, 1282, 1304,
+    ];
+    const POE2_MONSTER_ARMOUR: readonly number[] = [
+      3, 6, 8, 10, 13, 16, 19, 22, 26, 30, 34, 39, 43, 49, 54, 60, 67, 73, 81, 89,
+      97, 106, 116, 126, 137, 149, 161, 174, 189, 204, 220, 237, 255, 274, 295, 317, 340, 364, 391, 418,
+      448, 479, 512, 547, 585, 624, 666, 711, 758, 808, 861, 917, 976, 1039, 1105, 1176, 1250, 1329, 1412, 1500,
+      1594, 1692, 1796, 1906, 2023, 2146, 2276, 2413, 2558, 2712, 2874, 3044, 3225, 3416, 3617, 3829, 4053, 4290, 4540, 4803,
+      5081, 5375, 5684, 6011, 6355, 6718, 7101, 7505, 7930, 8379, 8852, 9351, 9877, 10431, 11015, 11630, 12279, 12962, 13682, 14441,
+    ];
+    const isUber = Boolean(rawInputs.__enemyIsUber);
+    const effectiveTableLevel =
+      config.enemyIsBoss === 'Pinnacle' ? Math.max(82, config.enemyLevel) : config.enemyLevel;
+    const lvIdx = Math.max(0, Math.min(99, Math.round(effectiveTableLevel) - 1));
+    // Exact PoB 2 `Data/Bosses.lua` means: PinnacleArmourMean=150%, PinnacleEvasionMean=124.9091%,
+    // UberArmourMean=125%, UberEvasionMean=116.5714%; None / Standard Boss use 100% monster table.
+    const armMult = config.enemyIsBoss === 'Pinnacle' ? (isUber ? 1.25 : 1.5) : 1;
+    const evaMult =
+      config.enemyIsBoss === 'Pinnacle'
+        ? (isUber ? 116.57142857142857 : 124.9090909090909) / 100
+        : 1;
+    if (!explicitEnemyEvasion) {
+      config.enemyEvasion = Math.round(POE2_MONSTER_EVASION[lvIdx]! * evaMult);
+    }
+    if (!explicitEnemyArmour) {
+      config.enemyArmour = Math.round(POE2_MONSTER_ARMOUR[lvIdx]! * armMult);
+    }
+  }
+
+  // Parse optional PoB <Party><ImportedBuffs> aurabot / party buffs
+  const partyMatch = xml.match(/<Party\b([^>]*)>([\s\S]*?)<\/Party>/i);
+  if (partyMatch) {
+    const partyAttrs = parseAttributes(partyMatch[1]!);
+    const dest = (partyAttrs.destination ?? 'All').trim().toLowerCase();
+    if (dest !== 'none') {
+      const importedMods: Mod[] = [];
+      const ibRegex = /<ImportedBuffs\b([^>]*)>([\s\S]*?)<\/ImportedBuffs>/gi;
+      let ibMatch: RegExpExecArray | null;
+      while ((ibMatch = ibRegex.exec(partyMatch[2]!)) !== null) {
+        const ibAttrs = parseAttributes(ibMatch[1]!);
+        const bufName = (ibAttrs.name ?? '').trim();
+        if (dest !== 'all' && dest !== bufName.toLowerCase()) continue;
+        const target: Mod['target'] =
+          bufName === 'Curse' || bufName === 'EnemyMods' || bufName === 'EnemyConditions'
+            ? 'enemy'
+            : 'player';
+        const rawBuf = unescapeXml(ibMatch[2] ?? '');
+        const isStructuredSection =
+          bufName === 'Aura' ||
+          bufName === 'Curse' ||
+          bufName === 'Warcry Skills' ||
+          bufName === 'Link Skills';
+        let sectionMode: 'CurseLimit' | 'Name' | 'Effect' | 'isMark' | 'Stats' =
+          bufName === 'Curse' ? 'CurseLimit' : isStructuredSection ? 'Name' : 'Stats';
+        let currentName = '';
+        let currentEffectPct = 100;
+        let currentModType = '';
+        const seenAuraEffects = new Map<string, number>();
+
+        for (const rawLine of rawBuf.split(/\r?\n/)) {
+          const line = rawLine.trim();
+          if (!line) continue;
+          if (isStructuredSection) {
+            if (line !== '---' && line.includes('---')) {
+              continue;
+            }
+            if (line === '---') {
+              sectionMode = 'Name';
+              continue;
+            }
+            if (sectionMode === 'CurseLimit') {
+              sectionMode = 'Name';
+              continue;
+            }
+            if (sectionMode === 'Name') {
+              currentName = line.replace(/_Debuff$/, '');
+              currentEffectPct = 100;
+              if (line === 'extraAura' || line === 'otherEffects') {
+                currentModType = line;
+                sectionMode = 'Stats';
+              } else {
+                currentModType = '';
+                sectionMode = 'Effect';
+              }
+              continue;
+            }
+            if (sectionMode === 'Effect') {
+              const eff = Number(line);
+              currentEffectPct = Number.isFinite(eff) ? eff : 100;
+              const prevEff = seenAuraEffects.get(currentName);
+              if (prevEff !== undefined && prevEff >= currentEffectPct) {
+                currentName = '__SKIP__';
+              } else {
+                seenAuraEffects.set(currentName, currentEffectPct);
+                if (bufName === 'Aura' && currentName && !currentName.startsWith('__')) {
+                  importedMods.push({
+                    name: `AffectedBy${currentName.replace(/\s+/g, '')}`,
+                    type: 'FLAG',
+                    value: true,
+                    flags: 0,
+                    keywordFlags: 0,
+                    source: `Party (Aura): ${currentName}`,
+                    target: 'player',
+                  });
+                }
+              }
+              sectionMode = bufName === 'Curse' ? 'isMark' : 'Stats';
+              continue;
+            }
+            if (sectionMode === 'isMark') {
+              sectionMode = 'Stats';
+              continue;
+            }
+          }
+          if (currentName === '__SKIP__' || !line.includes('|') || line.includes('MinionModifier|LIST')) {
+            continue;
+          }
+          let modLine = line;
+          let lineEffectPct = currentEffectPct;
+          if (currentModType === 'otherEffects') {
+            const firstPipe = line.indexOf('|');
+            const secondPipe = firstPipe > 0 ? line.indexOf('|', firstPipe + 1) : -1;
+            if (secondPipe > 0) {
+              const parsedEff = Number(line.slice(firstPipe + 1, secondPipe));
+              lineEffectPct = Number.isFinite(parsedEff) ? parsedEff : 100;
+              modLine = line.slice(secondPipe + 1);
+            }
+          }
+          const parts = modLine.split('|');
+          if (parts.length < 6) continue;
+          const [valStr, srcStr, statName, modTypeStr, flagsStr, kwFlagsStr, tagsStr] = parts;
+          if (!statName || !modTypeStr) continue;
+          if (modTypeStr !== 'BASE' && modTypeStr !== 'INC' && modTypeStr !== 'MORE' && modTypeStr !== 'FLAG' && modTypeStr !== 'OVERRIDE') {
+            continue;
+          }
+          let value: number | boolean | string =
+            modTypeStr === 'FLAG' ? valStr === 'true' || valStr === '1' : Number(valStr);
+          if (typeof value === 'number') {
+            if (!Number.isFinite(value)) continue;
+            if (
+              isStructuredSection &&
+              currentModType !== 'extraAura' &&
+              lineEffectPct !== 100 &&
+              (modTypeStr === 'BASE' || modTypeStr === 'INC' || modTypeStr === 'MORE')
+            ) {
+              const scaled = value * (lineEffectPct / 100);
+              value =
+                statName === 'LifeRegen' || statName === 'ManaRegen'
+                  ? Math.round(scaled * 100) / 100
+                  : Math.trunc(scaled + Math.sign(scaled) * 1e-9);
+            }
+          }
+          const parseNamedBitmask = (
+            rawMask: string | undefined,
+            table: Record<string, number>,
+          ): number => {
+            if (!rawMask || rawMask === '-') return 0;
+            const asNum = Number(rawMask);
+            if (!Number.isNaN(asNum)) return asNum;
+            let mask = 0;
+            for (const tok of rawMask.split(/[,|+/]/)) {
+              const k = tok.trim().toLowerCase();
+              if (k && table[k] !== undefined) mask |= table[k]!;
+            }
+            return mask;
+          };
+          const flags = parseNamedBitmask(flagsStr, {
+            attack: ModFlag.Attack,
+            spell: ModFlag.Spell,
+            cast: ModFlag.Cast,
+            hit: ModFlag.Hit,
+            dot: ModFlag.Dot,
+            melee: ModFlag.Melee,
+            area: ModFlag.Area,
+            projectile: ModFlag.Projectile,
+            ailment: ModFlag.Ailment,
+            weapon: ModFlag.Attack,
+            bow: ModFlag.Bow,
+            wand: ModFlag.Wand,
+          });
+          const keywordFlags = parseNamedBitmask(kwFlagsStr, {
+            aura: KeywordFlag.Aura,
+            curse: KeywordFlag.Curse,
+            warcry: KeywordFlag.Warcry,
+            spell: KeywordFlag.Spell,
+            attack: KeywordFlag.Attack,
+            physical: KeywordFlag.Physical,
+            fire: KeywordFlag.Fire,
+            cold: KeywordFlag.Cold,
+            lightning: KeywordFlag.Lightning,
+            chaos: KeywordFlag.Chaos,
+            hit: KeywordFlag.Hit,
+            ailment: KeywordFlag.Ailment,
+            bleed: KeywordFlag.Bleed,
+            ignite: KeywordFlag.Ignite,
+            poison: KeywordFlag.Poison,
+          });
+          const tags: ModTag[] = [];
+          if (tagsStr && tagsStr !== '-') {
+            for (const rawTag of tagsStr.split(',')) {
+              const kv: Record<string, string> = {};
+              for (const seg of rawTag.split('/')) {
+                const eqIdx = seg.indexOf('=');
+                if (eqIdx > 0) {
+                  kv[seg.slice(0, eqIdx)] = seg.slice(eqIdx + 1);
+                }
+              }
+              if (kv.type === 'Condition' && kv.var) {
+                tags.push({
+                  type: 'Condition',
+                  var: kv.var,
+                  ...(kv.neg === 'true' ? { neg: true } : {}),
+                });
+              } else if (kv.type === 'Multiplier' && kv.var) {
+                tags.push({
+                  type: 'Multiplier',
+                  var: kv.var,
+                  ...(kv.limit ? { limit: Number(kv.limit) } : {}),
+                  ...(kv.base ? { base: Number(kv.base) } : {}),
+                });
+              } else if (kv.type === 'PerStat' && kv.stat) {
+                tags.push({
+                  type: 'PerStat',
+                  stat: kv.stat,
+                  div: Number(kv.div ?? 1) || 1,
+                  ...(kv.limit ? { limit: Number(kv.limit) } : {}),
+                });
+              } else if (kv.type === 'SkillType' && kv.skillType) {
+                tags.push({
+                  type: 'SkillType',
+                  skillType: kv.skillType,
+                  ...(kv.neg === 'true' ? { neg: true } : {}),
+                });
+              }
+            }
+          }
+          importedMods.push({
+            name: statName,
+            type: modTypeStr as ModType,
+            value,
+            flags,
+            keywordFlags,
+            source: `Party (${bufName}): ${srcStr || 'Buff'}`,
+            target,
+            ...(tags.length > 0 ? { tags } : {}),
+          });
+          if (statName === 'Condition:ChampionIntimidate' && value === true) {
+            importedMods.push({
+              name: 'DamageTaken',
+              type: 'INC',
+              value: 20,
+              flags: 0,
+              keywordFlags: 0,
+              source: 'Party: Worthy Foe (Champion)',
+              target: 'enemy',
+            });
+          }
+        }
+      }
+      if (importedMods.length > 0) {
+        config.importedPartyMods = importedMods;
+      }
+    }
+  }
+
+  if (Object.keys(rawInputs).length > 0) {
+    config.rawInputs = rawInputs;
   }
 
   // Parse <Notes>

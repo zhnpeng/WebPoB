@@ -641,8 +641,8 @@ describe('clusterAndReservation — Pool-Zeroing & Keystone/Unique Rules', () =>
     });
 
     expect(resPyro.pyromanticPact).toBe(true);
-    expect(resPyro.manaZeroed).toBe(true);
-    expect(dbPyro.calcStat('Mana').total).toBe(0);
+    expect(resPyro.manaZeroed).toBe(false);
+    expect(dbPyro.calcStat('Mana').total).toBe(1200);
   });
 
   it('zeros Energy Shield for Dissolution of the Flesh and The Agnostic', () => {

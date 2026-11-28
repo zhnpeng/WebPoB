@@ -676,20 +676,22 @@ export const POE2_GEMS: GemDefinition[] = [
     isAuraOrBuff: true,
     stats: ['25% increased maximum Energy Shield', '+120 to maximum Energy Shield'],
   },
-  // PoE 2 Support Gems
+  // PoE 2 Support Gems (canonical v0.3+ names/IDs with legacy v0.1/v0.2 altIds for sample & XML compatibility)
   {
-    id: 'poe2_sup_arcane_tempo',
-    name: { en: 'Arcane Tempo', zh: '奥术节拍' },
+    id: 'poe2_rapidcastingsupport',
+    altIds: ['poe2_sup_arcane_tempo', 'SupportGemArcaneTempo', 'SupportFasterCastPlayer', 'ArcaneTempo'],
+    name: { en: 'Rapid Casting I', zh: '疾速施法 I' },
     category: 'support',
     game: 'poe2',
     color: 'blue',
     tags: ['Support', 'Spell'],
     modFlags: ModFlag.Spell,
     keywordFlags: KeywordFlag.Spell,
-    stats: ['25% more Cast Speed'],
+    stats: ['15% increased Cast Speed'],
   },
   {
     id: 'poe2_sup_considered_casting',
+    altIds: ['poe2_consideredcastingsupport', 'SupportGemConsideredCasting', 'SupportConsideredCastingPlayer'],
     name: { en: 'Considered Casting', zh: '审慎施法' },
     category: 'support',
     game: 'poe2',
@@ -697,43 +699,47 @@ export const POE2_GEMS: GemDefinition[] = [
     tags: ['Support', 'Spell'],
     modFlags: ModFlag.Spell,
     keywordFlags: KeywordFlag.Spell,
-    stats: ['40% more Spell Damage'],
+    stats: ['35% more Spell Damage', '15% less Cast Speed'],
   },
   {
-    id: 'poe2_sup_lightning_infusion',
-    name: { en: 'Lightning Infusion', zh: '闪电灌注' },
+    id: 'poe2_addedlightningdamagesupport',
+    altIds: ['poe2_sup_lightning_infusion', 'SupportGemLightningInfusion', 'SupportAddedLightningDamagePlayer'],
+    name: { en: 'Lightning Attunement', zh: '闪电调和' },
     category: 'support',
     game: 'poe2',
     color: 'blue',
     tags: ['Support', 'Lightning'],
     modFlags: ModFlag.None,
     keywordFlags: KeywordFlag.Lightning,
-    stats: ['Gain 25% of Physical Damage as Extra Lightning Damage', '25% more Lightning Damage'],
+    stats: ['Gain 25% of Damage as Extra Lightning Damage', '50% less Cold Damage', '50% less Fire Damage'],
   },
   {
-    id: 'poe2_sup_martial_tempo',
-    name: { en: 'Martial Tempo', zh: '武术节拍' },
+    id: 'poe2_rapidattackssupport',
+    altIds: ['poe2_sup_martial_tempo', 'SupportGemMartialTempo', 'SupportFasterAttackPlayer', 'MartialTempo'],
+    name: { en: 'Rapid Attacks I', zh: '疾速攻击 I' },
     category: 'support',
     game: 'poe2',
     color: 'green',
     tags: ['Support', 'Attack'],
     modFlags: ModFlag.Attack,
     keywordFlags: KeywordFlag.Attack,
-    stats: ['25% more Attack Speed'],
+    stats: ['15% increased Attack Speed'],
   },
   {
-    id: 'poe2_sup_primal_armament',
-    name: { en: 'Primal Armament', zh: '原始武装' },
+    id: 'poe2_elementalarmamentsupport',
+    altIds: ['poe2_sup_primal_armament', 'SupportGemPrimalArmament', 'SupportElementalArmamentPlayer', 'PrimalArmament'],
+    name: { en: 'Elemental Armament I', zh: '元素武装 I' },
     category: 'support',
     game: 'poe2',
     color: 'red',
     tags: ['Support', 'Attack'],
     modFlags: ModFlag.Attack,
     keywordFlags: KeywordFlag.Attack,
-    stats: ['25% more Elemental Damage'],
+    stats: ['20% more Elemental Damage with Attacks'],
   },
   {
     id: 'poe2_sup_supercritical',
+    altIds: ['poe2_increasedcriticaldamagesupport', 'SupportGemSupercritical', 'SupportIncreasedCriticalDamagePlayer'],
     name: { en: 'Supercritical', zh: '超级暴击' },
     category: 'support',
     game: 'poe2',
@@ -741,9 +747,200 @@ export const POE2_GEMS: GemDefinition[] = [
     tags: ['Support'],
     modFlags: ModFlag.None,
     keywordFlags: KeywordFlag.None,
-    stats: ['+100% to Critical Strike Multiplier'],
+    stats: ['100% increased Critical Damage Bonus', '20% less Critical Hit Chance'],
   },
 ];
+
+/**
+ * Explicit PoE 2 legacy v0.1/v0.2 gem name, gameId tail, and skillId alias table mapping
+ * directly to canonical `poe2-gems.json` IDs (matching upstream PoB 2 `Data/Gems.lua` remaps).
+ */
+const POE2_LEGACY_GEM_ALIASES: Readonly<Record<string, string>> = {
+  // Martial Tempo / Faster Attack -> Rapid Attacks I-III
+  'martial tempo': 'poe2_rapidattackssupport',
+  'martial tempo i': 'poe2_rapidattackssupport',
+  'martial tempo ii': 'poe2_rapidattackssupporttwo',
+  'martial tempo iii': 'poe2_rapidattackssupportthree',
+  poe2_sup_martial_tempo: 'poe2_rapidattackssupport',
+  supportgemmartialtempo: 'poe2_rapidattackssupport',
+  supportgemmartialtempotwo: 'poe2_rapidattackssupporttwo',
+  supportgemmartialtempothree: 'poe2_rapidattackssupportthree',
+  supportfasterattackplayer: 'poe2_rapidattackssupport',
+  martialtempo: 'poe2_rapidattackssupport',
+  martialtempotwo: 'poe2_rapidattackssupporttwo',
+  martialtempothree: 'poe2_rapidattackssupportthree',
+
+  // Arcane Tempo / Faster Cast -> Rapid Casting I-III
+  'arcane tempo': 'poe2_rapidcastingsupport',
+  'arcane tempo i': 'poe2_rapidcastingsupport',
+  'arcane tempo ii': 'poe2_rapidcastingsupporttwo',
+  'arcane tempo iii': 'poe2_rapidcastingsupportthree',
+  poe2_sup_arcane_tempo: 'poe2_rapidcastingsupport',
+  supportgemarcanetempo: 'poe2_rapidcastingsupport',
+  supportgemarcanetempotwo: 'poe2_rapidcastingsupporttwo',
+  supportgemarcanetempothree: 'poe2_rapidcastingsupportthree',
+  supportfastercastplayer: 'poe2_rapidcastingsupport',
+  arcanetempo: 'poe2_rapidcastingsupport',
+  arcanetempotwo: 'poe2_rapidcastingsupporttwo',
+  arcanetempothree: 'poe2_rapidcastingsupportthree',
+
+  // Primal Armament -> Elemental Armament I-III
+  'primal armament': 'poe2_elementalarmamentsupport',
+  'primal armament i': 'poe2_elementalarmamentsupport',
+  'primal armament ii': 'poe2_elementalarmamentsupporttwo',
+  'primal armament iii': 'poe2_elementalarmamentsupportthree',
+  poe2_sup_primal_armament: 'poe2_elementalarmamentsupport',
+  supportgemprimalarmament: 'poe2_elementalarmamentsupport',
+  supportgemprimalarmamenttwo: 'poe2_elementalarmamentsupporttwo',
+  supportgemprimalarmamentthree: 'poe2_elementalarmamentsupportthree',
+  primalarmament: 'poe2_elementalarmamentsupport',
+  primalarmamenttwo: 'poe2_elementalarmamentsupporttwo',
+  primalarmamentthree: 'poe2_elementalarmamentsupportthree',
+
+  // Concentrated Effect -> Concentrated Area
+  'concentrated effect': 'poe2_concentratedareasupport',
+  supportgemconcentratedeffect: 'poe2_concentratedareasupport',
+  concentratedeffect: 'poe2_concentratedareasupport',
+
+  // Scattershot -> Multishot I-II
+  scattershot: 'poe2_multishotsupport',
+  'scattershot i': 'poe2_multishotsupport',
+  'scattershot ii': 'poe2_multishotsupporttwo',
+  supportgemscattershot: 'poe2_multishotsupport',
+  supportgemscattershottwo: 'poe2_multishotsupporttwo',
+  scattershottwo: 'poe2_multishotsupporttwo',
+
+  // Acceleration / Deceleration -> Projectile Acceleration / Deceleration
+  acceleration: 'poe2_projectileaccelerationsupport',
+  'acceleration i': 'poe2_projectileaccelerationsupport',
+  'acceleration ii': 'poe2_projectileaccelerationsupporttwo',
+  'acceleration iii': 'poe2_projectileaccelerationsupportthree',
+  supportgemacceleration: 'poe2_projectileaccelerationsupport',
+  supportgemaccelerationtwo: 'poe2_projectileaccelerationsupporttwo',
+  supportgemaccelerationthree: 'poe2_projectileaccelerationsupportthree',
+  deceleration: 'poe2_projectiledecelerationsupport',
+  'deceleration i': 'poe2_projectiledecelerationsupport',
+  'deceleration ii': 'poe2_projectiledecelerationsupporttwo',
+  supportgemdeceleration: 'poe2_projectiledecelerationsupport',
+  supportgemdecelerationtwo: 'poe2_projectiledecelerationsupporttwo',
+
+  // Precision / Bullseye -> Heightened Accuracy I-II
+  precision: 'poe2_heightenedaccuracysupport',
+  'precision i': 'poe2_heightenedaccuracysupport',
+  bullseye: 'poe2_heightenedaccuracysupport',
+  'bullseye i': 'poe2_heightenedaccuracysupport',
+  'bullseye ii': 'poe2_heightenedaccuracysupporttwo',
+  supportgemprecision: 'poe2_heightenedaccuracysupport',
+  supportgembullseye: 'poe2_heightenedaccuracysupport',
+  supportgembullseyetwo: 'poe2_heightenedaccuracysupporttwo',
+
+  // Inspiration -> Efficiency I-II
+  inspiration: 'poe2_efficiencysupport',
+  'inspiration i': 'poe2_efficiencysupport',
+  'inspiration ii': 'poe2_efficiencysupporttwo',
+  supportgeminspiration: 'poe2_efficiencysupport',
+  supportgeminspirationtwo: 'poe2_efficiencysupporttwo',
+
+  // Magnified Effect -> Magnified Area I-II
+  'magnified effect': 'poe2_magnifiedareasupport',
+  'magnified effect i': 'poe2_magnifiedareasupport',
+  'magnified effect ii': 'poe2_magnifiedareasupporttwo',
+  supportgemmagnifiedeffect: 'poe2_magnifiedareasupport',
+  supportgemmagnifiedeffecttwo: 'poe2_magnifiedareasupporttwo',
+
+  // Elemental / Chaos Infusions -> Attunements
+  'fire infusion': 'poe2_addedfiredamagesupport',
+  supportgemfireinfusion: 'poe2_addedfiredamagesupport',
+  'cold infusion': 'poe2_addedcolddamagesupport',
+  supportgemcoldinfusion: 'poe2_addedcolddamagesupport',
+  'lightning infusion': 'poe2_addedlightningdamagesupport',
+  poe2_sup_lightning_infusion: 'poe2_addedlightningdamagesupport',
+  supportgemlightninginfusion: 'poe2_addedlightningdamagesupport',
+  'chaos infusion': 'poe2_addedchaosdamagesupport',
+  supportgemchaosinfusion: 'poe2_addedchaosdamagesupport',
+
+  // Spell Totem Meta/Support
+  'spell totem': 'poe2_metaspelltotem',
+  supportmetatotemspelltotemplayer: 'poe2_metaspelltotem',
+  summonmetatotemspelltotemplayer: 'poe2_metaspelltotem',
+  skillgemspelltotem: 'poe2_metaspelltotem',
+
+  // Additional PoE 2 v0.1/v0.2 -> v0.3+ support renames (from upstream PoB 2 Data/Gems.lua)
+  persistence: 'poe2_prolongeddurationsupport',
+  'persistence i': 'poe2_prolongeddurationsupport',
+  'persistence ii': 'poe2_prolongeddurationsupporttwo',
+  'fast forward': 'poe2_compresseddurationsupport',
+  'fast forward i': 'poe2_compresseddurationsupport',
+  'fast forward ii': 'poe2_compresseddurationsupporttwo',
+  glaciation: 'poe2_freezesupport',
+  conduction: 'poe2_shocksupport',
+  lacerate: 'poe2_bleedsupport',
+  'lacerate ii': 'poe2_bleedsupporttwo',
+  'lacerate iii': 'poe2_bleedsupportthree',
+  envenom: 'poe2_poisonsupport',
+  'envenom ii': 'poe2_poisonsupporttwo',
+  'envenom iii': 'poe2_poisonsupportthree',
+  ignition: 'poe2_ignitesupport',
+  'ignition ii': 'poe2_ignitesupporttwo',
+  'ignition iii': 'poe2_ignitesupportthree',
+  overpower: 'poe2_stunsupport',
+  'overpower ii': 'poe2_stunsupporttwo',
+  'overpower iii': 'poe2_stunsupportthree',
+  splinter: 'poe2_armourbreaksupport',
+  'splinter ii': 'poe2_armourbreaksupporttwo',
+  'splinter iii': 'poe2_armourbreaksupportthree',
+  demolisher: 'poe2_armourdemolishersupport',
+  'demolisher ii': 'poe2_armourdemolishersupporttwo',
+  ingenuity: 'poe2_cooldownrecoverysupport',
+  'ingenuity ii': 'poe2_cooldownrecoverysupporttwo',
+  'ancestral urgency': 'poe2_urgenttotemssupport',
+  'ancestral urgency ii': 'poe2_urgenttotemssupporttwo',
+  'ancestral urgency iii': 'poe2_urgenttotemssupportthree',
+  'strip away': 'poe2_potentexposuresupport',
+  ironwood: 'poe2_reinforcedtotemssupport',
+  'ironwood ii': 'poe2_reinforcedtotemssupporttwo',
+  expedite: 'poe2_shortfusesupport',
+  'expedite ii': 'poe2_shortfusesupporttwo',
+  impetus: 'poe2_boundlessenergysupport',
+  'impetus ii': 'poe2_boundlessenergysupporttwo',
+  comorbidity: 'poe2_escalatingpoisonsupport',
+  profusion: 'poe2_chargeprofusionsupport',
+  'profusion ii': 'poe2_chargeprofusionsupporttwo',
+  encumbrance: 'poe2_slowpotencysupport',
+  'inevitable critical': 'poe2_inevitablecriticalssupport',
+  'inevitable critical ii': 'poe2_inevitablecriticalssupporttwo',
+  'life thief': 'poe2_lifeleechsupport',
+  'soul thief': 'poe2_manaleechsupport',
+  bludgeon: 'poe2_knockbacksupport',
+  discombobulate: 'poe2_dazesupport',
+  despoiler: 'poe2_lastinggroundsupport',
+  domain: 'poe2_persistentgroundsupport',
+  'domain ii': 'poe2_persistentgroundsupporttwo',
+  'domain iii': 'poe2_persistentgroundsupportthree',
+  suffuse: 'poe2_encroachinggroundsupport',
+  interlude: 'poe2_remnantpotencysupport',
+  'interlude ii': 'poe2_remnantpotencysupporttwo',
+  'interlude iii': 'poe2_remnantpotencysupportthree',
+  dissipate: 'poe2_fleetingremnantssupport',
+  'dissipate ii': 'poe2_fleetingremnantssupporttwo',
+  reach: 'poe2_overreachsupport',
+  enormity: 'poe2_hulkingminionssupport',
+  magnetism: 'poe2_magneticremnantssupport',
+  retort: 'poe2_frenziedripostesupport',
+  twofold: 'poe2_heightenedchargessupport',
+  'single out': 'poe2_markfordeathsupport',
+  'single out ii': 'poe2_markfordeathsupporttwo',
+  grudge: 'poe2_relentlessragesupport',
+  ablation: 'poe2_sacrificialofferingsupport',
+  capacitor: 'poe2_energycapacitorsupport',
+  adhere: 'poe2_adhesivegrenadessupport',
+  'adhere ii': 'poe2_adhesivegrenadessupporttwo',
+  'close combat': 'poe2_closecombatsupport',
+  longshot: 'poe2_farcombatsupport',
+  'rapid attacks': 'poe2_rapidattackssupport',
+  'rapid casting': 'poe2_rapidcastingsupport',
+  'elemental armament': 'poe2_elementalarmamentsupport',
+};
 
 interface GemLookupIndex {
   byId: Map<string, GemDefinition>;
@@ -836,6 +1033,16 @@ export function getGemsForGame(game: GameId): GemDefinition[] {
   return registeredOfficialGems[game] ?? (game === 'poe2' ? POE2_GEMS : POE1_GEMS);
 }
 
+const METADATA_GEM_PATH_RE = /^metadata\/items\/gems\//i;
+
+function lookupGemInIndex(index: GemLookupIndex, key: string): GemDefinition | undefined {
+  return (
+    index.byIdLower.get(key) ??
+    index.byAltIdLower.get(key) ??
+    index.byStrippedIdLower.get(key)
+  );
+}
+
 /**
  * Looks up a gem by canonical WebPoB `id` or any lowercased `altIds` alias
  * (such as PoB `grantedEffect.id`, `variantId`, or `gemData.id`).
@@ -848,16 +1055,27 @@ export function getGemById(game: GameId, gemId: string): GemDefinition | undefin
 
   const lower = gemId.toLowerCase().trim();
   if (!lower) return undefined;
-  return (
-    index.byIdLower.get(lower) ??
-    index.byAltIdLower.get(lower) ??
-    index.byStrippedIdLower.get(lower)
-  );
+  const direct = lookupGemInIndex(index, lower);
+  if (direct) return direct;
+
+  const tail = lower.replace(METADATA_GEM_PATH_RE, '');
+  if (tail !== lower) {
+    const byTail = lookupGemInIndex(index, tail);
+    if (byTail) return byTail;
+  }
+
+  if (game === 'poe2') {
+    const aliasTarget = POE2_LEGACY_GEM_ALIASES[lower] ?? POE2_LEGACY_GEM_ALIASES[tail];
+    if (aliasTarget) {
+      return index.byId.get(aliasTarget) ?? lookupGemInIndex(index, aliasTarget);
+    }
+  }
+  return undefined;
 }
 
 /**
  * Looks up a gem by exact normalized English or Chinese display name, falling back
- * to matching with or without a trailing `" Support"` suffix.
+ * to matching with or without a trailing `" Support"` suffix, plus PoE 2 v0.1/v0.2 legacy aliases.
  */
 export function findGemByName(game: GameId, name: string): GemDefinition | undefined {
   const lower = name.toLowerCase().trim();
@@ -878,6 +1096,14 @@ export function findGemByName(game: GameId, name: string): GemDefinition | undef
 
   const byBase = index.byBaseNameLower.get(stripped);
   if (byBase) return byBase;
+
+  if (game === 'poe2') {
+    const aliasTarget = POE2_LEGACY_GEM_ALIASES[lower] ?? POE2_LEGACY_GEM_ALIASES[stripped];
+    if (aliasTarget) {
+      const aliased = index.byId.get(aliasTarget) ?? lookupGemInIndex(index, aliasTarget);
+      if (aliased) return aliased;
+    }
+  }
 
   // Fallback for zh-TW locale overlays applied after registration.
   return getGemsForGame(game).find((g) => g.name.zhTw?.toLowerCase().trim() === lower);
@@ -901,9 +1127,33 @@ export function resolveGemFromPobRef(game: GameId, ref: PobGemRef): GemDefinitio
   const index = getGemLookupIndex(game);
 
   // 1. Prioritize explicit skillId / variantId (exact ID / altIds lookup).
+  //    If variantId + nameSpec both agree on a specific gem whose display name differs from
+  //    a stripped-ID collision on skillId (e.g. Hexblast has skillId="DoomBlast", variantId="Hexblast",
+  //    nameSpec="Hexblast" vs Impending Doom's "Doom Blast"), prefer the variantId match.
+  if (rawVariantId && rawNameSpec) {
+    const byVariant = getGemById(game, rawVariantId);
+    if (
+      byVariant &&
+      byVariant.name.en.toLowerCase().trim() === rawNameSpec.toLowerCase().trim()
+    ) {
+      return byVariant;
+    }
+  }
   if (rawSkillId) {
     const bySkill = getGemById(game, rawSkillId);
-    if (bySkill) return bySkill;
+    if (bySkill) {
+      if (rawNameSpec) {
+        const byExactName = index.byExactNameLower.get(rawNameSpec.toLowerCase().trim());
+        if (
+          byExactName &&
+          byExactName.id !== bySkill.id &&
+          byExactName.altIds?.some((a) => a.toLowerCase() === rawSkillId.toLowerCase().trim())
+        ) {
+          return byExactName;
+        }
+      }
+      return bySkill;
+    }
   }
   if (rawVariantId) {
     const byVariant = getGemById(game, rawVariantId);

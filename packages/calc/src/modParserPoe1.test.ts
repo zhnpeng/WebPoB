@@ -182,6 +182,410 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
     ]);
   });
 
+  it('parses Wave 4M ProjectileCount, SplitCount, and high-leverage PoE 1 unique mods', () => {
+    // 1. ProjectileCount & SplitCount
+    expect(parseModLine('Bow Attacks fire an additional Arrow', 'item')).toEqual([
+      expect.objectContaining({
+        name: 'ProjectileCount',
+        type: 'BASE',
+        value: 1,
+        flags: ModFlag.Attack | ModFlag.Bow,
+      }),
+    ]);
+    expect(parseModLine('Bow Attacks fire 2 additional Arrows', 'item')).toEqual([
+      expect.objectContaining({
+        name: 'ProjectileCount',
+        type: 'BASE',
+        value: 2,
+        flags: ModFlag.Attack | ModFlag.Bow,
+      }),
+    ]);
+    expect(parseModLine('Skills fire 2 additional Projectiles', 'tree')).toEqual([
+      expect.objectContaining({ name: 'ProjectileCount', type: 'BASE', value: 2, flags: 0 }),
+    ]);
+    expect(parseModLine('Attack Skills fire 2 additional Projectiles', 'item')).toEqual([
+      expect.objectContaining({ name: 'ProjectileCount', type: 'BASE', value: 2, flags: ModFlag.Attack }),
+    ]);
+    expect(parseModLine('Spells fire an additional Projectile', 'item')).toEqual([
+      expect.objectContaining({ name: 'ProjectileCount', type: 'BASE', value: 1, flags: ModFlag.Spell }),
+    ]);
+    expect(parseModLine('Totems fire 2 additional Projectiles', 'item')).toEqual([
+      expect.objectContaining({
+        name: 'ProjectileCount',
+        type: 'BASE',
+        value: 2,
+        keywordFlags: KeywordFlag.Totem,
+      }),
+    ]);
+    expect(parseModLine('Skills fire 2 additional Projectiles during Effect', 'flask')).toEqual([
+      expect.objectContaining({ name: 'ProjectileCount', type: 'BASE', value: 2, flags: 0 }),
+    ]);
+    expect(parseModLine('Projectiles Split towards +2 targets', 'item')).toEqual([
+      expect.objectContaining({ name: 'SplitCount', type: 'BASE', value: 2 }),
+    ]);
+
+    // 2. The Annihilating Light (Deal without trailing s)
+    expect(parseModLine('Deal Triple Damage with Elemental Skills', 'item')).toEqual([
+      expect.objectContaining({ name: 'TripleDamageElementalSkill', type: 'FLAG', value: true }),
+    ]);
+
+    // 3. Sandstorm Visage
+    expect(
+      parseModLine(
+        'Base Spell Critical Strike Chance is equal to the Critical Strike Chance of Main Hand Weapon',
+        'item',
+      ),
+    ).toEqual([
+      expect.objectContaining({ name: 'SpellCritChanceFromMainHandWeapon', type: 'FLAG', value: true }),
+    ]);
+
+    // 4. Enmity's Embrace
+    expect(
+      parseModLine(
+        'Damage Penetrates Fire Resistance equal to your Overcapped Fire Resistance, up to a maximum of 200%',
+        'item',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'FirePenetration',
+        type: 'BASE',
+        value: 1,
+        flags: ModFlag.Hit,
+        tags: [{ type: 'PerStat', stat: 'FireResistOverCap', div: 1, limit: 200 }],
+      }),
+    ]);
+
+    // 5. Seething Fury
+    expect(
+      parseModLine('+0.15% to Off Hand Critical Strike Chance per 10 Maximum Energy Shield on Shield', 'jewel'),
+    ).toEqual([expect.objectContaining({ name: 'OffHandBaseCritPer10ShieldEs', type: 'BASE', value: 0.15 })]);
+    expect(
+      parseModLine('+4% to Off Hand Critical Strike Multiplier per 10 Maximum Energy Shield on Shield', 'jewel'),
+    ).toEqual([expect.objectContaining({ name: 'OffHandCritMultiPer10ShieldEs', type: 'BASE', value: 4 })]);
+
+    // 6. The Apostate
+    expect(
+      parseModLine('Gain Maximum Life instead of Maximum Energy Shield from Equipped Armour Items', 'item'),
+    ).toEqual([expect.objectContaining({ name: 'ConvertArmourESToLife', type: 'FLAG', value: true })]);
+
+    // 7. Foulborn Rathpith Globe
+    expect(parseModLine('Deal 5% increased Damage Over Time per 100 Player Maximum Life', 'item')).toEqual([
+      expect.objectContaining({
+        name: 'Damage',
+        type: 'INC',
+        value: 5,
+        flags: ModFlag.Dot,
+        tags: [{ type: 'PerStat', stat: 'Life', div: 100 }],
+      }),
+    ]);
+
+    // 8. The Tempest Rising
+    expect(
+      parseModLine('Enemies affected by your Elemental Ailments count as Moving while Bleeding', 'item'),
+    ).toEqual([
+      expect.objectContaining({ name: 'EnemyAffectedByEleAilmentCountsAsMoving', type: 'FLAG', value: true }),
+    ]);
+
+    // 9. Frostbreath & Paradoxica
+    expect(parseModLine('Attacks with this Weapon deal Double Damage to Chilled Enemies', 'item')).toEqual([
+      expect.objectContaining({
+        name: 'DoubleDamageChance',
+        type: 'BASE',
+        value: 100,
+        flags: ModFlag.Attack | ModFlag.Hit,
+        tags: [{ type: 'Condition', var: 'EnemyChilled' }],
+      }),
+    ]);
+    expect(parseModLine('Attacks with this Weapon deal Double Damage', 'item')).toEqual([
+      expect.objectContaining({
+        name: 'DoubleDamageChance',
+        type: 'BASE',
+        value: 100,
+        flags: ModFlag.Attack | ModFlag.Hit,
+      }),
+    ]);
+
+    // 10. Sap of the Seasons
+    expect(
+      parseModLine(
+        'Melee Weapon Damage Penetrates 1% Elemental Resistances per Mana Burn, up to a maximum of 200%',
+        'tincture',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'ElementalPenetration',
+        type: 'BASE',
+        value: 1,
+        flags: ModFlag.Attack | ModFlag.Melee,
+        tags: [{ type: 'Multiplier', var: 'ManaBurn', limit: 200 }],
+      }),
+    ]);
+
+    // 11. Crest of Desire
+    expect(parseModLine('Socketed Gems deal Double Damage', 'item')).toEqual([
+      expect.objectContaining({
+        name: 'DoubleDamageChance',
+        type: 'BASE',
+        value: 100,
+        tags: [{ type: 'SocketedIn' }],
+      }),
+    ]);
+  });
+
+  it('parses Wave 4M-B PoE 1 Accuracy Masteries, Withered Effect, and Ascendancy/Unique rules (RC-6/9/10)', () => {
+    // RC-6: 4 Accuracy Masteries
+    expect(parseModLine('Gain Accuracy Rating equal to your Intelligence', 'tree')).toEqual([
+      expect.objectContaining({
+        name: 'Accuracy',
+        type: 'BASE',
+        value: 1,
+        flags: 0,
+        tags: [{ type: 'PerStat', stat: 'Int', div: 1 }],
+      }),
+    ]);
+    expect(parseModLine('Intelligence is added to Accuracy Rating with Wands', 'tree')).toEqual([
+      expect.objectContaining({
+        name: 'Accuracy',
+        type: 'BASE',
+        value: 1,
+        flags: ModFlag.Wand,
+        tags: [{ type: 'PerStat', stat: 'Int', div: 1 }],
+      }),
+    ]);
+    expect(parseModLine('40% more Accuracy Rating against Unique Enemies', 'tree')).toEqual([
+      expect.objectContaining({
+        name: 'Accuracy',
+        type: 'MORE',
+        value: 40,
+        tags: [{ type: 'Condition', var: 'EnemyRareOrUnique' }],
+      }),
+    ]);
+    expect(
+      parseModLine("Dexterity's Accuracy Bonus instead grants +3 to Accuracy Rating per Dexterity", 'tree'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'Accuracy',
+        type: 'BASE',
+        value: 1,
+        tags: [{ type: 'PerStat', stat: 'Dex', div: 1 }],
+      }),
+    ]);
+
+    // RC-9: Withered Effect (excludes defensive "on you")
+    expect(parseModLine('20% increased Effect of Withered', 'tree')).toEqual([
+      expect.objectContaining({ name: 'WitherEffect', type: 'INC', value: 20, flags: 0 }),
+    ]);
+    expect(parseModLine('Withered you inflict has 15% increased Effect', 'item')).toEqual([
+      expect.objectContaining({ name: 'WitherEffect', type: 'INC', value: 15, flags: 0 }),
+    ]);
+    expect(parseModLine('65% reduced Effect of Withered on you', 'tree')).toEqual([]);
+
+    // RC-10: Unstoppable Hero, Rage Mastery Intimidate, Ascendant Necro, Rite of Ruin, The Taming, Shroud of the Lightless
+    expect(parseModLine('3% increased Attack Speed per Fortification above 20', 'tree')).toEqual([
+      expect.objectContaining({ name: 'UnstoppableHero', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('3% more Armour and Evasion Rating per Fortification above 20', 'tree')).toEqual([
+      expect.objectContaining({ name: 'UnstoppableHero', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Nearby Enemies are Intimidated while you have Rage', 'tree')).toEqual([
+      expect.objectContaining({ name: 'EnemyIntimidatedWhileRage', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Enemies within 6 metres are Intimidated while you have Rage', 'tree')).toEqual([
+      expect.objectContaining({ name: 'EnemyIntimidatedWhileRage', type: 'FLAG', value: true }),
+    ]);
+    expect(
+      parseModLine('Auras from your Skills grant 2% increased Attack and Cast Speed to you and Allies', 'tree'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'Speed',
+        type: 'INC',
+        value: 2,
+        flags: ModFlag.Attack,
+        tags: [{ type: 'Multiplier', var: 'AuraAffectingSelf' }],
+      }),
+      expect.objectContaining({
+        name: 'Speed',
+        type: 'INC',
+        value: 2,
+        flags: ModFlag.Spell,
+        tags: [{ type: 'Multiplier', var: 'AuraAffectingSelf' }],
+      }),
+    ]);
+    expect(parseModLine('50% increased Rage Effect', 'tree')).toEqual([
+      expect.objectContaining({ name: 'RageEffect', type: 'INC', value: 50 }),
+    ]);
+    expect(parseModLine('Rage Effect is increased by 50%', 'tree')).toEqual([
+      expect.objectContaining({ name: 'RageEffect', type: 'INC', value: 50 }),
+    ]);
+    expect(
+      parseModLine(
+        '35% increased Elemental Damage with Hits and Ailments for each type of Elemental Ailment on Enemy',
+        'item',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'ElementalDamage',
+        type: 'INC',
+        value: 35,
+        flags: ModFlag.Hit | ModFlag.Ailment,
+        tags: [{ type: 'Multiplier', var: 'EnemyElementalAilmentCount' }],
+      }),
+    ]);
+    expect(
+      parseModLine(
+        '20% increased Damage with Hits and Ailments per Freeze, Shock or Ignite on Enemy',
+        'item',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'Damage',
+        type: 'INC',
+        value: 20,
+        flags: ModFlag.Hit | ModFlag.Ailment,
+        tags: [{ type: 'Multiplier', var: 'EnemyElementalAilmentCount' }],
+      }),
+    ]);
+    expect(
+      parseModLine('Damage Penetrates 4% Elemental Resistances per Abyss Jewel affecting you', 'item'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'ElementalPenetration',
+        type: 'BASE',
+        value: 4,
+        flags: ModFlag.Hit,
+        tags: [{ type: 'Multiplier', var: 'AbyssJewel' }],
+      }),
+    ]);
+    expect(
+      parseModLine('Penetrate 4% Elemental Resistances per Abyss Jewel affecting you', 'item'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'ElementalPenetration',
+        type: 'BASE',
+        value: 4,
+        flags: ModFlag.Hit,
+        tags: [{ type: 'Multiplier', var: 'AbyssJewel' }],
+      }),
+    ]);
+  });
+
+  it('parses Wave 4N Sandstorm Visage, Wand/Enchant projectiles, Mind of the Council, Triumvirate, and 62dfba0 keystones', () => {
+    // 1. 62dfba0 Keystones & Blood Magic preservation
+    expect(parseModLine('Removes all mana', 'tree')).toEqual([
+      expect.objectContaining({ name: 'BloodMagic', type: 'FLAG', value: true }),
+      expect.objectContaining({ name: 'Mana', type: 'OVERRIDE', value: 0 }),
+    ]);
+    expect(parseModLine('Dexterity provides no inherent bonus to Evasion Rating', 'tree')).toEqual([
+      expect.objectContaining({ name: 'NoDexEvasionBonus', type: 'FLAG', value: true }),
+    ]);
+    expect(
+      parseModLine('40% more Attack Damage if Accuracy Rating is higher than Maximum Life', 'tree'),
+    ).toEqual([
+      expect.objectContaining({ name: 'PreciseTechnique', type: 'FLAG', value: true }),
+      expect.objectContaining({ name: 'PreciseTechniqueMorePct', type: 'BASE', value: 40 }),
+    ]);
+    expect(
+      parseModLine('Damage over Time Multiplier for Ailments is equal to Critical Strike Multiplier', 'tree'),
+    ).toEqual([expect.objectContaining({ name: 'PerfectAgony', type: 'FLAG', value: true })]);
+    expect(parseModLine('Non-Critical Strikes cannot inflict Ailments', 'tree')).toEqual([
+      expect.objectContaining({ name: 'NonCritsCannotInflictAilments', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Critical Strikes do not deal extra Damage', 'tree')).toEqual([
+      expect.objectContaining({ name: 'NoCritExtraDamage', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('You can inflict Bleeding on an Enemy up to 8 times', 'tree')).toEqual([
+      expect.objectContaining({ name: 'CrimsonDance', type: 'FLAG', value: true }),
+    ]);
+    expect(
+      parseModLine('Your Bleeding does not deal extra Damage while the Enemy is moving and cannot be Aggravated', 'tree'),
+    ).toEqual([expect.objectContaining({ name: 'CrimsonDance', type: 'FLAG', value: true })]);
+    expect(parseModLine('Cannot Evade enemy Attacks', 'tree')).toEqual([
+      expect.objectContaining({ name: 'CannotEvade', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Magebane', 'item')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'Magebane', type: 'FLAG', value: true }),
+        expect.objectContaining({ name: 'NoDexEvasionBonus', type: 'FLAG', value: true }),
+        expect.objectContaining({
+          name: 'SpellSuppressionChance',
+          type: 'BASE',
+          value: 1,
+          tags: [{ type: 'PerStat', stat: 'Dex', div: 15 }],
+        }),
+      ]),
+    );
+    expect(parseModLine('Precise Technique', 'item')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'PreciseTechnique', type: 'FLAG', value: true }),
+        expect.objectContaining({ name: 'NeverCrit', type: 'FLAG', value: true }),
+        expect.objectContaining({ name: 'PreciseTechniqueMorePct', type: 'BASE', value: 40 }),
+      ]),
+    );
+    expect(parseModLine('Perfect Agony', 'item')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'PerfectAgony', type: 'FLAG', value: true }),
+        expect.objectContaining({ name: 'NoCritExtraDamage', type: 'FLAG', value: true }),
+        expect.objectContaining({ name: 'NonCritsCannotInflictAilments', type: 'FLAG', value: true }),
+      ]),
+    );
+    expect(parseModLine('Unwavering Stance', 'item')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'UnwaveringStance', type: 'FLAG', value: true }),
+        expect.objectContaining({ name: 'CannotEvade', type: 'FLAG', value: true }),
+      ]),
+    );
+
+    // 2. Sandstorm Visage exact PoE 1 text
+    expect(
+      parseModLine('Base Spell Critical Strike Chance of Spells is equal to that of Main Hand Weapon', 'item'),
+    ).toEqual([expect.objectContaining({ name: 'SpellCritChanceFromMainHandWeapon', type: 'FLAG', value: true })]);
+
+    // 3. Wand Mastery, Lab Enchant, Mind of the Council, Triumvirate Authority
+    expect(parseModLine('Attacks with Wands fire an additional Projectile', 'tree')).toEqual([
+      expect.objectContaining({
+        name: 'ProjectileCount',
+        type: 'BASE',
+        value: 1,
+        flags: ModFlag.Attack | ModFlag.Wand,
+      }),
+    ]);
+    expect(parseModLine('Ice Spear fires an additional Projectile', 'item')).toEqual([
+      expect.objectContaining({ name: 'ProjectileCount:ice spear', type: 'BASE', value: 1 }),
+    ]);
+    expect(parseModLine('Attacks have Added Lightning Damage equal to 6% of Maximum Mana', 'item')).toEqual([
+      expect.objectContaining({ name: 'MindOfTheCouncilManaPct', type: 'BASE', value: 6 }),
+    ]);
+    expect(parseModLine('Socketed Vaal Skills deal 150% more Damage', 'item')).toEqual([
+      expect.objectContaining({
+        name: 'Damage',
+        type: 'MORE',
+        value: 150,
+        tags: [{ type: 'SocketedIn' }],
+      }),
+    ]);
+
+    // 4. Opportunistic, Toxic Delivery, Withering Presence, Action Speed
+    expect(
+      parseModLine('25% more Damage while there is at most one Rare or Unique Enemy within 6 metres', 'tree'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'Damage',
+        type: 'MORE',
+        value: 25,
+        tags: [{ type: 'Condition', var: 'EnemyRareOrUnique' }],
+      }),
+    ]);
+    expect(
+      parseModLine('5% increased Poison Duration for each Poison you have inflicted Recently, up to a maximum of 100%', 'tree'),
+    ).toEqual([expect.objectContaining({ name: 'ToxicDeliveryPoisonDurCap', type: 'BASE', value: 100 })]);
+    expect(parseModLine('15% more Chaos Damage', 'tree')).toEqual([
+      expect.objectContaining({ name: 'ChaosDamage', type: 'MORE', value: 15 }),
+    ]);
+    expect(parseModLine('6% increased Action Speed', 'item')).toEqual([
+      expect.objectContaining({ name: 'ActionSpeed', type: 'INC', value: 6 }),
+    ]);
+  });
+
   it('achieves >= 68% non-mastery line parse coverage on official PoE 1 3.30 passive tree', () => {
     const treePath = path.join(repoRoot, 'apps/web/public/data/poe1-tree-3_30.json');
     const tree = JSON.parse(fs.readFileSync(treePath, 'utf8')) as {

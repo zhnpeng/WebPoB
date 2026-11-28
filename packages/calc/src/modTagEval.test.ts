@@ -547,4 +547,347 @@ describe('parseConditionalSuffix', () => {
       ],
     });
   });
+
+  it('evaluates PoB DistanceRamp tags (explicit ramp & poe2-gems.json Close Combat / Longshot / Point Blank fallback)', () => {
+    const cc1: Mod = {
+      name: 'Damage',
+      type: 'MORE',
+      value: 20,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Skill: Close Combat I',
+      tags: [{ type: 'Condition', var: 'DistanceRamp' }],
+    };
+    const cc2: Mod = {
+      name: 'Damage',
+      type: 'MORE',
+      value: 30,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Skill: Close Combat II',
+      tags: [{ type: 'Condition', var: 'DistanceRamp' }],
+    };
+    // Default PoE 2 combat distance = 20 units (2.0m) -> 60% of Close Combat ramp = 12% / 18% MORE
+    const r1 = evaluateModTags(cc1, createEmptyEvalContext());
+    expect(r1.active).toBe(true);
+    expect(applyModTagEval(20, r1)).toBeCloseTo(12, 4);
+
+    const r2 = evaluateModTags(cc2, createEmptyEvalContext());
+    expect(r2.active).toBe(true);
+    expect(applyModTagEval(30, r2)).toBeCloseTo(18, 4);
+
+    // At 10 units (1m) -> full 30% MORE; at 35 units (3.5m) -> 0% (inactive)
+    const ctxClose = createEmptyEvalContext();
+    ctxClose.stats.EnemyDistance = 10;
+    expect(applyModTagEval(30, evaluateModTags(cc2, ctxClose))).toBeCloseTo(30, 4);
+
+    const ctxFar = createEmptyEvalContext();
+    ctxFar.stats.EnemyDistance = 35;
+    expect(evaluateModTags(cc2, ctxFar).active).toBe(false);
+
+    // Longshot I (ramp [[35,0],[70,1]]): 0% at 2m, 12.5% at 5.25m, 25% at 7m+
+    const longshot: Mod = {
+      name: 'Damage',
+      type: 'MORE',
+      value: 25,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Skill: Longshot I',
+      tags: [{ type: 'Condition', var: 'DistanceRamp' }],
+    };
+    expect(evaluateModTags(longshot, createEmptyEvalContext()).active).toBe(false);
+    const ctxMid = createEmptyEvalContext();
+    ctxMid.stats.EnemyDistance = 52.5;
+    expect(applyModTagEval(25, evaluateModTags(longshot, ctxMid))).toBeCloseTo(12.5, 4);
+    const ctx70 = createEmptyEvalContext();
+    ctx70.stats.EnemyDistance = 70;
+    expect(applyModTagEval(25, evaluateModTags(longshot, ctx70))).toBeCloseTo(25, 4);
+
+    // Explicit PoB DistanceRamp tag shape
+    const explicitPb: Mod = {
+      name: 'Damage',
+      type: 'MORE',
+      value: 20,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Tree: Point Blank',
+      tags: [{ type: 'DistanceRamp', ramp: [[35, 1], [70, 0]] } as unknown as ModTag],
+    };
+    expect(applyModTagEval(20, evaluateModTags(explicitPb, createEmptyEvalContext()))).toBeCloseTo(20, 4);
+    expect(applyModTagEval(20, evaluateModTags(explicitPb, ctxMid))).toBeCloseTo(10, 4);
+  });
+
+  it('parses & evaluates specific Herald conditions, distance thresholds, Power Charge Recently, Rage PerStat & ShieldArmourAndEvasion', () => {
+    expect(parseConditionalSuffix('100% increased Lightning Damage while affected by Herald of Thunder')).toEqual({
+      baseLine: '100% increased Lightning Damage',
+      tags: [{ type: 'Condition', var: 'AffectedByHeraldOfThunder' }],
+    });
+    expect(parseConditionalSuffix('40% increased Projectile Damage with Spears while there are no Enemies within 3m')).toEqual({
+      baseLine: '40% increased Projectile Damage with Spears',
+      tags: [{ type: 'Condition', var: 'EnemyDistanceGt:30' }],
+    });
+    expect(parseConditionalSuffix('20% increased Damage further than 4m')).toEqual({
+      baseLine: '20% increased Damage',
+      tags: [{ type: 'Condition', var: 'EnemyDistanceGt:40' }],
+    });
+    expect(parseConditionalSuffix("20% increased Critical Damage Bonus if you've consumed a Power Charge Recently")).toEqual({
+      baseLine: '20% increased Critical Damage Bonus',
+      tags: [{ type: 'Condition', var: 'ConsumedPowerChargeRecently' }],
+    });
+    expect(parseConditionalSuffix('4% increased Attack Damage per 75 Item Armour and Evasion Rating on Equipped Shield')).toEqual({
+      baseLine: '4% increased Attack Damage',
+      tags: [{ type: 'PerStat', stat: 'ShieldArmourAndEvasion', div: 75 }],
+    });
+
+    // EnemyDistanceGt:30 false at default 2m (20), true at 3.5m (35)
+    const farMod: Mod = {
+      name: 'Damage',
+      type: 'INC',
+      value: 40,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Tree',
+      tags: [{ type: 'Condition', var: 'EnemyDistanceGt:30' }],
+    };
+    expect(evaluateModTags(farMod, createEmptyEvalContext()).active).toBe(false);
+    const ctxFar = createEmptyEvalContext();
+    ctxFar.stats.EnemyDistance = 35;
+    expect(evaluateModTags(farMod, ctxFar).active).toBe(true);
+
+    // PerStat falls back to multipliers (Rage) and composites ShieldArmour + ShieldEvasion
+    const rageSpellMod: Mod = {
+      name: 'Damage',
+      type: 'MORE',
+      value: 1,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Tree: Druidic Champion',
+      tags: [{ type: 'PerStat', stat: 'Rage', div: 2 }],
+    };
+    const ctxRage = createEmptyEvalContext();
+    ctxRage.multipliers.Rage = 36;
+    expect(applyModTagEval(1, evaluateModTags(rageSpellMod, ctxRage))).toBe(18);
+
+    const shieldMod: Mod = {
+      name: 'Damage',
+      type: 'INC',
+      value: 4,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Tree: Greatest Defence',
+      tags: [{ type: 'PerStat', stat: 'ShieldArmourAndEvasion', div: 75 }],
+    };
+    const ctxShield = createEmptyEvalContext();
+    ctxShield.stats.ShieldArmour = 300;
+    ctxShield.stats.ShieldEvasion = 150;
+    expect(applyModTagEval(4, evaluateModTags(shieldMod, ctxShield))).toBe(24);
+  });
+
+  it('caps total value (not multiplier count) when limitTotal is true (Atalui Bloodletting & Escalating Mayhem)', () => {
+    // Explicit limitTotal on PerStat (Atalui's Bloodletting: 2% per 20 LifeCost, max 40% total)
+    const ataluiExplicit: Mod = {
+      name: 'DamageGainAsPhysical',
+      type: 'BASE',
+      value: 2,
+      flags: 0,
+      keywordFlags: 0,
+      source: "Support: Atalui's Bloodletting",
+      tags: [
+        { type: 'PerStat', stat: 'LifeCost', div: 20, limit: 40, limitTotal: true } as unknown as ModTag,
+      ],
+    };
+    const ctxLow = createEmptyEvalContext();
+    ctxLow.stats.LifeCost = 240; // floor(240/20) = 12 -> 24%
+    expect(applyModTagEval(2, evaluateModTags(ataluiExplicit, ctxLow))).toBe(24);
+
+    const ctxHigh = createEmptyEvalContext();
+    ctxHigh.stats.LifeCost = 1150; // floor(1150/20) = 57 -> capped at 40% total (NOT 40*2=80%!)
+    expect(applyModTagEval(2, evaluateModTags(ataluiExplicit, ctxHigh))).toBe(40);
+
+    // Legacy poe2-gems.json cmod bridge (limitTotal omitted on Atalui's Bloodletting LifeCost PerStat)
+    const ataluiLegacy: Mod = {
+      ...ataluiExplicit,
+      tags: [{ type: 'PerStat', stat: 'LifeCost', div: 20, limit: 40 }],
+    };
+    expect(applyModTagEval(2, evaluateModTags(ataluiLegacy, ctxHigh))).toBe(40);
+
+    // Explicit limitTotal on Multiplier (Escalating Mayhem: 10% per Hazard, max 50% total)
+    const mayhemMod: Mod = {
+      name: 'Damage',
+      type: 'INC',
+      value: 10,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Tree: Escalating Mayhem',
+      tags: [
+        {
+          type: 'Multiplier',
+          var: 'HazardTriggeredRecently',
+          limit: 50,
+          limitTotal: true,
+        } as unknown as ModTag,
+      ],
+    };
+    const ctxMayhem = createEmptyEvalContext();
+    ctxMayhem.multipliers.HazardTriggeredRecently = 8;
+    expect(applyModTagEval(10, evaluateModTags(mayhemMod, ctxMayhem))).toBe(50);
+
+    // Non-limitTotal limit continues clamping multiplier count (4 * min(9, 6) = 24)
+    const nonTotalMod = makeMod({
+      value: 4,
+      tags: [{ type: 'Multiplier', var: 'PowerCharge', limit: 6 }],
+    });
+    const ctxCharges = createEmptyEvalContext();
+    ctxCharges.multipliers.PowerCharge = 9;
+    expect(applyModTagEval(4, evaluateModTags(nonTotalMod, ctxCharges))).toBe(24);
+  });
+
+  it('evaluates Wave 4M PoE 2 conditions, BlockChance PerStat, composite ailments/exposure, and Herald of Blood', () => {
+    // Lay Siege / Offensive Stance PerStat BlockChance
+    expect(parseConditionalSuffix('1% increased Damage per 1% Chance to Block')).toEqual({
+      baseLine: '1% increased Damage',
+      tags: [{ type: 'PerStat', stat: 'BlockChance', div: 1 }],
+    });
+    const blockMod = makeMod({
+      value: 1,
+      tags: [{ type: 'PerStat', stat: 'BlockChance', div: 1 }],
+    });
+    const ctxBlock = createEmptyEvalContext();
+    ctxBlock.stats.BlockChance = 65;
+    expect(applyModTagEval(1, evaluateModTags(blockMod, ctxBlock))).toBe(65);
+
+    // New suffix conditions
+    expect(parseConditionalSuffix("15% increased Damage if you've dealt a Critical Hit in the past 8 seconds")).toEqual({
+      baseLine: '15% increased Damage',
+      tags: [{ type: 'Condition', var: 'CritInPast8Sec' }],
+    });
+    expect(parseConditionalSuffix('15% increased Critical Hit Chance against enemies with Exposure')).toEqual({
+      baseLine: '15% increased Critical Hit Chance',
+      tags: [{ type: 'Condition', var: 'EnemyExposure' }],
+    });
+    expect(parseConditionalSuffix('15% increased Attack Speed while not on Low Mana')).toEqual({
+      baseLine: '15% increased Attack Speed',
+      tags: [{ type: 'Condition', var: 'LowMana', neg: true }],
+    });
+    expect(parseConditionalSuffix('15% more Critical Damage Bonus against Blinded Enemies')).toEqual({
+      baseLine: '15% more Critical Damage Bonus',
+      tags: [{ type: 'Condition', var: 'EnemyBlinded' }],
+    });
+    expect(parseConditionalSuffix('24% increased Damage with Hits against Enemies affected by Elemental Ailments')).toEqual({
+      baseLine: '24% increased Damage with Hits',
+      tags: [{ type: 'Condition', var: 'EnemyAffectedByElementalAilment' }],
+    });
+    expect(parseConditionalSuffix('33% increased Damage with Hits against Enemies affected by Ailments')).toEqual({
+      baseLine: '33% increased Damage with Hits',
+      tags: [{ type: 'Condition', var: 'EnemyAffectedByAilment' }],
+    });
+    expect(parseConditionalSuffix('20% increased Damage for each type of Elemental Ailment on Enemy')).toEqual({
+      baseLine: '20% increased Damage',
+      tags: [{ type: 'Multiplier', var: 'EnemyElementalAilmentCount' }],
+    });
+    expect(parseConditionalSuffix('40% increased Physical Damage while affected by Herald of Blood')).toEqual({
+      baseLine: '40% increased Physical Damage',
+      tags: [{ type: 'Condition', var: 'AffectedByHeraldOfBlood' }],
+    });
+
+    // Composite condition & derived multiplier evaluations
+    const ctxAil = createEmptyEvalContext();
+    ctxAil.conditions.EnemyShocked = true;
+    ctxAil.conditions.EnemyChilled = true;
+    ctxAil.conditions.EnemyLightningExposure = true;
+    ctxAil.conditions.AffectedByHeraldofBlood = true;
+
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'EnemyExposure' }] }), ctxAil).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(
+        makeMod({ tags: [{ type: 'Condition', var: 'EnemyAffectedByElementalAilment' }] }),
+        ctxAil,
+      ).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(
+        makeMod({ tags: [{ type: 'Condition', var: 'EnemyAffectedByAilment' }] }),
+        ctxAil,
+      ).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(
+        makeMod({ tags: [{ type: 'Condition', var: 'AffectedByHeraldOfBlood' }] }),
+        ctxAil,
+      ).active,
+    ).toBe(true);
+    expect(
+      applyModTagEval(
+        20,
+        evaluateModTags(
+          makeMod({ value: 20, tags: [{ type: 'Multiplier', var: 'EnemyElementalAilmentCount' }] }),
+          ctxAil,
+        ),
+      ),
+    ).toBe(40);
+  });
+
+  it('scales PercentStat multiplier (Arcane Cloak 0.64), EnemyFrozen->EnemyChilled, and Wave 4N conditions', () => {
+    // PoE 1 Arcane Cloak: cmod has v=10 (10% of consumed mana) / v=100 (100% guard limit) with ArcaneCloakConsumedMana=0.64
+    const cloakMod: Mod = {
+      name: 'LightningMax',
+      type: 'BASE',
+      value: 10,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Skill: Arcane Cloak',
+      tags: [{ type: 'Condition', var: 'PercentStat:ManaUnreserved:ArcaneCloakConsumedMana' }],
+    };
+    const ctxCloak = createEmptyEvalContext();
+    ctxCloak.stats.ManaUnreserved = 10000;
+    ctxCloak.multipliers.ArcaneCloakConsumedMana = 0.64;
+    const cloakRes = evaluateModTags(cloakMod, ctxCloak);
+    expect(cloakRes.active).toBe(true);
+    expect(cloakRes.scale).toBeCloseTo(64, 4);
+    expect(applyModTagEval(10, cloakRes)).toBeCloseTo(640, 4);
+    expect(applyModTagEval(100, cloakRes)).toBeCloseTo(6400, 4);
+
+    // Literal PercentStat numeric percent (e.g. 0.5%) divides by 100
+    ctxCloak.stats.Mana = 10000;
+    const litPctMod = makeMod({
+      value: 1,
+      tags: [{ type: 'Condition', var: 'PercentStat:Mana:0.5' }],
+    });
+    expect(evaluateModTags(litPctMod, ctxCloak).scale).toBeCloseTo(50, 4);
+
+    // EnemyFrozen implies EnemyChilled (#52 Glacial Hammer); Frozen implies Chilled
+    const ctxFrozen = createEmptyEvalContext();
+    ctxFrozen.conditions.EnemyFrozen = true;
+    ctxFrozen.conditions.Frozen = true;
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'EnemyChilled' }] }), ctxFrozen).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'Chilled' }] }), ctxFrozen).active,
+    ).toBe(true);
+
+    // Wave 4N conditions: Surrounded suffix, TwisterLightning, AtMostOneNearbyRareOrUniqueEnemy, Shapeshifted
+    expect(parseConditionalSuffix('100% increased Attack Damage while Surrounded')).toEqual({
+      baseLine: '100% increased Attack Damage',
+      tags: [{ type: 'Condition', var: 'Surrounded' }],
+    });
+    const ctxW4N = createEmptyEvalContext();
+    ctxW4N.conditions.twisterLightning = true;
+    ctxW4N.conditions.ShapeshiftToAnimal = true;
+    ctxW4N.multipliers.NearbyRareOrUniqueEnemies = 1;
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'TwisterLightning' }] }), ctxW4N).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'Shapeshifted' }] }), ctxW4N).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(
+        makeMod({ tags: [{ type: 'Condition', var: 'AtMostOneNearbyRareOrUniqueEnemy' }] }),
+        ctxW4N,
+      ).active,
+    ).toBe(true);
+  });
 });

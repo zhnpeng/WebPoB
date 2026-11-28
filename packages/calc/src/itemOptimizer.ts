@@ -1,6 +1,6 @@
 import type { Build, EquipmentSlotId, Item } from '@webpob/core';
-import { getUniquesForGame, instantiateUniqueItem, type CompactUniqueEntry } from '@webpob/data';
-import { calculateBuild } from './engine.js';
+import { getBaseItemStats, getUniquesForGame, instantiateUniqueItem, type CompactUniqueEntry } from '@webpob/data';
+import { calculateBuild, canWieldTwoHandedMartialInOneHand, canWieldWeaponInOneHand } from './engine.js';
 
 export interface RankedUniqueUpgrade {
   unique: CompactUniqueEntry;
@@ -13,12 +13,23 @@ export interface RankedUniqueUpgrade {
   esDelta: number;
 }
 
-function slotMatchesUnique(slot: EquipmentSlotId, uniqueSlot: string): boolean {
+function slotMatchesUnique(
+  slot: EquipmentSlotId,
+  unique: CompactUniqueEntry,
+  build: Build,
+  canWield2HIn1H: boolean,
+): boolean {
+  const uniqueSlot = unique.s;
   if (slot === uniqueSlot) return true;
-  if ((slot === 'Ring 1' || slot === 'Ring 2') && uniqueSlot === 'Ring 1') return true;
+  if ((slot === 'Ring 1' || slot === 'Ring 2' || slot === 'Ring 3') && uniqueSlot === 'Ring 1') return true;
   if (slot.startsWith('Flask ') && uniqueSlot === 'Flask 1') return true;
+  if (slot.startsWith('Charm ') && uniqueSlot === 'Charm 1') return true;
   if (slot === 'Weapon 1 Swap' && uniqueSlot === 'Weapon 1') return true;
   if (slot === 'Weapon 2 Swap' && uniqueSlot === 'Weapon 2') return true;
+  if ((slot === 'Weapon 2' || slot === 'Weapon 2 Swap') && uniqueSlot === 'Weapon 1') {
+    const base = getBaseItemStats(unique.b, 0, build.game);
+    return canWieldWeaponInOneHand(base?.weapon, canWield2HIn1H);
+  }
   return false;
 }
 
@@ -37,9 +48,10 @@ export function rankUniqueUpgradesForSlot(
   const baseEhp = Math.max(1, baseline.defence.effectiveHitPool);
   const currentItemId = build.equipped[slot];
   const currentName = currentItemId ? build.items[currentItemId]?.name.toLowerCase() : '';
+  const canWield2HIn1H = canWieldTwoHandedMartialInOneHand(build);
 
   const uniques = getUniquesForGame(build.game).filter(
-    (u) => slotMatchesUnique(slot, u.s) && u.en.toLowerCase() !== currentName,
+    (u) => slotMatchesUnique(slot, u, build, canWield2HIn1H) && u.en.toLowerCase() !== currentName,
   );
 
   // Deduplicate by unique name and simulate live

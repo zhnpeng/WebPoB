@@ -1,4 +1,6 @@
-import { KeywordFlag, ModFlag, type Mod, type ModType } from '@webpob/core';
+import { KeywordFlag, ModFlag, type Mod, type ModTag, type ModType } from '@webpob/core';
+import { parseModCompositional } from './compositionalModParser.js';
+import { parseConditionalSuffix } from './modTagEval.js';
 
 export interface Poe2ParserRule {
   pattern: RegExp;
@@ -442,7 +444,7 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     ],
   },
   {
-    pattern: /^(\d+)% more Skill Speed while Off Hand is empty and you have$/i,
+    pattern: /^(\d+)% more Skill Speed while Off Hand is empty and you have(?:\s+a\s+One-Handed\s+Martial\s+Weapon\s+equipped\s+in\s+your\s+Main\s+Hand)?$/i,
     build: (m, src) => [
       mkMod('DanceWithDeath', 'FLAG', true, src),
       mkMod('DanceWithDeathSkillSpeedMore', 'BASE', Number(m[1]), src),
@@ -480,7 +482,7 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     },
   },
   {
-    pattern: /^(\d+)% (increased|reduced) Critical Damage Bonus for Attack Damage$/i,
+    pattern: /^(\d+)% (increased|reduced) Critical (?:Attack Damage Bonus|Damage Bonus for Attack Damage)$/i,
     build: (m, src) => {
       const { type, value } = signedVal(m[1]!, m[2]!);
       return [mkMod('CritDamageBonusInc', type, value, src, ModFlag.Attack)];
@@ -500,10 +502,71 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
       return [mkMod('CritDamageBonusInc', type, value, src)];
     },
   },
+  // Grinning Immolation (Tree:34419): "50% more Critical Damage Bonus"
   {
-    pattern: /^(\d+)% (increased|reduced) Critical Damage Bonus (?:if|while|against) .+$/i,
+    pattern: /^(\d+)% (more|less) Critical Damage Bonus$/i,
     build: (m, src) => {
       const { type, value } = signedVal(m[1]!, m[2]!);
+      return [mkMod('CritMultiplier', type, value, src)];
+    },
+  },
+  // Gore Spike (Tree:52703): "1% increased Critical Damage Bonus per 50 current Life" / "per 40 Life"
+  {
+    pattern: /^(\d+)% increased Critical Damage Bonus per (\d+) (?:current |maximum )?Life$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritDamageBonusInc', 'INC', Number(m[1]), src),
+        tags: [{ type: 'PerStat', stat: 'Life', div: Number(m[2]) }],
+      },
+    ],
+  },
+  // Preemptive Strike (Tree:21380): "100% increased Critical Damage Bonus against Enemies that are on Full Life"
+  {
+    pattern: /^(\d+)% (increased|reduced) Critical Damage Bonus against Enemies that are on Full Life$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      return [
+        {
+          ...mkMod('CritMultiplier', type, value, src),
+          tags: [{ type: 'Condition', var: 'EnemyFullLife' }],
+        },
+      ];
+    },
+  },
+  {
+    pattern: /^(\d+)% (increased|reduced) Critical Damage Bonus if you(?:'ve| have) (consumed|gained) a (Power|Frenzy|Endurance) Charge Recently$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      const verb = m[3]!.toLowerCase() === 'consumed' ? 'Consumed' : 'Gained';
+      const charge = m[4]!.charAt(0).toUpperCase() + m[4]!.slice(1).toLowerCase();
+      return [
+        {
+          name: 'CritDamageBonusInc',
+          type,
+          value,
+          flags: 0,
+          keywordFlags: 0,
+          source: src,
+          tags: [{ type: 'Condition', var: `${verb}${charge}ChargeRecently` }],
+        },
+      ];
+    },
+  },
+  {
+    pattern: /^(\d+)% (increased|reduced|more|less) Critical Damage Bonus (?:if|while|when|against) .+$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      const { baseLine, tags } = parseConditionalSuffix(m[0]!);
+      if (
+        tags.length > 0 &&
+        /^\d+% (?:increased|reduced|more|less) Critical Damage Bonus$/i.test(baseLine)
+      ) {
+        const statName = type === 'MORE' ? 'CritMultiplier' : 'CritDamageBonusInc';
+        return [{ ...mkMod(statName, type, value, src), tags }];
+      }
+      const comp = parseModCompositional(m[0]!, src);
+      if (comp.length > 0 && comp.every((c) => (c.tags?.length ?? 0) > 0)) return comp;
+      if (type === 'MORE') return [];
       return [mkMod('ConditionalCritDamageBonusInc', type, value, src)];
     },
   },
@@ -543,15 +606,32 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     },
   },
   {
-    pattern: /^(\d+)% (increased|reduced) Critical Hit Chance (?:against|while|if) .+$/i,
+    pattern: /^(\d+)% (increased|reduced|more|less) Critical (?:Hit|Strike) Chance (?:against|while|when|if) .+$/i,
     build: (m, src) => {
       const { type, value } = signedVal(m[1]!, m[2]!);
+      const { baseLine, tags } = parseConditionalSuffix(m[0]!);
+      if (
+        tags.length > 0 &&
+        /^\d+% (?:increased|reduced|more|less) Critical (?:Hit|Strike) Chance$/i.test(baseLine)
+      ) {
+        return [{ ...mkMod('CritChance', type, value, src), tags }];
+      }
+      const comp = parseModCompositional(m[0]!, src);
+      if (comp.length > 0 && comp.every((c) => (c.tags?.length ?? 0) > 0)) return comp;
+      if (type === 'MORE') return [];
       return [mkMod('ConditionalCritChance', type, value, src)];
     },
   },
   {
     pattern: /^Projectiles have (\d+)% increased Critical Hit Chance(?: .+)?$/i,
-    build: (m, src) => [mkMod('ConditionalCritChance', 'INC', Number(m[1]), src, ModFlag.Projectile)],
+    build: (m, src) => {
+      if (m[0]!.length > 'Projectiles have 00% increased Critical Hit Chance'.length + 2) {
+        const comp = parseModCompositional(m[0]!, src);
+        if (comp.length > 0) return comp;
+        return [mkMod('ConditionalCritChance', 'INC', Number(m[1]), src, ModFlag.Projectile)];
+      }
+      return [mkMod('CritChance', 'INC', Number(m[1]), src, ModFlag.Projectile)];
+    },
   },
   {
     pattern: /^Hits against you have (\d+)% reduced Critical Damage Bonus$/i,
@@ -570,9 +650,29 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     },
   },
   {
-    pattern: /^(\d+)% (increased|reduced|more|less) Skill Speed (?:while|with|if) .+$/i,
+    pattern: /^(\d+)% (increased|reduced|more|less) Skill Speed with Channelling Skills$/i,
     build: (m, src) => {
       const { type, value } = signedVal(m[1]!, m[2]!);
+      const tags: ModTag[] = [{ type: 'Condition', var: 'Channelling' }];
+      return [
+        { ...mkMod('Speed', type, value, src, ModFlag.Attack), tags },
+        { ...mkMod('Speed', type, value, src, ModFlag.Spell), tags },
+      ];
+    },
+  },
+  {
+    pattern: /^(\d+)% (increased|reduced|more|less) Skill Speed (?:while|when|with|if) .+$/i,
+    build: (m, src) => {
+      const comp = parseModCompositional(m[0]!, src);
+      if (comp.length > 0 && comp.every((c) => (c.tags?.length ?? 0) > 0)) return comp;
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      const { baseLine, tags } = parseConditionalSuffix(m[0]!);
+      if (tags.length > 0 && /^\d+% (?:increased|reduced|more|less) Skill Speed$/i.test(baseLine)) {
+        return [
+          { ...mkMod('Speed', type, value, src, ModFlag.Attack), tags },
+          { ...mkMod('Speed', type, value, src, ModFlag.Spell), tags },
+        ];
+      }
       return [
         mkMod('ConditionalSpeed', type, value, src, ModFlag.Attack),
         mkMod('ConditionalSpeed', type, value, src, ModFlag.Spell),
@@ -580,11 +680,23 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     },
   },
   {
-    pattern: /^(\d+)% reduced Attack Speed(?: .+)?$/i,
+    pattern: /^(\d+)% (increased|reduced|more|less) Unarmed Attack Speed$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      return [
+        {
+          ...mkMod('Speed', type, value, src, ModFlag.Attack),
+          tags: [{ type: 'Condition', var: 'Unarmed' }],
+        },
+      ];
+    },
+  },
+  {
+    pattern: /^(\d+)% reduced Attack Speed$/i,
     build: (m, src) => [mkMod('Speed', 'INC', -Number(m[1]), src, ModFlag.Attack)],
   },
   {
-    pattern: /^(\d+)% reduced Cast Speed(?: .+)?$/i,
+    pattern: /^(\d+)% reduced Cast Speed$/i,
     build: (m, src) => [mkMod('Speed', 'INC', -Number(m[1]), src, ModFlag.Spell)],
   },
   {
@@ -595,12 +707,30 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     },
   },
   {
-    pattern: /^(\d+)% increased Attack Speed (?:while|if) .+$/i,
-    build: (m, src) => [mkMod('ConditionalSpeed', 'INC', Number(m[1]), src, ModFlag.Attack)],
+    pattern: /^(\d+)% (increased|reduced|more|less) Attack Speed (?:while|when|if|against) .+$/i,
+    build: (m, src) => {
+      const comp = parseModCompositional(m[0]!, src);
+      if (comp.length > 0 && comp.every((c) => (c.tags?.length ?? 0) > 0)) return comp;
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      const { baseLine, tags } = parseConditionalSuffix(m[0]!);
+      if (tags.length > 0 && /^\d+% (?:increased|reduced|more|less) Attack Speed$/i.test(baseLine)) {
+        return [{ ...mkMod('Speed', type, value, src, ModFlag.Attack), tags }];
+      }
+      return [mkMod('ConditionalSpeed', type, value, src, ModFlag.Attack)];
+    },
   },
   {
-    pattern: /^(\d+)% increased Cast Speed (?:while|if) .+$/i,
-    build: (m, src) => [mkMod('ConditionalSpeed', 'INC', Number(m[1]), src, ModFlag.Spell)],
+    pattern: /^(\d+)% (increased|reduced|more|less) Cast Speed (?:while|when|if|against) .+$/i,
+    build: (m, src) => {
+      const comp = parseModCompositional(m[0]!, src);
+      if (comp.length > 0 && comp.every((c) => (c.tags?.length ?? 0) > 0)) return comp;
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      const { baseLine, tags } = parseConditionalSuffix(m[0]!);
+      if (tags.length > 0 && /^\d+% (?:increased|reduced|more|less) Cast Speed$/i.test(baseLine)) {
+        return [{ ...mkMod('Speed', type, value, src, ModFlag.Spell), tags }];
+      }
+      return [mkMod('ConditionalSpeed', type, value, src, ModFlag.Spell)];
+    },
   },
   {
     pattern: /^(\d+)% increased Attack and Cast Speed with (Fire|Cold|Lightning|Chaos|Physical|Elemental) Skills$/i,
@@ -613,11 +743,26 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     },
   },
   {
-    pattern: /^(\d+)% increased Attack and Cast Speed (?:while|if) .+$/i,
-    build: (m, src) => [
-      mkMod('ConditionalSpeed', 'INC', Number(m[1]), src, ModFlag.Attack),
-      mkMod('ConditionalSpeed', 'INC', Number(m[1]), src, ModFlag.Spell),
-    ],
+    pattern: /^(\d+)% (increased|reduced|more|less) Attack and Cast Speed (?:while|when|if|against) .+$/i,
+    build: (m, src) => {
+      const comp = parseModCompositional(m[0]!, src);
+      if (comp.length > 0 && comp.every((c) => (c.tags?.length ?? 0) > 0)) return comp;
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      const { baseLine, tags } = parseConditionalSuffix(m[0]!);
+      if (
+        tags.length > 0 &&
+        /^\d+% (?:increased|reduced|more|less) Attack and Cast Speed$/i.test(baseLine)
+      ) {
+        return [
+          { ...mkMod('Speed', type, value, src, ModFlag.Attack), tags },
+          { ...mkMod('Speed', type, value, src, ModFlag.Spell), tags },
+        ];
+      }
+      return [
+        mkMod('ConditionalSpeed', type, value, src, ModFlag.Attack),
+        mkMod('ConditionalSpeed', type, value, src, ModFlag.Spell),
+      ];
+    },
   },
   {
     pattern: /^(\d+)% increased Crossbow Reload Speed$/i,
@@ -703,8 +848,18 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     },
   },
   {
-    pattern: /^(\d+)% increased bonuses gained from Equipped Quiver$/i,
-    build: (m, src) => [mkMod('QuiverEffect', 'INC', Number(m[1]), src)],
+    pattern: /^(\d+)% (increased|reduced) bonuses? gained from Equipped Quiver$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      return [mkMod('QuiverEffect', type, value, src)];
+    },
+  },
+  {
+    pattern: /^(\d+)% (increased|reduced) bonuses? gained from Equipped Amulet$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      return [mkMod('AmuletEffect', type, value, src)];
+    },
   },
 
   // Block, Deflection, Armour-to-Elemental
@@ -817,42 +972,8 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     build: (m, src) => [mkMod('MovementSpeed', 'INC', -Number(m[1]), src)],
   },
   {
-    pattern: /^(\d+)% increased Movement Speed (?:while|if|when) .+$/i,
-    build: (m, src) => [mkMod('ConditionalMovementSpeed', 'INC', Number(m[1]), src)],
-  },
-  {
     pattern: /^(\d+)% reduced Movement Speed Penalty (?:from using Skills while moving|while Actively Blocking)$/i,
     build: (m, src) => [mkMod('MoveSpeedPenaltyReduction', 'INC', Number(m[1]), src)],
-  },
-  {
-    pattern: /^(\d+)% increased Armour, Evasion(?: Rating)? and Energy Shield (?:while|if) .+$/i,
-    build: (m, src) => {
-      const v = Number(m[1]);
-      return [
-        mkMod('ConditionalArmour', 'INC', v, src),
-        mkMod('ConditionalEvasion', 'INC', v, src),
-        mkMod('ConditionalEnergyShield', 'INC', v, src),
-      ];
-    },
-  },
-  {
-    pattern: /^(\d+)% increased Armour and Evasion(?: Rating)? (?:while|if) .+$/i,
-    build: (m, src) => [
-      mkMod('ConditionalArmour', 'INC', Number(m[1]), src),
-      mkMod('ConditionalEvasion', 'INC', Number(m[1]), src),
-    ],
-  },
-  {
-    pattern: /^(\d+)% increased (Armour|Evasion Rating|maximum Energy Shield) (?:while|if|when) .+$/i,
-    build: (m, src) => {
-      const stat =
-        m[2]!.toLowerCase() === 'armour'
-          ? 'ConditionalArmour'
-          : m[2]!.toLowerCase().startsWith('evasion')
-            ? 'ConditionalEvasion'
-            : 'ConditionalEnergyShield';
-      return [mkMod(stat, 'INC', Number(m[1]), src)];
-    },
   },
 
   // Spirit, Aura Magnitude, Curse Magnitude, Item Rarity
@@ -940,6 +1061,18 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
 
   // Weapon-Specific Damage & Attack Speed
   {
+    pattern: /^(\d+)% (increased|reduced|more|less) (?:Damage with Unarmed Attacks|Unarmed (?:Attack )?Damage)$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      return [
+        {
+          ...mkMod('Damage', type, value, src, ModFlag.Attack),
+          tags: [{ type: 'Condition', var: 'Unarmed' }],
+        },
+      ];
+    },
+  },
+  {
     pattern: /^(\d+)% increased Damage with (Two Handed Weapons|One Handed Weapons|Quarterstaves|Spears|Crossbows|Bows|Maces|Flails|Staves|Wands|Swords|Axes|Daggers|Claws|Plant Skills|Warcries)$/i,
     build: (m, src) => {
       const target = m[2]!.toLowerCase();
@@ -947,7 +1080,12 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
         return [mkMod('Damage', 'INC', Number(m[1]), src, 0, KeywordFlag.Warcry)];
       }
       if (target === 'plant skills') {
-        return [mkMod('PlantDamage', 'INC', Number(m[1]), src)];
+        return [
+          {
+            ...mkMod('Damage', 'INC', Number(m[1]), src),
+            tags: [{ type: 'SkillType', skillType: 'Plant' }],
+          },
+        ];
       }
       return [mkMod('Damage', 'INC', Number(m[1]), src, weaponToFlag(m[2]!))];
     },
@@ -961,8 +1099,34 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     build: (m, src) => [mkMod(`${m[2]}Damage`, 'INC', Number(m[1]), src, ModFlag.Attack)],
   },
   {
-    pattern: /^(\d+)% increased (Totem|Trap|Grenade|Hazard|Ballista|Thorns|Parry) [Dd]amage$/i,
-    build: (m, src) => [mkMod(`${m[2]!.charAt(0).toUpperCase()}${m[2]!.slice(1).toLowerCase()}Damage`, 'INC', Number(m[1]), src)],
+    pattern: /^(\d+)% (increased|reduced) (Totem|Trap|Grenade|Hazard|Ballista|Thorns|Parry) [Dd]amage$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      const kind = m[3]!.toLowerCase();
+      if (kind === 'grenade') {
+        return [
+          {
+            ...mkMod('Damage', type, value, src),
+            tags: [{ type: 'SkillType', skillType: 'Grenade' }],
+          },
+        ];
+      }
+      if (kind === 'hazard') {
+        return [
+          {
+            ...mkMod('Damage', type, value, src),
+            tags: [{ type: 'SkillType', skillType: 'Hazard' }],
+          },
+        ];
+      }
+      if (kind === 'totem') {
+        return [mkMod('Damage', type, value, src, 0, KeywordFlag.Totem)];
+      }
+      if (kind === 'trap') {
+        return [mkMod('Damage', type, value, src, 0, KeywordFlag.Trap)];
+      }
+      return [mkMod(`${m[3]!.charAt(0).toUpperCase()}${m[3]!.slice(1).toLowerCase()}Damage`, type, value, src)];
+    },
   },
   {
     pattern: /^(\d+) to (\d+) Physical Thorns damage$/i,
@@ -977,13 +1141,55 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
   },
 
   // Ailment Magnitude, Speed, Chance & Duration
+  // PoE 2 Low Tolerance (Tree:42959): PoB 2 evaluates as AilmentEffect INC (CalcOffence.lua:5398)
   {
-    pattern: /^Damaging Ailments deal damage (\d+)% faster$/i,
+    pattern: /^(\d+)% (increased|reduced) Magnitude of Poison(?: you inflict)? on targets that are not Poisoned$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      return [mkMod('AilmentEffect', type, value, src, 0, KeywordFlag.Poison)];
+    },
+  },
+  {
+    pattern: /^Critical Hits Poison the enemy$/i,
+    build: (_, src) => [
+      mkMod('CritPoisonChance', 'BASE', 100, src),
+      {
+        name: 'PoisonChance',
+        type: 'OVERRIDE',
+        value: 100,
+        flags: 0,
+        keywordFlags: 0,
+        source: src,
+        tags: [{ type: 'Condition', var: 'CriticalStrike' }],
+      },
+    ],
+  },
+  // Tacati's Ire: "Poisons you inflict deal Damage 2% faster per Rage"
+  {
+    pattern: /^Poisons(?: you inflict)? deal [Dd]amage (\d+)% faster per Rage$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('PoisonFaster', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Multiplier', var: 'Rage' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Poisons(?: you inflict)? deal [Dd]amage (\d+)% faster$/i,
+    build: (m, src) => [mkMod('PoisonFaster', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^(?:Damaging )?Ailments(?: you inflict)? deal [Dd]amage (\d+)% faster$/i,
     build: (m, src) => [mkMod('AilmentFaster', 'INC', Number(m[1]), src)],
   },
   {
     pattern: /^Ignites you inflict deal Damage (\d+)% faster$/i,
     build: (m, src) => [mkMod('IgniteFaster', 'INC', Number(m[1]), src)],
+  },
+  // Plaguefinger: "All Damage from Hits Contributes to Poison Magnitude"
+  {
+    pattern: /^All Damage from Hits Contributes to Poison Magnitude$/i,
+    build: (_, src) => [mkMod('AllDamageCanPoison', 'FLAG', true, src)],
   },
   {
     pattern: /^(\d+)% (increased|reduced|more|less) Magnitude of (Damaging Ailments|Non-Damaging Ailments|Ailments|Ignite|Bleeding|Poison|Shock|Chill|Jagged Ground)(?: you (?:inflict|create))?(?: (?:against|with) .+)?$/i,
@@ -994,7 +1200,7 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
         kind === 'ignite'
           ? 'IgniteMagnitude'
           : kind === 'bleeding'
-            ? 'BleedMagnitude'
+            ? 'BleedingMagnitude'
             : kind === 'poison'
               ? 'PoisonMagnitude'
               : kind === 'shock'
@@ -1255,25 +1461,115 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     build: (m, src) => [mkMod('CharmSlots', 'BASE', Number(m[1]), src)],
   },
 
-  // Conditional Damage (Full/Low Life, Herald, Dazed/Blinded/Ignited/Burning/Immobilised, Companion, Shapeshifted, etc.)
+  // Conditional Damage (check canonical parseConditionalSuffix first so Elemental Ailment / Exposure / Herald of Blood
+  // stay distinct, then fall back to compositionalModParser; return [] for unmatched more/less so later rules run!)
   {
-    pattern: /^(\d+)% increased (Attack |Spell |Melee |Elemental |Fire |Cold |Lightning |Physical |Chaos )?Damage (?:with Hits )?(?:while|against|if) .+$/i,
+    pattern: /^(\d+)% (increased|reduced|more|less) (Attack |Spell |Melee |Projectile |Area |Elemental |Fire |Cold |Lightning |Physical |Chaos )?Damage (?:with Hits )?(?:while|when|against|if) .+$/i,
     build: (m, src) => {
-      const scope = (m[2] ?? '').trim().toLowerCase();
-      if (scope === 'attack') return [mkMod('ConditionalDamage', 'INC', Number(m[1]), src, ModFlag.Attack)];
-      if (scope === 'spell') return [mkMod('ConditionalDamage', 'INC', Number(m[1]), src, ModFlag.Spell)];
-      if (scope === 'melee') return [mkMod('ConditionalDamage', 'INC', Number(m[1]), src, ModFlag.Melee)];
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      const scope = (m[3] ?? '').trim().toLowerCase();
+      const { baseLine, tags } = parseConditionalSuffix(m[0]!);
+      if (tags.length > 0) {
+        const baseMatch = baseLine.match(
+          /^\d+% (?:increased|reduced|more|less) (?:(Attack|Spell|Melee|Projectile|Area|Elemental|Fire|Cold|Lightning|Physical|Chaos) )?Damage( with Hits)?$/i,
+        );
+        if (baseMatch) {
+          const hitFlag = baseMatch[2] ? ModFlag.Hit : 0;
+          if (scope === 'attack') {
+            return [{ ...mkMod('Damage', type, value, src, ModFlag.Attack | hitFlag), tags }];
+          }
+          if (scope === 'spell') {
+            return [{ ...mkMod('Damage', type, value, src, ModFlag.Spell | hitFlag), tags }];
+          }
+          if (scope === 'melee') {
+            return [{ ...mkMod('Damage', type, value, src, ModFlag.Melee | hitFlag), tags }];
+          }
+          if (scope === 'projectile') {
+            return [{ ...mkMod('Damage', type, value, src, ModFlag.Projectile | hitFlag), tags }];
+          }
+          if (scope === 'area') {
+            return [{ ...mkMod('Damage', type, value, src, ModFlag.Area | hitFlag), tags }];
+          }
+          if (scope) {
+            const cap = scope.charAt(0).toUpperCase() + scope.slice(1);
+            return [{ ...mkMod(`${cap}Damage`, type, value, src, hitFlag), tags }];
+          }
+          return [{ ...mkMod('Damage', type, value, src, hitFlag), tags }];
+        }
+      }
+      const comp = parseModCompositional(m[0]!, src);
+      if (comp.length > 0 && comp.every((c) => (c.tags?.length ?? 0) > 0)) return comp;
+      // Only absorb unmatched "increased" lines into ConditionalDamage; let specialized more/less/reduced rules match below
+      if (m[2]!.toLowerCase() !== 'increased') return [];
+      if (scope === 'attack') return [mkMod('ConditionalDamage', type, value, src, ModFlag.Attack)];
+      if (scope === 'spell') return [mkMod('ConditionalDamage', type, value, src, ModFlag.Spell)];
+      if (scope === 'melee') return [mkMod('ConditionalDamage', type, value, src, ModFlag.Melee)];
       if (scope) {
         const cap = scope.charAt(0).toUpperCase() + scope.slice(1);
-        return [mkMod(`Conditional${cap}Damage`, 'INC', Number(m[1]), src)];
+        return [mkMod(`Conditional${cap}Damage`, type, value, src)];
       }
-      return [mkMod('ConditionalDamage', 'INC', Number(m[1]), src)];
+      return [mkMod('ConditionalDamage', type, value, src)];
+    },
+  },
+  // Empowered Attacks Gain X% as Extra Damage (Cremating Cries, Hail) — gated on EmpoweredAttack so it never leaks unconditionally
+  {
+    pattern: /^Empowered Attacks Gain (\d+(?:\.\d+)?)% of (?:(Physical|Fire|Cold|Lightning|Elemental) )?Damage as Extra (Fire|Cold|Lightning|Chaos) [Dd]amage$/i,
+    build: (m, src) => {
+      const from = m[2] ? `${m[2].charAt(0).toUpperCase()}${m[2].slice(1).toLowerCase()}DamageGainAs` : 'DamageGainAs';
+      const to = `${m[3]!.charAt(0).toUpperCase()}${m[3]!.slice(1).toLowerCase()}`;
+      return [
+        {
+          ...mkMod(`${from}${to}`, 'BASE', Number(m[1]), src, ModFlag.Attack),
+          tags: [{ type: 'Condition', var: 'EmpoweredAttack' }],
+        },
+      ];
     },
   },
   {
     pattern: /^(Empowered Attacks|Ancestrally Boosted Attacks|Attack Skills|Channelling Skills|Triggered Spells|Invocated Spells|Herald Skills|Projectiles) deal (\d+)% increased (?:Spell )?Damage(?: .+)?$/i,
     build: (m, src) => {
       const subject = m[1]!.toLowerCase();
+      const val = Number(m[2]);
+      // PoB 2 ModParser.lua:2705-2707 — MUST route Empowered & Ancestrally Boosted BEFORE compositionalModParser
+      // so they scale exerted/boosted multipliers instead of leaking as unconditional Damage INC!
+      if (subject === 'empowered attacks') {
+        return [mkMod('EmpoweredIncrease', 'INC', val, src, ModFlag.Attack)];
+      }
+      if (subject === 'ancestrally boosted attacks') {
+        return [mkMod('AncestralBoostIncrease', 'INC', val, src, ModFlag.Attack)];
+      }
+      if (subject === 'channelling skills') {
+        return [
+          {
+            ...mkMod('Damage', 'INC', val, src),
+            tags: [{ type: 'Condition', var: 'Channelling' }],
+          },
+        ];
+      }
+      if (subject === 'triggered spells' || subject === 'invocated spells') {
+        return [
+          {
+            ...mkMod('Damage', 'INC', val, src, ModFlag.Spell),
+            tags: [{ type: 'SkillType', skillType: 'Triggered' }],
+          },
+        ];
+      }
+      if (subject === 'herald skills') {
+        return [
+          {
+            ...mkMod('Damage', 'INC', val, src),
+            tags: [{ type: 'SkillType', skillType: 'Herald' }],
+          },
+        ];
+      }
+      const comp = parseModCompositional(m[0]!, src);
+      if (comp.length > 0) return comp;
+      if (subject === 'attack skills') {
+        return [mkMod('Damage', 'INC', val, src, ModFlag.Attack)];
+      }
+      if (subject === 'projectiles') {
+        return [mkMod('Damage', 'INC', val, src, ModFlag.Projectile)];
+      }
       const flags = subject.includes('attack')
         ? ModFlag.Attack
         : subject.includes('spell')
@@ -1281,7 +1577,7 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
           : subject.includes('projectile')
             ? ModFlag.Projectile
             : 0;
-      return [mkMod('ConditionalDamage', 'INC', Number(m[2]), src, flags)];
+      return [mkMod('ConditionalDamage', 'INC', val, src, flags)];
     },
   },
   {
@@ -1451,7 +1747,14 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
   },
   {
     pattern: /^(\d+)% chance to Gain Arcane Surge when you deal a Critical Hit$/i,
-    build: (m, src) => [mkMod('ArcaneSurgeOnCritChance', 'BASE', Number(m[1]), src)],
+    build: (m, src) => [
+      mkMod('ArcaneSurgeOnCritChance', 'BASE', Number(m[1]), src),
+      mkMod('Condition:ArcaneSurge', 'FLAG', true, src),
+    ],
+  },
+  {
+    pattern: /^(?:Gain Arcane Surge (?:on Critical Hit|when you (?:deal a Critical Hit|spend .+|Shapeshift .+))|You have Arcane Surge)$/i,
+    build: (_, src) => [mkMod('Condition:ArcaneSurge', 'FLAG', true, src)],
   },
   {
     pattern: /^(\d+)% Surpassing Chance to gain a Puppet Master stack whenever you use a Command Skill$/i,
@@ -1475,8 +1778,439 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
   },
 
   // =========================================================================
+  // 4b. Wave 4J PoE 2 Mechanics (Random Element Gain, Exposure, Reality Rending,
+  //     Point Blank, Lucky Hits, Heavy Stun, Shield Scaling, Leopold, Warcry Empower)
+  // =========================================================================
+
+  // Turning of the Seasons (Tree:62523), Node:7197, Hidden Forms (Tree:479):
+  // CalcOffence.lua:1337-1348 splits DamageGainAsRandom evenly (1/3 each) in AVERAGE mode.
+  {
+    pattern: /^Gain (\d+(?:\.\d+)?)% of (?:(Physical) )?Damage as Extra Damage of a [Rr]andom Element( while Shapeshifted)?$/i,
+    build: (m, src) => {
+      const perEle = Number(m[1]) / 3;
+      const prefix = m[2] ? 'PhysicalDamageGainAs' : 'DamageGainAs';
+      const tags = m[3] ? [{ type: 'Condition' as const, var: 'Shapeshifted' }] : undefined;
+      return (['Fire', 'Cold', 'Lightning'] as const).map((el) => ({
+        name: `${prefix}${el}`,
+        type: 'BASE' as const,
+        value: perEle,
+        flags: 0,
+        keywordFlags: 0,
+        source: src,
+        ...(tags ? { tags } : {}),
+      }));
+    },
+  },
+  // Turning of the Seasons (Tree:62523): "Enemies in your Presence have Exposure" (20% base Exposure)
+  {
+    pattern: /^Enemies in your Presence have Exposure$/i,
+    build: (_, src) =>
+      (['Fire', 'Cold', 'Lightning'] as const).map((el) => ({
+        name: `${el}Exposure`,
+        type: 'BASE' as const,
+        value: 20,
+        flags: 0,
+        keywordFlags: 0,
+        source: src,
+        target: 'enemy' as const,
+      })),
+  },
+  {
+    pattern: /^(?:Hits )?Inflict (Fire|Cold|Lightning|Elemental) Exposure(?: on Hit)?$/i,
+    build: (m, src) => {
+      const kind = m[1]!.toLowerCase();
+      const elems =
+        kind === 'elemental'
+          ? (['Fire', 'Cold', 'Lightning'] as const)
+          : ([m[1]!.charAt(0).toUpperCase() + m[1]!.slice(1).toLowerCase()] as const);
+      return elems.map((el) => ({
+        name: `${el}Exposure`,
+        type: 'BASE' as const,
+        value: 20,
+        flags: 0,
+        keywordFlags: 0,
+        source: src,
+        target: 'enemy' as const,
+      }));
+    },
+  },
+  // Acolyte of Chayula Reality Rending (Tree:25781): weighted expected Extra Damage
+  {
+    pattern: /^(\d+(?:\.\d+)?)% chance to Gain (\d+(?:\.\d+)?)% of (?:(Physical|Fire|Cold|Lightning|Elemental) )?Damage(?: with Hits)? as Extra (Fire|Cold|Lightning|Chaos|Physical) Damage$/i,
+    build: (m, src) => {
+      const expectedPct = (Number(m[1]) / 100) * Number(m[2]);
+      const fromType = m[3] ? `${m[3].charAt(0).toUpperCase()}${m[3].slice(1).toLowerCase()}` : '';
+      const toType = `${m[4]!.charAt(0).toUpperCase()}${m[4]!.slice(1).toLowerCase()}`;
+      return [mkMod(`${fromType}DamageGainAs${toType}`, 'BASE', expectedPct, src)];
+    },
+  },
+  // Dimensional Weakspot (Tree:2344): fractional elemental resistance inversion chance (CalcOffence.lua:4362)
+  {
+    pattern: /^Hits have (\d+(?:\.\d+)?)% chance to treat Enemy Monster Elemental Resistance values as inverted$/i,
+    build: (m, src) => [mkMod('HitsInvertEleResChance', 'BASE', Number(m[1]), src, ModFlag.Hit)],
+  },
+  // Repeating Explosives (Tree:65468): CalcOffence.lua:1281-1284
+  {
+    pattern: /^Grenades have (\d+)% chance to activate a second time$/i,
+    build: (m, src) => [mkMod('GrenadeActivateTwice', 'BASE', Number(m[1]), src)],
+  },
+  // PoE 2 Point Blank (Tree:41875): 20% more Hit damage up to 3.5m, scaling to 0% at 7m
+  // Emit both the exact DistanceRamp MORE mod and semantic PointBlank FLAG (engine.ts dedupes via alreadyHasPbRamp)
+  {
+    pattern: /^Projectiles deal (\d+)% more Hit [Dd]amage to targets in the first 3\.5 metres(?: of their movement(?:, scaling down with distance travelled to reach 0% after 7 metres)?)?$/i,
+    build: (m, src) => [
+      mkMod('PointBlank', 'FLAG', true, src),
+      {
+        name: 'Damage',
+        type: 'MORE',
+        value: Number(m[1]),
+        flags: ModFlag.Projectile | ModFlag.Hit,
+        keywordFlags: 0,
+        source: src,
+        tags: [{ type: 'Condition', var: 'DistanceRamp:35:1,70:0' }],
+      },
+    ],
+  },
+  // Wild Storm (15%) / Pure Power (10%) / Heft / Ryslatha's Coil: more/less Max/Min <Type> Damage
+  {
+    pattern: /^(\d+)% (more|less) (Maximum|Minimum) (Physical|Fire|Cold|Lightning|Chaos) (?:(Attack) )?Damage$/i,
+    build: (m, src) => {
+      const val = m[2]!.toLowerCase() === 'less' ? -Number(m[1]) : Number(m[1]);
+      const bound = m[3]!.toLowerCase() === 'maximum' ? 'Max' : 'Min';
+      const dt = `${m[4]!.charAt(0).toUpperCase()}${m[4]!.slice(1).toLowerCase()}`;
+      const flags = m[5] ? ModFlag.Attack : 0;
+      return [mkMod(`${dt}${bound}Damage`, 'MORE', val, src, flags)];
+    },
+  },
+  // Heart of the Well / Lucky Hit chance (ModParser.lua:4336)
+  {
+    pattern: /^(\d+)% chance for (?:(Lightning|Fire|Cold|Elemental|Physical|Chaos) )?Damage with Hits to be Lucky$/i,
+    build: (m, src) => {
+      const prefix = m[2] ? `${m[2].charAt(0).toUpperCase()}${m[2].slice(1).toLowerCase()}` : '';
+      return [mkMod(`${prefix}LuckyHitsChance`, 'BASE', Number(m[1]), src, ModFlag.Hit)];
+    },
+  },
+  // Skullcrusher (Tree:2645): "20% more Damage against Heavy Stunned Enemies with Maces"
+  {
+    pattern: /^(\d+)% (more|less|increased|reduced) Damage against Heavy Stunned Enemies with (Two Handed Weapons|One Handed Weapons|Quarterstaves|Spears|Crossbows|Bows|Maces|Flails|Staves|Wands|Swords|Axes|Daggers|Claws)$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      return [
+        {
+          name: 'Damage',
+          type,
+          value,
+          flags: weaponToFlag(m[3]!),
+          keywordFlags: 0,
+          source: src,
+          tags: [{ type: 'Condition', var: 'EnemyHeavyStunned' }],
+        },
+      ];
+    },
+  },
+  // Greatest Defence (Tree:27687): "4% increased Attack Damage per 75 Item Armour and Evasion Rating on Equipped Shield"
+  {
+    pattern: /^(\d+)% increased Attack Damage per (\d+) (?:Item )?Armour (?:and|or) Evasion(?: Rating)? on (?:Equipped )?Shield$/i,
+    build: (m, src) => [
+      {
+        name: 'Damage',
+        type: 'INC',
+        value: Number(m[1]),
+        flags: ModFlag.Attack,
+        keywordFlags: 0,
+        source: src,
+        tags: [{ type: 'PerStat', stat: 'ShieldArmourAndEvasion', div: Number(m[2]) }],
+      },
+    ],
+  },
+  // Warcries Empower an additional Attack (ModParser.lua:5692-5693)
+  {
+    pattern: /^Warcries Empower (an|\d+) additional Attacks?$/i,
+    build: (m, src) => {
+      const n = m[1]!.toLowerCase() === 'an' ? 1 : Number(m[1]);
+      return [
+        mkMod('WarcryExtraEmpowers', 'BASE', n, src),
+        mkMod('ExtraEmpoweredAttacks', 'BASE', n, src),
+      ];
+    },
+  },
+  // Leopold's Applause (ModParser.lua:3691)
+  {
+    pattern: /^(?:Your Hits|Elemental Penetration|Elemental Damage with Hits) can Penetrate (?:Elemental )?Resistances down to (?:a minimum of )?(-?\d+)%$/i,
+    build: (m, src) => [
+      mkMod('ElementalPenetrationMinimum', 'OVERRIDE', -Math.abs(Number(m[1])), src),
+    ],
+  },
+  // Spear projectile distance notable: "40% increased Projectile Damage with Spears while there are no Enemies within 3m"
+  {
+    pattern: /^(\d+)% (increased|reduced) Projectile Damage with Spears while there are no Enemies within (\d+(?:\.\d+)?)m$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      return [
+        {
+          name: 'Damage',
+          type,
+          value,
+          flags: ModFlag.Attack | ModFlag.Projectile,
+          keywordFlags: 0,
+          source: src,
+          tags: [{ type: 'Condition', var: `EnemyDistanceGt:${Math.round(Number(m[3]) * 10)}` }],
+        },
+      ];
+    },
+  },
+
+  // =========================================================================
+  // 4c. Wave 4M PoE 2 Mechanics (Block Scaling, Elemental Ailment Multipliers,
+  //     Mystical Rage, Full Salvo, Marked/Incision, PoisonStacksMax, Implants)
+  // =========================================================================
+
+  // Lay Siege (Tree:45599) & Offensive Stance (Tree:10681): "1% increased Damage per 1% Chance to Block"
+  {
+    pattern: /^(\d+)% (increased|reduced) (?:(Attack|Spell|Melee|Projectile|Physical|Elemental|Fire|Cold|Lightning|Chaos) )?Damage per (\d+)% Chance to Block$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      const scope = (m[3] ?? '').toLowerCase();
+      const flags =
+        scope === 'attack'
+          ? ModFlag.Attack
+          : scope === 'spell'
+            ? ModFlag.Spell
+            : scope === 'melee'
+              ? ModFlag.Melee
+              : scope === 'projectile'
+                ? ModFlag.Projectile
+                : 0;
+      const statName =
+        scope === 'physical' ||
+        scope === 'elemental' ||
+        scope === 'fire' ||
+        scope === 'cold' ||
+        scope === 'lightning' ||
+        scope === 'chaos'
+          ? `${scope.charAt(0).toUpperCase()}${scope.slice(1)}Damage`
+          : 'Damage';
+      return [
+        {
+          ...mkMod(statName, type, value, src, flags),
+          tags: [{ type: 'PerStat', stat: 'BlockChance', div: Number(m[4]) }],
+        },
+      ];
+    },
+  },
+  // Harness the Elements (Tree:12611) & Stormbreaker (Tree:43139)
+  {
+    pattern: /^(\d+)% (increased|reduced) (?:(Elemental) )?Damage(?: with Hits(?: and Ailments)?)? for each type of Elemental Ailment on (?:the )?Enemy$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      const statName = m[3] ? 'ElementalDamage' : 'Damage';
+      return [
+        {
+          ...mkMod(statName, type, value, src),
+          tags: [{ type: 'Multiplier', var: 'EnemyElementalAilmentCount' }],
+        },
+      ];
+    },
+  },
+  // Mystical Rage (Tree:52764): "Every Rage also grants 2% increased Spell Damage"
+  {
+    pattern: /^Every Rage also grants (\d+)% increased Spell Damage$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'INC', Number(m[1]), src, ModFlag.Spell),
+        tags: [{ type: 'Multiplier', var: 'Rage' }],
+      },
+    ],
+  },
+  // Full Salvo (Tree:33887): "25% increased Damage with Crossbows for each type of Ammunition fired in the past 10 seconds"
+  {
+    pattern: /^(\d+)% (increased|reduced) Damage with Crossbows for each type of Ammunition fired in the past \d+ seconds$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      return [
+        {
+          ...mkMod('Damage', type, value, src, ModFlag.Crossbow),
+          tags: [{ type: 'Multiplier', var: 'DifferentAmmoFired' }],
+        },
+      ];
+    },
+  },
+  // Demolitionist (Tree:38570): "Gain 4% of Damage as Extra Fire Damage for every different Grenade fired in the past 8 seconds"
+  {
+    pattern: /^Gain (\d+(?:\.\d+)?)% of (?:(Physical) )?Damage as Extra (Fire|Cold|Lightning|Chaos) Damage for every different Grenade fired in the past \d+ seconds$/i,
+    build: (m, src) => {
+      const prefix = m[2] ? 'PhysicalDamageGainAs' : 'DamageGainAs';
+      const el = `${m[3]!.charAt(0).toUpperCase()}${m[3]!.slice(1).toLowerCase()}`;
+      return [
+        {
+          ...mkMod(`${prefix}${el}`, 'BASE', Number(m[1]), src),
+          tags: [{ type: 'Multiplier', var: 'DifferentGrenadeFired' }],
+        },
+      ];
+    },
+  },
+  // Escalating Mayhem (Tree:42032): "10% increased Damage for each Hazard triggered Recently, up to 50%"
+  {
+    pattern: /^(\d+)% increased Damage for each Hazard triggered Recently,\s*up to (\d+)%$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'INC', Number(m[1]), src),
+        tags: [
+          {
+            type: 'Multiplier',
+            var: 'HazardTriggeredRecently',
+            limit: Number(m[2]),
+            limitTotal: true,
+          } as unknown as ModTag,
+        ],
+      },
+    ],
+  },
+  // Marked for Sickness (Tree:63830): "Enemies you Mark take 10% increased Damage"
+  {
+    pattern: /^Enemies you Mark take (\d+)% increased Damage$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('DamageTaken', 'INC', Number(m[1]), src),
+        target: 'enemy',
+        tags: [{ type: 'Condition', var: 'Marked|EnemyMarked' }],
+      },
+    ],
+  },
+  // Thousand Cuts (Tree:42714): "Enemies you apply Incision to take 2% increased Physical Damage per Incision"
+  {
+    pattern: /^Enemies you apply Incision to take (\d+)% increased Physical Damage per Incision$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('PhysicalDamageTaken', 'INC', Number(m[1]), src),
+        target: 'enemy',
+        tags: [{ type: 'Multiplier', var: 'IncisionStack' }],
+      },
+    ],
+  },
+  // Ancestral Unity (Tree:62609): "Attacks used by Totems have 4% increased Attack Speed per Summoned Totem"
+  {
+    pattern: /^Attacks used by Totems have (\d+)% increased Attack Speed per Summoned Totem$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Speed', 'INC', Number(m[1]), src, ModFlag.Attack, KeywordFlag.Totem),
+        tags: [{ type: 'Multiplier', var: 'ActiveTotem' }],
+      },
+    ],
+  },
+  // Molten Carapace (Tree:51868): "+2% to Maximum Fire Resistance while Ignited"
+  {
+    pattern: /^\+(\d+)% to Maximum (Fire|Cold|Lightning|Chaos) Resistance while Ignited$/i,
+    build: (m, src) => [
+      {
+        ...mkMod(`${m[2]}ResistMax`, 'BASE', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: 'Ignited' }],
+      },
+    ],
+  },
+  // Flurry / Unarmed Area: "20% increased Area of Effect while Unarmed"
+  {
+    pattern: /^(\d+)% (increased|reduced) Area of Effect while Unarmed$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      return [
+        {
+          ...mkMod('AreaOfEffect', type, value, src),
+          tags: [{ type: 'Condition', var: 'Unarmed' }],
+        },
+      ];
+    },
+  },
+  // PoisonStacksMax additional PoE 2 phrasings (Overwhelming Toxicity / Stacking Toxins / Building Toxins also handled by modParser.ts)
+  {
+    pattern: /^\+(\d+) to Maximum (?:number of )?Poisons?(?: you can inflict)?(?: on an Enemy)?$/i,
+    build: (m, src) => [
+      mkMod('PoisonCanStack', 'FLAG', true, src),
+      mkMod('PoisonStacksMax', 'BASE', Number(m[1]), src),
+    ],
+  },
+  {
+    pattern: /^Double Maximum Poison Stacks$/i,
+    build: (_, src) => [
+      mkMod('PoisonCanStack', 'FLAG', true, src),
+      mkMod('PoisonStacksMax', 'MORE', 100, src),
+    ],
+  },
+
+  // =========================================================================
+  // 4d. Wave 4N PoE 2 Mechanics (ElementalGainAs, Esh's Radiance, Price of Power,
+  //     Bestial Rage, Yoke of Suffering, Foe Song)
+  // =========================================================================
+
+  // Glaciation (Tree:41972), Wands/Focuses/Staves: "Gain X% of Elemental Damage as Extra Fire/Cold/Lightning/Chaos Damage"
+  {
+    pattern: /^Gain (\d+(?:\.\d+)?)% of Elemental Damage as Extra (Fire|Cold|Lightning|Chaos) Damage$/i,
+    build: (m, src) => {
+      const dest = `${m[2]!.charAt(0).toUpperCase()}${m[2]!.slice(1).toLowerCase()}`;
+      return [mkMod(`ElementalDamageGainAs${dest}`, 'BASE', Number(m[1]), src)];
+    },
+  },
+  // Esh's Radiance & single-element extra gain: "Gain X% of Lightning/Fire/Cold Damage as Extra Chaos/..."
+  {
+    pattern: /^Gain (\d+(?:\.\d+)?)% of (Fire|Cold|Lightning) Damage as Extra (Fire|Cold|Lightning|Chaos|Physical) Damage$/i,
+    build: (m, src) => {
+      const from = `${m[2]!.charAt(0).toUpperCase()}${m[2]!.slice(1).toLowerCase()}`;
+      const to = `${m[3]!.charAt(0).toUpperCase()}${m[3]!.slice(1).toLowerCase()}`;
+      return [mkMod(`${from}DamageGainAs${to}`, 'BASE', Number(m[1]), src)];
+    },
+  },
+  // Price of Power (Tree:2516): "Spells consume a Power Charge if able to deal 40% more Damage"
+  {
+    pattern: /^Spells consume a Power Charge if able to deal (\d+)% more Damage$/i,
+    build: (m, src) => [mkMod('PriceOfPowerSpellMore', 'BASE', Number(m[1]), src)],
+  },
+  // Bestial Rage (Tree:10873): "Every 10 Rage also grants 12% increased Physical Damage"
+  {
+    pattern: /^Every (\d+) Rage also grants (\d+)% increased (?:(Physical|Fire|Cold|Lightning|Chaos|Elemental|Attack|Spell) )?Damage$/i,
+    build: (m, src) => {
+      const div = Number(m[1]);
+      const val = Number(m[2]);
+      const scope = (m[3] ?? '').toLowerCase();
+      const flags =
+        scope === 'attack' ? ModFlag.Attack : scope === 'spell' ? ModFlag.Spell : 0;
+      const statName =
+        scope === 'physical' ||
+        scope === 'fire' ||
+        scope === 'cold' ||
+        scope === 'lightning' ||
+        scope === 'chaos' ||
+        scope === 'elemental'
+          ? `${scope.charAt(0).toUpperCase()}${scope.slice(1)}Damage`
+          : 'Damage';
+      return [
+        {
+          ...mkMod(statName, 'INC', val, src, flags),
+          tags: [{ type: 'PerStat', stat: 'Rage', div }],
+        },
+      ];
+    },
+  },
+  // Yoke of Suffering / PoE 2 phrasing: "Enemies take X% increased Damage for each type of Ailment you have inflicted on them"
+  {
+    pattern: /^Enemies take (\d+)% increased Damage for each type of (?:Elemental )?Ailment (?:you have inflicted on|affecting|on) them$/i,
+    build: (m, src) => [
+      { ...mkMod('EnemyDamageTakenPerAilmentType', 'BASE', Number(m[1]), src), target: 'player' },
+    ],
+  },
+  // Foe Song / Fire-transform unique/desecrated staff modifier
+  {
+    pattern: /^Transforms all Cold and Lightning modifiers on (?:this|the) item into equivalent Fire modifiers$/i,
+    build: (_, src) => [mkMod('ItemTransformsColdLightToFire', 'FLAG', true, src)],
+  },
+
+  // =========================================================================
   // 5. PoE 2 Skill-Specific & Tag Gem Level Scaling (+X to Level of all <SkillName|Nova|...> Skills)
   // =========================================================================
+  // Bolstering / Motoric / Neurological Implants (Tree:32952 / 63259 / 37397)
+  {
+    pattern: /^\+(\d+) to Level of all Skills with an? (Strength|Dexterity|Intelligence) requirement$/i,
+    build: (m, src) => [mkMod(`GemLevel:${m[2]!.toLowerCase()}`, 'BASE', Number(m[1]), src)],
+  },
   {
     pattern: /^\+(\d+) to Level of all ([A-Za-z][A-Za-z' -]*?) (?:Skill Gems?|Skills?)$/i,
     build: (m, src) => {

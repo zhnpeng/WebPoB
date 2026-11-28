@@ -21,6 +21,8 @@ import {
   computeSkillInstanceCountMultiplier,
   evaluatePersistentBuffAndStanceSkills,
   getPoe1MonsterLife,
+  getPoe1SpellTotemLevel,
+  getPoe1TotemBaseLife,
   resolveActiveSkillPartAndStats,
   resolveEffectiveWeaponSetForSkill,
   resolvePoe2MetaGemGroup,
@@ -305,7 +307,8 @@ describe('multiPartAndMetaRuntime', () => {
     expect(res.metaGem?.gemId).toBe(cocMeta.id);
     expect(res.payloadActives).toHaveLength(1);
     expect(res.payloadActives[0]!.def.name.en).toBe('Comet');
-    expect(res.estimatedTriggerRate).toBeGreaterThan(1);
+    // Official PoB 2 does not inject a synthetic energy trigger rate override for Cast on Critical
+    expect(res.estimatedTriggerRate).toBe(0);
 
     // Non-meta group returns isMetaGroup: false
     const normalGroup = makeGroup({ gems: [makeGemInst({ gemId: comet.id })] });
@@ -358,12 +361,207 @@ describe('multiPartAndMetaRuntime', () => {
     // Withering Presence: 8 stacks * 5% = 40% increased Chaos Damage Taken on enemyDb
     expect(evalRes.witheredStacksApplied).toBe(8);
     expect(enemyDb.sum('INC', 'ChaosDamageTaken')).toBe(40);
-    // Berserk adds RageEffect INC and extra Attack MORE damage from 30 active Rage
-    expect(playerDb.sum('INC', 'RageEffect')).toBe(58);
-    expect(playerDb.more('Damage', ModFlag.Attack)).toBeGreaterThan(1.1);
-    // Trinity adds ElementalDamage MORE and Fire/Cold/Lightning penetration
-    expect(playerDb.more('ElementalDamage')).toBeGreaterThan(1.3);
-    expect(playerDb.sum('BASE', 'LightningPenetration')).toBeGreaterThanOrEqual(15);
+    // Berserk (Lv20/Q0) emits official PoB 2 RageEffect INC (59%) cleanly without double-applying Damage MORE
+    expect(playerDb.sum('INC', 'RageEffect')).toBe(59);
+    expect(playerDb.getEvalContext().conditions.Berserk).toBe(true);
+    // PoE 2 Trinity Lv20 default (300 resonance = 10 stacks * 6% = 60% MORE Ele) and 0% Elemental Penetration
+    expect(playerDb.more('ElementalDamage')).toBeCloseTo(1.6, 2);
+    expect(playerDb.sum('BASE', 'LightningPenetration')).toBe(0);
+    expect(playerDb.sum('BASE', 'ElementalPenetration')).toBe(0);
+  });
+
+  it('scales PoE 2 Trinity accurately for both pre-divided stacks (1..10 from engine.ts) and raw resonance (0..300) + Q20 speed', () => {
+    const triDef = makeGemDef({
+      id: 'poe2_trinity',
+      en: 'Trinity',
+      game: 'poe2',
+      isAuraOrBuff: true,
+      compiledMods: [
+        { name: 'ElementalDamage', type: 'MORE', value: 6, flags: 0, keywordFlags: 0 },
+      ],
+      levelScaling: {
+        18: {
+          compiledMods: [
+            { name: 'ElementalDamage', type: 'MORE', value: 5, flags: 0, keywordFlags: 0 },
+          ],
+        },
+      },
+    });
+    const defs = new Map<string, GemDefinition>([[triDef.id, triDef]]);
+
+    // Case 1: engine.ts pre-divided stacks = 6 (180 Resonance) at Lv20 (per30 = 6) -> +36% MORE Ele, no Q20 speed (<250)
+    const db1 = new ModDB();
+    db1.setMultiplier('ResonanceCount', 6);
+    evaluatePersistentBuffAndStanceSkills(
+      [makeGroup({ id: 'g1', gems: [makeGemInst({ gemId: triDef.id, level: 20, quality: 20 })] })],
+      1,
+      'poe2',
+      db1,
+      new ModDB(),
+      (id) => defs.get(id),
+    );
+    expect(db1.more('ElementalDamage')).toBeCloseTo(1.36, 4);
+    expect(db1.sum('INC', 'Speed', ModFlag.Attack)).toBe(0);
+
+    // Case 2: engine.ts pre-divided stacks = 10 (300 Resonance) at Lv18 (per30 = 5) -> +50% MORE Ele + Q20 +15% Speed
+    const db2 = new ModDB();
+    db2.setMultiplier('ResonanceCount', 10);
+    evaluatePersistentBuffAndStanceSkills(
+      [makeGroup({ id: 'g2', gems: [makeGemInst({ gemId: triDef.id, level: 18, quality: 20 })] })],
+      1,
+      'poe2',
+      db2,
+      new ModDB(),
+      (id) => defs.get(id),
+    );
+    expect(db2.more('ElementalDamage')).toBeCloseTo(1.5, 4);
+    expect(db2.sum('INC', 'Speed', ModFlag.Attack)).toBe(15);
+    expect(db2.sum('INC', 'Speed', ModFlag.Spell)).toBe(15);
+  });
+
+  it('computes PoE 1 Bodyswap Spell Totem Self Explosion from exact PoB 1 totem life table when totemMaxLife is omitted', () => {
+    expect(getPoe1SpellTotemLevel(20)).toBe(70);
+    expect(getPoe1SpellTotemLevel(34)).toBe(94);
+    expect(getPoe1TotemBaseLife(70, 1)).toBe(1478);
+    expect(getPoe1TotemBaseLife(94, 1)).toBe(5116);
+
+    const bodyswap = makeGemDef({
+      id: 'poe1_bodyswap',
+      en: 'Bodyswap',
+      game: 'poe1',
+      modFlags: ModFlag.Spell | ModFlag.Area,
+      baseDamage: { Fire: [100, 150] },
+      skillData: { selfFireExplosionLifeMultiplier: 0.06 },
+    });
+    const inst = makeGemInst({ gemId: bodyswap.id, level: 22, quality: 54 });
+    const grp = makeGroup({ gems: [inst] });
+
+    // Lv34 Spell Totem (base 5116) with +110% Totem Life INC -> 10,744 TotemLife (vs 5,394 PlayerLife)
+    // Self explosion % = 6% + floor(54 * 0.3)% = 6% + 16% = 22% -> round(10744 * 0.22) = 2364 flat Fire
+    const res = resolveActiveSkillPartAndStats(bodyswap, inst, grp, 22, {
+      game: 'poe1',
+      isTotem: true,
+      playerMaxLife: 5394,
+      totemSkillLevel: 34,
+      totemLifeIncPct: 110,
+      effectiveQuality: 54,
+    });
+    expect(res.corpseLife).toBe(10744);
+    expect(res.corpseExplosionPct).toBeCloseTo(0.22, 6);
+    expect(res.baseDamage.Fire).toEqual([100 + 2364, 150 + 2364]);
+  });
+
+  it('deduplicates PoE 2 Trinity across socket groups, scales Withering Presence by WitherEffect, and applies Berserk quality', () => {
+    const defs = new Map<string, GemDefinition>([
+      ['wp', makeGemDef({ id: 'wp', en: 'Withering Presence', game: 'poe2', isAuraOrBuff: true })],
+      ['bsk', makeGemDef({ id: 'bsk', en: 'Berserk', game: 'poe2', isAuraOrBuff: true })],
+      ['tri', makeGemDef({ id: 'tri', en: 'Trinity', game: 'poe2', isAuraOrBuff: true })],
+    ]);
+
+    const playerDb = new ModDB();
+    playerDb.setMultiplier('ResonanceCount', 300);
+    playerDb.addMod({
+      name: 'WitherEffect',
+      type: 'INC',
+      value: 60,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Tree: Withered Effect',
+    });
+    const enemyDb = new ModDB();
+
+    const skills: SkillGroup[] = [
+      makeGroup({ id: 'g1', gems: [makeGemInst({ gemId: 'tri', level: 18, quality: 20 })] }),
+      makeGroup({ id: 'g2', gems: [makeGemInst({ gemId: 'tri', level: 18, quality: 20 })] }),
+      makeGroup({ id: 'g3', gems: [makeGemInst({ gemId: 'wp', level: 19, count: 10 })] }),
+      makeGroup({ id: 'g4', gems: [makeGemInst({ gemId: 'bsk', level: 20, quality: 20 })] }),
+    ];
+
+    const evalRes = evaluatePersistentBuffAndStanceSkills(
+      skills,
+      1,
+      'poe2',
+      playerDb,
+      enemyDb,
+      (id) => defs.get(id),
+    );
+
+    // Trinity applied ONCE: Lv18 per30=5, floor(300/30)*5 = 50% MORE Ele, 0% Pen, Q20 = 15% INC speed
+    expect(evalRes.appliedSkills.filter((s) => s === 'Trinity')).toHaveLength(1);
+    expect(playerDb.more('ElementalDamage')).toBeCloseTo(1.5, 4);
+    expect(playerDb.sum('BASE', 'FirePenetration')).toBe(0);
+    expect(playerDb.sum('INC', 'Speed', ModFlag.Attack)).toBe(15);
+
+    // Withering Presence: 10 stacks * floor(5 * 1.6) = 80% Chaos Damage Taken
+    expect(enemyDb.sum('INC', 'ChaosDamageTaken')).toBe(80);
+
+    // Berserk Lv20/Q20: 59% + floor(20 * 0.5) = 69% RageEffect INC
+    expect(playerDb.sum('INC', 'RageEffect')).toBe(69);
+  });
+
+  it('routes PoE 2 Spell Totem meta wrapper supports onto payload spell with -25% less cast speed and zero trigger rate override', () => {
+    const spellTotem = makeGemDef({
+      id: 'poe2_metaspelltotem',
+      en: 'Spell Totem',
+      game: 'poe2',
+      tags: ['Meta', 'Spell', 'Totem'],
+      altIds: ['SupportMetaTotemSpellTotemPlayer', 'SummonMetaTotemSpellTotemPlayer'],
+    });
+    const grimPillars = makeGemDef({
+      id: 'poe2_grimpillars',
+      en: 'Grim Pillars',
+      game: 'poe2',
+      tags: ['Spell', 'Cold', 'Area'],
+      castTime: 0.7,
+    });
+    const urgentTotems = makeGemDef({
+      id: 'poe2_urgenttotemssupportthree',
+      en: 'Urgent Totems III',
+      game: 'poe2',
+      category: 'support',
+      tags: ['Support', 'Totem'],
+    });
+    const execute3 = makeGemDef({
+      id: 'poe2_executesupportthree',
+      en: 'Execute III',
+      game: 'poe2',
+      category: 'support',
+      tags: ['Support'],
+    });
+
+    const lookup = new Map<string, GemDefinition>([
+      [spellTotem.id, spellTotem],
+      [grimPillars.id, grimPillars],
+      [urgentTotems.id, urgentTotems],
+      [execute3.id, execute3],
+    ]);
+
+    const group = makeGroup({
+      gems: [
+        makeGemInst({ gemId: spellTotem.id, level: 19 }),
+        makeGemInst({ gemId: grimPillars.id, level: 18, quality: 20 }),
+        makeGemInst({ gemId: urgentTotems.id, level: 1 }),
+        makeGemInst({ gemId: execute3.id, level: 1 }),
+      ],
+    });
+
+    const res = resolvePoe2MetaGemGroup(group, (id) => lookup.get(id));
+    expect(res.isMetaGroup).toBe(true);
+    expect(res.isSpellTotemMeta).toBe(true);
+    expect(res.estimatedTriggerRate).toBe(0);
+    expect(res.payloadActives.map((p) => p.def.id)).toEqual(['poe2_grimpillars']);
+    expect(res.routedSupports?.map((s) => s.def.id)).toEqual([
+      'poe2_urgenttotemssupportthree',
+      'poe2_executesupportthree',
+    ]);
+    expect(res.metaSupportMods).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'Speed', type: 'MORE', value: -25 }),
+        expect.objectContaining({ name: 'ActiveTotemLimit', type: 'OVERRIDE', value: 2 }),
+      ]),
+    );
+    expect(res.addedSkillTypes).toContain('Totem');
+    expect(res.addedSkillTypes).toContain('UsedByTotem');
   });
 
   it('evaluates PoE 1 Blood and Sand stance switching and Herald of Agony Virulence crawler scaling', () => {
@@ -558,5 +756,122 @@ describe('multiPartAndMetaRuntime', () => {
     // Clean up test registries
     registerTimelessJewelData('poe1', null);
     registerPoe2RunesData(null);
+  });
+
+  it('does NOT fabricate a 4x Frostbolts multiplier for partless Ice Nova of Frostbolts (poe1_icenovaaltx)', () => {
+    const iceNovaPartless = makeGemDef({
+      id: 'poe1_icenovaaltx',
+      en: 'Ice Nova of Frostbolts',
+      tags: ['Spell', 'Area', 'Cold'],
+      baseDamage: { Cold: [590, 885] },
+    });
+    const res = resolveActiveSkillPartAndStats(
+      iceNovaPartless,
+      makeGemInst({ gemId: iceNovaPartless.id }),
+      makeGroup(),
+      20,
+    );
+    expect(res.hitsPerUse).toBe(1);
+    expect(res.sequenceDamageMultiplier).toBe(1);
+  });
+
+  it('scales Earthquake of Amplification Aftershock multiplier with durationMultiplier and quality', () => {
+    const eqAmp = makeGemDef({
+      id: 'poe1_earthquakealtx',
+      en: 'Earthquake of Amplification',
+      tags: ['Attack', 'Melee', 'Area', 'Slam', 'Duration'],
+      modFlags: ModFlag.Attack | ModFlag.Melee | ModFlag.Area | ModFlag.Hit,
+      parts: [
+        { index: 1, name: 'Initial impact', attack: true, melee: true, area: true },
+        { index: 2, name: 'Aftershock', attack: true, melee: true, area: true, skillData: { duration: 2.0 } },
+      ],
+    });
+    const unscaled = resolveActiveSkillPartAndStats(
+      eqAmp,
+      makeGemInst({ gemId: eqAmp.id, skillPart: 2 }),
+      makeGroup(),
+      20,
+    );
+    expect(unscaled.sequenceDamageMultiplier).toBe(3.0); // 2.0s -> 200% more = 3.0x
+
+    const scaled = resolveActiveSkillPartAndStats(
+      eqAmp,
+      makeGemInst({ gemId: eqAmp.id, skillPart: 2 }),
+      makeGroup(),
+      20,
+      { durationMultiplier: 4.65 },
+    );
+    expect(scaled.sequenceDamageMultiplier).toBe(10.3); // 9.3s -> 930% more = 10.3x
+  });
+
+  it('computes PoE 1 Bodyswap Part 1 Self Explosion (player/totem life + quality) and Part 2 Corpse Explosion', () => {
+    const bodyswap = makeGemDef({
+      id: 'poe1_bodyswap',
+      en: 'Bodyswap',
+      tags: ['Spell', 'Area', 'Fire', 'Movement'],
+      baseDamage: { Fire: [210, 315] },
+      parts: [
+        {
+          index: 1,
+          name: 'Self Explosion',
+          spell: true,
+          area: true,
+          baseDamage: { Fire: [210, 315] },
+          skillData: { selfFireExplosionLifeMultiplier: 0.06, corpseExplosionLifeMultiplier: 0.079 },
+        },
+        {
+          index: 2,
+          name: 'Corpse Explosion',
+          spell: false,
+          area: true,
+          baseDamage: { Fire: [210, 315] },
+          skillData: { selfFireExplosionLifeMultiplier: 0.06, corpseExplosionLifeMultiplier: 0.079, explodeCorpse: true },
+        },
+      ],
+    });
+
+    // Self-cast Part 1 at 20% quality: 6% + floor(20 * 0.3)% = 12% of 5000 Life = +600 Fire
+    const selfRes = resolveActiveSkillPartAndStats(
+      bodyswap,
+      makeGemInst({ gemId: bodyswap.id, skillPart: 1, quality: 20 }),
+      makeGroup(),
+      20,
+      { playerMaxLife: 5000 },
+    );
+    expect(selfRes.corpseExplosionPct).toBeCloseTo(0.12, 4);
+    expect(selfRes.baseDamage.Fire).toEqual([810, 915]);
+    expect(selfRes.skillData.FireBonusMin).toBeCloseTo(600, 4);
+
+    // Self-cast Part 1 with Lv4 Enhance (44% effective quality): 6% + floor(44 * 0.3)% = 19% of 10000 Life = +1900 Fire
+    const enhanceRes = resolveActiveSkillPartAndStats(
+      bodyswap,
+      makeGemInst({ gemId: bodyswap.id, skillPart: 1, quality: 20 }),
+      makeGroup(),
+      21,
+      { playerMaxLife: 10000, effectiveQuality: 44 },
+    );
+    expect(enhanceRes.corpseExplosionPct).toBeCloseTo(0.19, 4);
+    expect(enhanceRes.baseDamage.Fire).toEqual([2110, 2215]);
+
+    // Spell Totem Part 1 uses totemMaxLife instead of playerMaxLife
+    const totemRes = resolveActiveSkillPartAndStats(
+      bodyswap,
+      makeGemInst({ gemId: bodyswap.id, skillPart: 1, quality: 20 }),
+      makeGroup(),
+      20,
+      { playerMaxLife: 4000, totemMaxLife: 15000, isTotem: true },
+    );
+    expect(totemRes.baseDamage.Fire).toEqual([210 + 1800, 315 + 1800]);
+
+    // Part 2 Corpse Explosion replaces base Fire with pure corpse explosion (no Part 1 spell base)
+    const corpseRes = resolveActiveSkillPartAndStats(
+      bodyswap,
+      makeGemInst({ gemId: bodyswap.id, skillPart: 2, quality: 20 }),
+      makeGroup(),
+      20,
+      { enemyLevel: 84 },
+    );
+    const expectedCorpse = Math.round(getPoe1MonsterLife(84) * 0.079);
+    expect(corpseRes.baseDamage.Fire).toEqual([expectedCorpse, expectedCorpse]);
   });
 });

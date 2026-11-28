@@ -792,3 +792,494 @@ describe('skillActorRuntime — 4. Authentic Ailments, Spell DoTs & Trigger Rate
     expect(dualSpell.effectiveTriggerRate).toBeCloseTo(10.101 / 2, 3);
   });
 });
+
+// ============================================================================
+// 5. PoB 1 & PoB 2 Ailment, Skill DoT, Actor Routing & Minion Parity Fixes
+// ============================================================================
+
+describe('skillActorRuntime — 5. PoB 1 & PoB 2 Ailment, Skill DoT, Routing & Minion Parity', () => {
+  it('keeps player-scoped Enemy* stats on playerDb and honors mod.target in splitModDBIntoActorBuses', () => {
+    const unified = new ModDB();
+    unified.addMod(mkMod('EnemyIgniteDuration', 'INC', 50));
+    unified.addMod(mkMod('EnemyAilmentDuration', 'INC', 54));
+    unified.addMod(mkMod('EnemyShockEffect', 'INC', 40));
+    unified.addMod(mkMod('EnemyCurseLimit', 'BASE', 1));
+    unified.addMod({ ...mkMod('EnemyDamageTakenPerAilmentType', 'INC', 10), target: 'player' } as Mod);
+    unified.addMod({ ...mkMod('DamageTakenConsecratedGround', 'INC', 15), target: 'enemy' } as Mod);
+    unified.addMod(mkMod('EnemyFireResist', 'BASE', -36));
+
+    const split = splitModDBIntoActorBuses(unified);
+    expect(split.playerDb.sum('INC', 'EnemyIgniteDuration')).toBe(50);
+    expect(split.playerDb.sum('INC', 'EnemyAilmentDuration')).toBe(54);
+    expect(split.playerDb.sum('INC', 'EnemyShockEffect')).toBe(40);
+    expect(split.playerDb.sum('BASE', 'EnemyCurseLimit')).toBe(1);
+    expect(split.playerDb.sum('INC', 'EnemyDamageTakenPerAilmentType')).toBe(10);
+    expect(split.enemyDb.sum('INC', 'DamageTakenConsecratedGround')).toBe(15);
+    expect(split.enemyDb.sum('BASE', 'FireResist')).toBe(-36);
+    expect(split.enemyDb.sum('INC', 'IgniteDuration')).toBe(0);
+    expect(split.enemyDb.sum('INC', 'AilmentDuration')).toBe(0);
+  });
+
+  it('expands multi-bit compiled gem keywordFlags (Deadly Ailments, Melee Physical Damage, Trap & Mine) and blocks melee/area hit double-dipping', () => {
+    const buses = createActorModBuses();
+    injectCompiledGemMods(
+      buses.playerDb,
+      buses.enemyDb,
+      buses.minionDb,
+      [
+        // Deadly Ailments (k = Ignite | Bleed | Poison = 917504)
+        { name: 'Damage', type: 'MORE', value: 44, keywordFlags: KeywordFlag.Ignite | KeywordFlag.Bleed | KeywordFlag.Poison },
+        // Melee Physical Damage: hit mod (f=Melee) + MeleeHit ailment mod (f=Melee|Hit, k=Bleed|Poison)
+        { name: 'PhysicalDamage', type: 'MORE', value: 49, flags: ModFlag.Melee },
+        {
+          name: 'Damage',
+          type: 'MORE',
+          value: 49,
+          flags: ModFlag.Melee | ModFlag.Hit,
+          keywordFlags: KeywordFlag.Bleed | KeywordFlag.Poison,
+        },
+        // Concentrated Effect (f=Area) — must NOT double-dip into Bleed!
+        { name: 'Damage', type: 'MORE', value: 39, flags: ModFlag.Area },
+        // Trap and Mine Damage (k = Trap | Mine = 6144)
+        { name: 'Damage', type: 'MORE', value: 49, keywordFlags: KeywordFlag.Trap | KeywordFlag.Mine },
+      ],
+      'Supports',
+    );
+    // Player mods routed via routeModToActorBuses:
+    // - "with Hits and Ailments" (Hit|Ailment) applies to BOTH
+    // - "+25% PhysicalDotMultiplier with Attack Skills" (Attack) applies to Attack bleed
+    // - "30% inc PhysicalDamage with Axes" (Attack|Axe) applies to Axe bleed
+    // - "100% inc Attack Damage" (bare Damage with Attack) must NOT double-dip into bleed!
+    routeModToActorBuses(buses, mkMod('Damage', 'INC', 50, ModFlag.Hit | ModFlag.Ailment));
+    routeModToActorBuses(buses, mkMod('PhysicalDotMultiplier', 'BASE', 25, ModFlag.Attack));
+    routeModToActorBuses(buses, mkMod('PhysicalDamage', 'INC', 30, ModFlag.Attack | ModFlag.Axe));
+    routeModToActorBuses(buses, mkMod('Damage', 'INC', 100, ModFlag.Attack));
+    buses.playerDb.addMod(mkMod('BleedChance', 'BASE', 100));
+
+    // Verify Trap and Mine Damage matches both Trap-only and Mine-only queries
+    expect(buses.playerDb.more('Damage', ModFlag.Spell | ModFlag.Hit, KeywordFlag.Trap)).toBeCloseTo(1.49, 4);
+    expect(buses.playerDb.more('Damage', ModFlag.Spell | ModFlag.Hit, KeywordFlag.Mine)).toBeCloseTo(1.49, 4);
+    // Verify "with Hits and Ailments" applies to Axe Hit
+    expect(buses.playerDb.sum('INC', 'Damage', ModFlag.Attack | ModFlag.Hit | ModFlag.Axe, KeywordFlag.Attack)).toBe(150);
+
+    const bleedRes = computeAuthenticAilmentAndSkillDots({
+      game: 'poe1',
+      skillDb: buses.playerDb,
+      enemyDb: buses.enemyDb,
+      baseDamageByType: { Physical: 1000 },
+      flags: ModFlag.Attack | ModFlag.Melee | ModFlag.Area | ModFlag.Axe | ModFlag.Hit,
+      keywordFlags: KeywordFlag.Attack | KeywordFlag.Hit,
+      speed: 2,
+    });
+
+    // Expected Bleed:
+    // base=1000, INC = 50% (Hits & Ailments) + 30% (Axe) = +80% (1.8x) — Attack 100% NOT included!
+    // MORE = 1.44 (Deadly Ailments) * 1.49 (MeleePhys ailment cmod) = 2.15 (rounded per-bucket by ModDB: round(1.44*1.49*100)/100 = 2.15)
+    // Conc Effect 1.39 & MeleePhys hit 1.49 NOT included!
+    // DotMulti = 1.25 (+25% with Attack Skills)
+    // 0.70 * 1000 * 1.80 * 2.15 * 1.25 = 3386.25
+    expect(bleedRes.bleed.totalDps).toBeCloseTo(3386.25, 1);
+  });
+
+  it('applies PoE 1 IgniteBurnFaster, Temporal Chains BuffExpireFaster, Eye of Malice resist INC, DamageTakenOverTime, EO, and Blackflame Burning Ground', () => {
+    const skillDb = new ModDB();
+    const enemyDb = new ModDB();
+    skillDb.addMod(mkMod('EnemyIgniteChance', 'BASE', 50));
+    skillDb.addMod(mkMod('IgniteBurnFaster', 'INC', 50)); // 1.5x faster
+    skillDb.addMod(mkMod('EnemyIgniteDuration', 'INC', 20)); // 1.2x duration
+    skillDb.addMod(mkMod('AilmentsAreNeverFromCrit', 'FLAG', true)); // Elemental Overload
+    skillDb.addMod(mkMod('AllDamageCanIgnite', 'FLAG', true));
+    skillDb.addMod(mkMod('IgniteToChaos', 'FLAG', true)); // Blackflame
+    skillDb.addMod(mkMod('IgniteDpsAsBurningGround', 'MAX', 30));
+
+    // Temporal Chains (-25% MORE BuffExpireFaster -> 1 / 0.75 = 1.3333x duration!)
+    enemyDb.addMod(mkMod('BuffExpireFaster', 'MORE', -25));
+    // Elemental Weakness (-30% ElementalResist) + Eye of Malice (+50% FireResist INC)
+    // Enemy base Fire res = 0 -> -30 * 1.5 = -45% (1.45x) for Burning Ground
+    enemyDb.addMod(mkMod('ElementalResist', 'BASE', -30));
+    enemyDb.addMod(mkMod('FireResist', 'INC', 50));
+    // Chaos res = 0, +20% DamageTakenOverTime + 10% ChaosDamageTakenOverTime -> 1.30x for Blackflame Ignite
+    enemyDb.addMod(mkMod('DamageTakenOverTime', 'INC', 20));
+    enemyDb.addMod(mkMod('ChaosDamageTakenOverTime', 'INC', 10));
+
+    const res = computeAuthenticAilmentAndSkillDots({
+      game: 'poe1',
+      skillDb,
+      enemyDb,
+      baseDamageByType: { Lightning: 500 },
+      baseDamageRangeByType: { Lightning: [100, 900] },
+      flags: ModFlag.Spell | ModFlag.Hit,
+      speed: 2,
+      critChancePct: 40, // EO disables crit-always-ignite and +50% crit DoT multi!
+      enemyConfig: { enemyFireResist: 0, enemyChaosResist: 0 },
+    });
+
+    // EO: chanceOnCrit == chanceOnHit == 50% (NOT 40% + 60%*50% = 70%!)
+    expect(res.ignite.effectiveChancePct).toBeCloseTo(50, 2);
+    // Duration = 4.0 * 1.2 / 1.5 / 0.75 = 4.2667s
+    expect(res.ignite.effectiveDurationSec).toBeCloseTo(4.27, 2);
+    expect(res.ignite.fasterMult).toBeCloseTo(1.5, 4);
+
+    // Stacks = 0.5 * 2 * 4.2667 = 4.2667 -> rollFrac = 4.2667 / 5.2667 = 0.81013
+    // Lightning base = 100 + (900 - 100) * 0.81013 = 748.10
+    // Pre-enemy Ignite DPS = 0.9 * 748.10 * 1.0 (EO no +50% crit multi!) * 1.5 = 1009.94
+    // Blackflame Ignite (Chaos): 1009.94 * 1.0 (0% chaos res) * 1.30 (DoT taken) = 1312.92
+    // Burning Ground (ALWAYS Fire mitigation!): 1009.94 * 1.45 (-45% Eye of Malice Fire res) * 1.20 (DoT taken) * 0.30 = 527.19
+    expect(res.ignite.totalDps).toBeCloseTo(1312.92, 0);
+    expect(res.burningGroundDps).toBeCloseTo(527.19, 0);
+
+    // Perfect Agony + Elemental Overload completely disables ailment infliction (CalcOffence.lua:4349-4352)
+    const paEoDb = skillDb.clone();
+    paEoDb.addMod(mkMod('PerfectAgony', 'FLAG', true));
+    const paEoRes = computeAuthenticAilmentAndSkillDots({
+      game: 'poe1',
+      skillDb: paEoDb,
+      enemyDb,
+      baseDamageByType: { Fire: 1000 },
+      flags: ModFlag.Spell | ModFlag.Hit,
+      speed: 2,
+      critChancePct: 50,
+    });
+    expect(paEoRes.ignite.totalDps).toBe(0);
+  });
+
+  it('applies PoE 1 Ryslatha/Volatility MinPhysicalDamage/MaxPhysicalDamage MORE, over-stack crit probability, AdditionalPoisonChance, and Temporal Chains', () => {
+    // Part A: Bleed with Volatility/Ryslatha canonical names + over-stack crit probability
+    const bleedDb = new ModDB();
+    bleedDb.addMod(mkMod('BleedChance', 'BASE', 100));
+    bleedDb.addMod(mkMod('MinPhysicalDamage', 'MORE', -50)); // 0.5x min
+    bleedDb.addMod(mkMod('MaxPhysicalDamage', 'MORE', 50)); // 1.5x max
+
+    const bleedRes = computeAuthenticAilmentAndSkillDots({
+      game: 'poe1',
+      skillDb: bleedDb,
+      enemyDb: new ModDB(),
+      baseDamageByType: { Physical: 500 },
+      baseDamageRangeByType: { Physical: [200, 800] },
+      flags: ModFlag.Attack | ModFlag.Melee | ModFlag.Hit,
+      speed: 2, // 2 APS * 5s = 10 stacks -> rollFrac = 10/11 = 0.90909
+      critChancePct: 50, // over-stack crit = 1 - 0.5^10 = 99.90% -> nearly full +50% crit DoT multi!
+    });
+    // rMin = 200 * 0.5 = 100, rMax = 800 * 1.5 = 1200
+    // roll = 100 + 1100 * (10/11) = 1100
+    // critDotMulti = 1 + 0.5 * (1 - 0.5^10) = 1.49951
+    // DPS = 0.70 * 1100 * 1.49951 = 1154.62
+    expect(bleedRes.bleed.totalDps).toBeCloseTo(1154.62, 0);
+
+    // Part B: Poison with AdditionalPoisonChance + Temporal Chains + AilmentEffect
+    const psnDb = new ModDB();
+    const psnEnemy = new ModDB();
+    psnDb.addMod(mkMod('PoisonChance', 'BASE', 100));
+    psnDb.addMod(mkMod('AdditionalPoisonChance', 'BASE', 50)); // 1.5x poisons per hit
+    psnDb.addMod(mkMod('AilmentEffect', 'INC', 20)); // 1.2x
+    psnEnemy.addMod(mkMod('BuffExpireFaster', 'MORE', -25)); // 1/0.75 = 1.3333x duration
+
+    const psnRes = computeAuthenticAilmentAndSkillDots({
+      game: 'poe1',
+      skillDb: psnDb,
+      enemyDb: psnEnemy,
+      baseDamageByType: { Chaos: 1000 },
+      flags: ModFlag.Attack | ModFlag.Hit,
+      speed: 3,
+      enemyConfig: { enemyChaosResist: 0 },
+    });
+    // Duration = 2.0 / 0.75 = 2.6667s; stacks = 3 * 1.5 * 2.6667 = 12 stacks
+    // Single stack = 0.30 * 1000 * 1.20 = 360 -> Total = 4320
+    expect(psnRes.poison.effectiveDurationSec).toBeCloseTo(2.67, 2);
+    expect(psnRes.poison.effectiveStacks).toBeCloseTo(12, 2);
+    expect(psnRes.poison.singleStackDps).toBeCloseTo(360, 1);
+    expect(psnRes.poison.totalDps).toBeCloseTo(4320, 0);
+  });
+
+  it('handles PoE 1 & PoE 2 non-ailment skillDot Area/Projectile inheritance, Unnerved exclusion, PDR, and Hit MORE gating (Chain II)', () => {
+    const skillDb = new ModDB();
+    const enemyDb = new ModDB();
+    // Area damage (Concentrated Effect) + SpellDamageAppliesToDot + Chain II (-50% MORE Hit Damage)
+    skillDb.addMod(mkMod('Damage', 'MORE', 40, ModFlag.Area));
+    skillDb.addMod(mkMod('Damage', 'INC', 100, ModFlag.Spell));
+    skillDb.addMod(mkMod('SpellDamageAppliesToDot', 'FLAG', true));
+    skillDb.addMod(mkMod('Damage', 'MORE', -50, ModFlag.Hit)); // Chain II — must NOT reduce skillDot!
+    // Unnerved (+10% Spell Damage Taken) — must NOT leak into Spell DoT!
+    applyEnemyDebuffsToEnemyDb(enemyDb, { game: 'poe1', enemyUnnerved: true });
+    // DamageTakenOverTime (+25%) DOES apply!
+    enemyDb.addMod(mkMod('DamageTakenOverTime', 'INC', 25));
+
+    const res = computeAuthenticAilmentAndSkillDots({
+      game: 'poe1',
+      skillDb,
+      enemyDb,
+      baseDamageByType: {},
+      flags: ModFlag.Spell | ModFlag.Area | ModFlag.Hit,
+      keywordFlags: KeywordFlag.Spell | KeywordFlag.Hit,
+      speed: 2,
+      skillData: { ChaosDot: 1000 }, // dotIsArea omitted -> inherits ModFlag.Area!
+      enemyConfig: { enemyChaosResist: 0 },
+    });
+    // 1000 * 2.0 (Spell 100% via SpellDamageAppliesToDot) * 1.40 (Area) * 1.25 (DoT taken, NO Unnerve!) = 3500
+    expect(res.skillDot.byType.Chaos).toBeCloseTo(3500, 1);
+
+    // PhysicalDot respects positive enemy PhysicalDamageReduction (20% PDR -> 0.80x)
+    const physEnemy = new ModDB();
+    physEnemy.addMod(mkMod('PhysicalDamageReduction', 'BASE', 20));
+    const physRes = computeAuthenticAilmentAndSkillDots({
+      game: 'poe1',
+      skillDb: new ModDB(),
+      enemyDb: physEnemy,
+      baseDamageByType: {},
+      flags: ModFlag.Spell,
+      speed: 1,
+      skillData: { PhysicalDot: 1000 },
+    });
+    expect(physRes.skillDot.byType.Physical).toBeCloseTo(800, 1);
+  });
+
+  it('implements PoE 2 AilmentEffect (Low Tolerance), BleedMagnitude alias, linear uptime, level-82 threshold, roll/crit over-stacking, and CritPoisonChance (Atsak)', () => {
+    // Case A: PoE 2 Low Tolerance (AilmentEffect INC +60%) + CritPoisonChance (Atsak's Sight)
+    const psnDb = new ModDB();
+    psnDb.addMod(mkMod('CritPoisonChance', 'BASE', 100)); // 0% on non-crit, 100% on crit
+    psnDb.addMod(mkMod('AilmentEffect', 'INC', 60, 0, KeywordFlag.Poison)); // 1.60x Low Tolerance!
+
+    const atsak = computeAuthenticAilmentAndSkillDots({
+      game: 'poe2',
+      skillDb: psnDb,
+      enemyDb: new ModDB(),
+      baseDamageByType: {},
+      // Non-crit hit = 1000, critMult = 200%, critChance = 50% -> preMitigationAvg = 1000 * 1.5 = 1500
+      preMitigationHitByType: { Physical: 1500 },
+      flags: ModFlag.Attack | ModFlag.Hit,
+      speed: 2, // 0.5 chance * 2 APS * 2s = 2 stacks -> capped to 1
+      critChancePct: 50,
+      critMultiplierPct: 200,
+      enemyConfig: { enemyChaosResist: 0 },
+    });
+    // 100% of poisons come from crits (2000 unmitigated hit): 0.20 * 2000 * 1.60 (Low Tolerance) = 640
+    expect(atsak.poison.chancePct).toBeCloseTo(50, 2);
+    expect(atsak.poison.singleStackDps).toBeCloseTo(640, 1);
+    expect(atsak.poison.effectiveStacks).toBe(1);
+    expect(atsak.poison.totalDps).toBeCloseTo(640, 1);
+
+    // Case B: PoE 2 Bleed with `BleedMagnitude` alias + AilmentEffect + order-statistic roll average + over-stack crit
+    const bldDb = new ModDB();
+    bldDb.addMod(mkMod('BleedChance', 'BASE', 100));
+    bldDb.addMod(mkMod('BleedMagnitude', 'INC', 50)); // 1.5x (alias alongside BleedingMagnitude)
+    bldDb.addMod(mkMod('AilmentEffect', 'MORE', 20)); // 1.2x
+
+    const poe2Bleed = computeAuthenticAilmentAndSkillDots({
+      game: 'poe2',
+      skillDb: bldDb,
+      enemyDb: new ModDB(),
+      baseDamageByType: {},
+      // Non-crit = 1000, critMult = 200%, crit = 50% -> preAvg = 1500; range [500, 1500] avg 1000
+      preMitigationHitByType: { Physical: 1500 },
+      hitDamageRangeByType: { Physical: { min: 500, max: 1500, average: 1000 } },
+      flags: ModFlag.Attack | ModFlag.Hit,
+      speed: 1.8, // 1.8 * 5s = 9 stacks -> roll = 9/10 = 0.9 -> rollUplift = (500 + 1000*0.9)/1000 = 1.4
+      critChancePct: 50, // overCrit = 1 - 0.5^9 = 0.998047 -> effPre = 1000 * 1.998047 = 1998.047
+      critMultiplierPct: 200,
+    });
+    // 0.15 * 1998.047 * 1.4 * 1.5 * 1.2 = 755.26
+    expect(poe2Bleed.bleed.totalDps).toBeCloseTo(755.26, 0);
+
+    // Case C: PoE 2 Ignite level-82 threshold (71303) & linear uptime min(1, hitChance * chance * speed * dur)
+    const ignRes = computeAuthenticAilmentAndSkillDots({
+      game: 'poe2',
+      skillDb: new ModDB(),
+      enemyDb: new ModDB(),
+      baseDamageByType: {},
+      preMitigationHitByType: { Fire: 7130.3 }, // 7130.3 / 71303 * 20 = 2.0% ignite chance!
+      flags: ModFlag.Attack | ModFlag.Hit,
+      speed: 2, // 2% * 2 APS * 4s = 0.16 linear uptime (NOT binomial 1 - 0.98^8 = 0.1492!)
+      critChancePct: 0,
+      enemyConfig: { enemyLevel: 82, enemyFireResist: 0 },
+    });
+    expect(ignRes.ignite.effectiveChancePct).toBeCloseTo(2, 2);
+    expect(ignRes.ignite.effectiveStacks).toBeCloseTo(0.16, 4);
+    expect(ignRes.ignite.singleStackDps).toBeCloseTo(0.2 * 7130.3, 1);
+    expect(ignRes.ignite.totalDps).toBeCloseTo(0.2 * 7130.3 * 0.16, 1);
+  });
+
+  it('applies minion ActionSpeed, Blind Evasion MORE, Eye of Malice resist INC, and TripleDamageChance', () => {
+    const minionDb = new ModDB();
+    const enemyDb = new ModDB();
+    minionDb.addMod(mkMod('ActionSpeed', 'INC', 25)); // 1.25x speed
+    minionDb.addMod(mkMod('TripleDamageChance', 'BASE', 50)); // 1 + 0.5 * 2 = 2.0x hit dmg
+    minionDb.addMod(mkMod('CannotIgnite', 'FLAG', true));
+    enemyDb.addMod(mkMod('ElementalResist', 'BASE', -20));
+    enemyDb.addMod(mkMod('FireResist', 'INC', 50)); // -20 * 1.5 = -30% -> 1.30x
+
+    const res = computeMinionGroupOffence({
+      game: 'poe1',
+      minionBase: {
+        physicalMin: 0,
+        physicalMax: 0,
+        elementalDamage: { Fire: [100, 100] },
+        attacksPerSecond: 2.0,
+        critChance: 0,
+        critMultiplier: 130,
+        baseLimit: 1,
+      },
+      minionDb,
+      enemyDb,
+      effLevel: 20,
+      enemyConfig: { enemyFireResist: 0 },
+    });
+
+    // Avg hit = 100 * 1.30 (res) * 2.0 (50% triple dmg) = 260; speed = 2.0 * 1.25 = 2.5 -> hitDps = 650
+    expect(res.perMinion.speed).toBeCloseTo(2.5, 4);
+    expect(res.perMinion.averageHit).toBeCloseTo(260, 1);
+    expect(res.perMinion.hitDps).toBeCloseTo(650, 1);
+  });
+
+  it('coalesces matching same-gem quality (Q...) and base MORE mods additively without merging distinct base MORE mods', () => {
+    const skillDb = new ModDB();
+    const enemyDb = new ModDB();
+    const minionDb = new ModDB();
+
+    // Lacerate of Haemorrhage: Q50 adds 100% more Ailment Damage, Lv21 adds 138% more Ailment Damage
+    // PoB sums these into 238% more (3.38x), NOT 2.00 * 2.38 = 4.76x!
+    injectCompiledGemMods(
+      skillDb,
+      enemyDb,
+      minionDb,
+      [{ name: 'Damage', type: 'MORE', value: 100, keywordFlags: KeywordFlag.Bleed }],
+      'Skill: Lacerate of Haemorrhage (Q50)',
+      { game: 'poe1' },
+    );
+    injectCompiledGemMods(
+      skillDb,
+      enemyDb,
+      minionDb,
+      [{ name: 'Damage', type: 'MORE', value: 138, keywordFlags: KeywordFlag.Bleed }],
+      'Skill: Lacerate of Haemorrhage',
+      { game: 'poe1' },
+    );
+    expect(skillDb.more('Damage', ModFlag.Dot | ModFlag.Ailment, KeywordFlag.Bleed)).toBeCloseTo(3.38, 4);
+
+    // Distinct base MORE mods on the same gem (Multistrike -19% & +22%) remain separate multiplicative mods
+    injectCompiledGemMods(
+      skillDb,
+      enemyDb,
+      minionDb,
+      [
+        { name: 'Damage', type: 'MORE', value: -19, flags: ModFlag.Attack },
+        { name: 'Damage', type: 'MORE', value: 22, flags: ModFlag.Attack },
+      ],
+      'Support: Multistrike',
+      { game: 'poe1' },
+    );
+    // round(0.81 * 1.22 * 100) / 100 = 0.99 (NOT 1 + (-19 + 22)/100 = 1.03!)
+    expect(skillDb.more('Damage', ModFlag.Attack, KeywordFlag.Attack)).toBeCloseTo(0.99, 4);
+  });
+
+  it('supports PoE 2 config PoisonStacks, DurationofDamagingAilmentsDuration, Escalating Toxins, PoisonFaster, and AllDamageCanPoison', () => {
+    const skillDb = new ModDB();
+    const enemyDb = new ModDB();
+    skillDb.addMod(mkMod('PoisonChance', 'BASE', 100));
+    skillDb.addMod(mkMod('PoisonStacks', 'BASE', 2)); // 1 base + 2 = 3
+    skillDb.addMod(mkMod('DoublePoisonStacks', 'FLAG', true)); // 3 * 2 = 6 max stacks
+    skillDb.addMod(mkMod('AllDamageCanPoison', 'FLAG', true)); // Plaguefinger
+    skillDb.addMod(mkMod('AilmentMagnitude', 'MORE', 100, 0, KeywordFlag.Poison)); // 2.0x
+    skillDb.addMod(mkMod('PoisonFaster', 'INC', 22)); // 1.22x rate & /1.22 duration
+    skillDb.addMod(mkMod('DurationofDamagingAilmentsDuration', 'INC', 40)); // Wasting/Intense Dose
+    skillDb.addMod(mkMod('ToxicDeliveryPoisonDurCap', 'BASE', 100)); // Escalating Toxins (10%/poison)
+    skillDb.setMultiplier('PoisonAppliedRecently', 6); // +60% Poison Duration
+    skillDb.setMultiplier('PoisonStacks', 6); // multiplierPoisonOnEnemy = 6 override
+
+    const res = computeAuthenticAilmentAndSkillDots({
+      game: 'poe2',
+      skillDb,
+      enemyDb,
+      baseDamageByType: {},
+      preMitigationHitByType: { Physical: 1000, Lightning: 500 },
+      flags: ModFlag.Attack | ModFlag.Hit,
+      speed: 1.5, // 1.5 * 3.28 = 4.92 < 6, overridden to 6 by config PoisonStacks
+      critChancePct: 0,
+      enemyConfig: { enemyChaosResist: 0 },
+    });
+
+    // Duration = 2.0 * (1 + (40 + 60)/100) / 1.22 = 4.0 / 1.22 = 3.2787s
+    expect(res.poison.effectiveDurationSec).toBeCloseTo(3.28, 2);
+    expect(res.poison.maxStacks).toBe(6);
+    expect(res.poison.effectiveStacks).toBe(6);
+    // Single stack = 0.20 * (1000 + 500) * 2.0 (mag) * 1.22 (faster) = 732 -> 6 stacks = 4392
+    expect(res.poison.singleStackDps).toBeCloseTo(732, 1);
+    expect(res.poison.totalDps).toBeCloseTo(4392, 1);
+  });
+
+  it('applies PoE 1 ToxicDeliveryPoisonDurCap, The Tempest Rising Moving Bleed, Ruthless Blow Bleed, ElementalOverload, and Crimson Dance anti-double-halving', () => {
+    // 1. Assassin Toxic Delivery (+100% Poison Duration cap at 5%/poison)
+    const psnDb = new ModDB();
+    psnDb.addMod(mkMod('PoisonChance', 'BASE', 100));
+    psnDb.addMod(mkMod('ToxicDeliveryPoisonDurCap', 'BASE', 100));
+    psnDb.setMultiplier('PoisonAppliedRecently', 25); // 25 * 5 = 125 -> capped at +100%
+    const psnRes = computeAuthenticAilmentAndSkillDots({
+      game: 'poe1',
+      skillDb: psnDb,
+      enemyDb: new ModDB(),
+      baseDamageByType: { Chaos: 1000 },
+      flags: ModFlag.Attack | ModFlag.Hit,
+      speed: 2,
+      enemyConfig: { enemyChaosResist: 0 },
+    });
+    // Duration = 2.0 * 2.0 = 4.0s -> 8 stacks -> 0.30 * 1000 * 8 = 2400
+    expect(psnRes.poison.effectiveDurationSec).toBeCloseTo(4.0, 2);
+    expect(psnRes.poison.totalDps).toBeCloseTo(2400, 1);
+
+    // 2. The Tempest Rising flag stays on playerDb in splitModDBIntoActorBuses + Moving condition gives 3x Bleed + Ruthless Blow
+    const rawDb = new ModDB();
+    rawDb.addMod(mkMod('EnemyAffectedByEleAilmentCountsAsMoving', 'FLAG', true));
+    const split = splitModDBIntoActorBuses(rawDb, { game: 'poe1' });
+    expect(split.playerDb.flag('EnemyAffectedByEleAilmentCountsAsMoving')).toBe(true);
+
+    const bleedDb = new ModDB();
+    const bleedEnemy = new ModDB();
+    bleedDb.addMod(mkMod('BleedChance', 'BASE', 100));
+    bleedDb.addMod(mkMod('RuthlessBlowMaxCount', 'BASE', 3)); // 33% chance
+    bleedDb.addMod(mkMod('RuthlessBlowAilmentMultiplier', 'BASE', 97, ModFlag.Melee)); // 1 + 0.33*0.97 = 1.3201x
+    bleedEnemy.setCondition('Moving', true); // set by engine when Tempest Rising + Ele Ailment active
+    const bleedRes = computeAuthenticAilmentAndSkillDots({
+      game: 'poe1',
+      skillDb: bleedDb,
+      enemyDb: bleedEnemy,
+      baseDamageByType: { Physical: 1000 },
+      flags: ModFlag.Attack | ModFlag.Melee | ModFlag.Hit,
+      speed: 2,
+    });
+    // 2.10 (Moving 3x) * 1000 * 1.3201 (Ruthless) = 2772.21
+    expect(bleedRes.bleed.totalDps).toBeCloseTo(2772.21, 1);
+
+    // 3. Crimson Dance anti-double-halving when explicit -50% MORE BleedDamage is already present
+    const cdDb = new ModDB();
+    cdDb.addMod(mkMod('BleedChance', 'BASE', 100));
+    cdDb.addMod(mkMod('CrimsonDance', 'FLAG', true));
+    cdDb.addMod(mkMod('DotDamage', 'MORE', -50, ModFlag.Dot | ModFlag.Ailment, KeywordFlag.Bleed));
+    const cdRes = computeAuthenticAilmentAndSkillDots({
+      game: 'poe1',
+      skillDb: cdDb,
+      enemyDb: new ModDB(),
+      baseDamageByType: { Physical: 1000 },
+      flags: ModFlag.Attack | ModFlag.Melee | ModFlag.Hit,
+      speed: 2, // 10 stacks -> capped at 8
+    });
+    // Single stack = 0.70 * 1000 * 0.50 = 350 (NOT 0.35 * 1000 * 0.50 = 175!) -> 8 stacks = 2800
+    expect(cdRes.bleed.singleStackDps).toBeCloseTo(350, 1);
+    expect(cdRes.bleed.totalDps).toBeCloseTo(2800, 1);
+
+    // 4. ElementalOverload flag disables crit ailment bonuses (62dfba0)
+    const eoDb = new ModDB();
+    eoDb.addMod(mkMod('ElementalOverload', 'FLAG', true));
+    eoDb.addMod(mkMod('IgniteChance', 'BASE', 25));
+    const eoRes = computeAuthenticAilmentAndSkillDots({
+      game: 'poe1',
+      skillDb: eoDb,
+      enemyDb: new ModDB(),
+      baseDamageByType: { Fire: 1000 },
+      flags: ModFlag.Spell | ModFlag.Hit,
+      speed: 1,
+      critChancePct: 100,
+      enemyConfig: { enemyFireResist: 0 },
+    });
+    expect(eoRes.ignite.effectiveChancePct).toBeCloseTo(25, 2);
+    expect(eoRes.ignite.singleStackDps).toBeCloseTo(900, 1); // No +50% crit DoT multi!
+  });
+});

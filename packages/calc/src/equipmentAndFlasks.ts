@@ -203,7 +203,67 @@ export function extractLocalFlaskEffectPct(item: Item): number {
 }
 
 const FLASK_META_LINE_RE =
-  /^(?:(?:\d+)% (?:increased|reduced) (?:effect(?: of Flask)?|Duration|Charge Recovery|Charges per use|Charges used)|Used when Charges reach full|Gains no Charges during Effect|Reused at the end of this Flask's effect|Use when you (?:become|take|hit|start|use)|Gain \d+ Charges? when you are Hit|\d+% chance to gain a Flask Charge|Creates (?:Consecrated|Chilled) Ground on Use|Creates a Smoke Cloud on Use|Taunts Enemies|Restores Ward on use|Consecrated Ground created by this Flask)/i;
+  /^(?:(?:\d+)% (?:increased|reduced) (?:effect(?: of Flask)?|Duration|Charge Recovery|Charges per use|Charges used)|Used when Charges reach full|Gains no Charges during Effect|Reused at the end of this Flask's effect|Use when you (?:become|take|hit|start|use)|Gain \d+ Charges? when you are Hit|\d+% chance to gain a Flask Charge|Creates (?:Consecrated|Chilled) Ground on Use|Creates a Smoke Cloud on Use|Taunts Enemies|Restores Ward on use|Consecrated Ground created by this Flask|Inflicts Mana Burn every \d+(?:\.\d+)? Seconds?|\d+(?:\.\d+)? Second Cooldown when Deactivated)/i;
+
+const RANGED_OR_OFFHAND_BASE_RE =
+  /\b(?:bow|wand|horn|crossbow|quiver|shield|buckler|bundle|focus)\b/i;
+
+/**
+ * Returns true if the character currently has a Melee Weapon equipped in their active weapon set
+ * (excludes Bows, Wands, Crossbows, Quivers, Shields, Focuses, and Unarmed).
+ */
+function hasEquippedMeleeWeapon(build: Build): boolean {
+  const mainSlot: EquipmentSlotId = build.activeWeaponSet === 2 ? 'Weapon 1 Swap' : 'Weapon 1';
+  const offSlot: EquipmentSlotId = build.activeWeaponSet === 2 ? 'Weapon 2 Swap' : 'Weapon 2';
+  for (const slot of [mainSlot, offSlot]) {
+    const itemId = build.equipped[slot];
+    if (!itemId) continue;
+    const item = build.items[itemId];
+    if (!item) continue;
+    const baseText = (item.baseName || item.name || '').trim();
+    if (!baseText || RANGED_OR_OFFHAND_BASE_RE.test(baseText)) continue;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Normalizes PoE 1 Tincture weapon-coating lines when a Melee Weapon is equipped.
+ * In official PoB 1 (`ModFlag.WeaponMelee`), Tincture modifiers apply to ALL attacks made
+ * with a coated melee weapon — including projectile/area sub-parts such as `Lightning Strike`
+ * projectiles, `Frost Blades` projectiles, `Smite` area, and `Molten Strike` balls, as well as
+ * Bleeding/Ailments inflicted by melee weapon attacks (`Blood Sap Tincture`).
+ * Mapping `with Melee Weapons` / `Melee Weapon ...` to Attack/Ailment scope prevents
+ * `ModFlag.Melee` from falsely dropping Tincture buffs on non-melee parts of melee weapon skills.
+ */
+function normalizeTinctureWeaponLine(line: string, meleeWeaponEquipped: boolean): string {
+  if (!meleeWeaponEquipped) return line;
+  const mDotMulti = line.match(
+    /^\+(\d+(?:\.\d+)?)% to Damage over Time Multiplier with Melee Weapon Attacks$/i,
+  );
+  if (mDotMulti) {
+    return `+${mDotMulti[1]}% to Damage over Time Multiplier with Ailments`;
+  }
+  const mBleedDmg = line.match(
+    /^(\d+(?:\.\d+)?)% increased Damage with Bleeding from Melee Weapons$/i,
+  );
+  if (mBleedDmg) {
+    return `${mBleedDmg[1]}% increased Damage with Bleeding`;
+  }
+  const mPen = line.match(/^Melee Weapon Damage Penetrates (.+)$/i);
+  if (mPen) {
+    return `Attack Damage Penetrates ${mPen[1]}`;
+  }
+  const mAtkSpd = line.match(/^(\d+(?:\.\d+)?)% increased Melee Weapon Attack Speed$/i);
+  if (mAtkSpd) {
+    return `${mAtkSpd[1]}% increased Attack Speed`;
+  }
+  const mWithMeleeWeap = line.match(/^(.+)\s+with Melee Weapons$/i);
+  if (mWithMeleeWeap) {
+    return `${mWithMeleeWeap[1]} with Attacks`;
+  }
+  return line;
+}
 
 /**
  * Normalizes a flask explicit/implicit buff line so `parseModLines` can parse it cleanly
@@ -286,8 +346,14 @@ function detectPoe1MagebloodCounts(build: Build): { left: number; right: number 
 export function evaluateActiveFlasks(
   build: Build,
   globalFlaskEffectPct = 0,
+  extraOptions?: {
+    ironFlaskEffectPct?: number;
+    tinctureEffectPct?: number;
+    magicTinctureEffectPct?: number;
+  },
 ): ActiveFlaskEvaluation {
   const { left: magebloodLeft, right: magebloodRight } = detectPoe1MagebloodCounts(build);
+  const meleeWeaponEquipped = hasEquippedMeleeWeapon(build);
 
   // Identify magic utility flasks in slot order 1..5 for Mageblood auto-activation
   const magicUtilitySlots: EquipmentSlotId[] = [];
@@ -335,10 +401,36 @@ export function evaluateActiveFlasks(
     if (!isActive) continue;
 
     activeSlots.push(slot);
-    const baseName = resolveUtilityFlaskBaseName(item);
+    const isTincture = /\btincture\b/i.test(item.baseName) || /\btincture\b/i.test(item.name);
+    const baseName = isTincture ? null : resolveUtilityFlaskBaseName(item);
     const localEffectPct = extractLocalFlaskEffectPct(item);
-    const totalEffectPct = globalFlaskEffectPct + localEffectPct;
-    const effectMult = Math.max(0, 1 + totalEffectPct / 100);
+    const tinctureEffectInc = isTincture
+      ? (extraOptions?.tinctureEffectPct ?? 0) +
+        localEffectPct +
+        (item.rarity === 'MAGIC' ? (extraOptions?.magicTinctureEffectPct ?? 0) : 0)
+      : 0;
+    // PoB1 CalcPerform.lua:1931-1938: Tincture quality multiplies (1 + tinctureEffectInc/100)
+    // and truncates to 2 decimal places: floor((1 + effectInc/100) * (1 + quality/100) * 100) / 100
+    const effectMult = isTincture
+      ? Math.max(
+          0,
+          Math.floor(
+            (1 + tinctureEffectInc / 100) * (1 + Math.max(0, item.quality) / 100) * 100 + 1e-9,
+          ) / 100,
+        )
+      : Math.max(
+          0,
+          1 +
+            (globalFlaskEffectPct +
+              (baseName === 'Iron Flask' ? (extraOptions?.ironFlaskEffectPct ?? 0) : 0) +
+              localEffectPct) /
+              100,
+        );
+    const totalEffectPct = isTincture
+      ? Math.round((effectMult - 1) * 100)
+      : globalFlaskEffectPct +
+        (baseName === 'Iron Flask' ? (extraOptions?.ironFlaskEffectPct ?? 0) : 0) +
+        localEffectPct;
     const src = `Flask (${slot}): ${item.name}`;
 
     const baseBuffLines: string[] = [];
@@ -357,8 +449,9 @@ export function evaluateActiveFlasks(
         if (/^Onslaught$/i.test(buffLine)) {
           grantsOnslaught = true;
           baseBuffLines.push(buffLine);
-          modLines.push(buffLine);
-          sources.push(`${src} [Base]`);
+          // Do NOT push raw 'Onslaught' into modLines — engine.ts injects
+          // scaled Onslaught via flaskEval.grantsOnslaught & silverFlask.effectMult,
+          // so emitting raw 'Onslaught' here double-counted +20% Attack/Cast/Move Speed.
           continue;
         }
         if (/^Phasing$/i.test(buffLine)) {
@@ -389,7 +482,15 @@ export function evaluateActiveFlasks(
         continue;
       }
       if (FLASK_META_LINE_RE.test(line)) continue;
-      const normalized = normalizeFlaskBuffLine(line);
+      const normalizedBase = normalizeFlaskBuffLine(line);
+      const normalized = isTincture
+        ? normalizeTinctureWeaponLine(normalizedBase, meleeWeaponEquipped)
+        : normalizedBase;
+      if (/^Onslaught$/i.test(normalized)) {
+        grantsOnslaught = true;
+        implicitLines.push(normalized);
+        continue;
+      }
       const scaled = scaleModLineByMultiplier(normalized, effectMult);
       implicitLines.push(scaled);
       modLines.push(scaled);
@@ -463,11 +564,19 @@ export function evaluateActiveFlasks(
         continue;
       }
 
-      if (/Onslaught/i.test(line)) {
+      const normalizedBase = normalizeFlaskBuffLine(line);
+      const normalized = isTincture
+        ? normalizeTinctureWeaponLine(normalizedBase, meleeWeaponEquipped)
+        : normalizedBase;
+      if (/^Onslaught$/i.test(normalized)) {
+        grantsOnslaught = true;
+        explicitLines.push(normalized);
+        continue;
+      }
+      if (/Onslaught/i.test(line) && !/Effect of Onslaught/i.test(line)) {
         grantsOnslaught = true;
       }
 
-      const normalized = normalizeFlaskBuffLine(line);
       const scaled = scaleModLineByMultiplier(normalized, effectMult);
       explicitLines.push(scaled);
       modLines.push(scaled);
@@ -609,20 +718,22 @@ export function evaluatePoe2MagebloodLegacies(item: Item): string[] {
 
 const ABYSSAL_SOCKET_RE =
   /^(Belt|Body Armour|Boots|Gloves|Helmet|Weapon 1|Weapon 2|Weapon 1 Swap|Weapon 2 Swap) Abyssal Socket (\d+)$/i;
-const GRAFTED_LIMB_RE = /^(Arm|Leg) (\d+)$/i;
+const GRAFTED_LIMB_RE = /^(Arm|Leg|Graft) (\d+)$/i;
 const EQUIP_JEWEL_SOCKET_RE =
   /^(Gloves|Helmet|Boots|Body Armour|Belt|Weapon 1|Weapon 2|Weapon 1 Swap|Weapon 2 Swap) Jewel Socket (\d+)$/i;
 
 /**
- * Extracts `(\d+)% increased Effect of Socketed Abyss(?:al)? Jewels` from a parent item
- * (e.g. `Darkness Enthroned` belt).
+ * Extracts `(\d+)% increased Effect of Socketed (?:Abyss(?:al)? Jewels|Jewels|Items)` from a parent item
+ * (e.g. `Darkness Enthroned` belt in PoE 1 & PoE 2).
  */
 function extractSocketedAbyssalJewelEffectPct(item: Item | undefined): number {
   if (!item) return 0;
   let pct = 0;
   for (const raw of [...item.implicits, ...item.explicits]) {
     const line = cleanModLine(raw);
-    const m = line.match(/^(\d+)% increased Effect of Socketed Abyss(?:al)? Jewels$/i);
+    const m = line.match(
+      /^(\d+)% increased Effect of Socketed (?:Abyss(?:al)? Jewels|Jewels|Items)$/i,
+    );
     if (m) {
       pct += Number(m[1]);
     }
@@ -657,8 +768,13 @@ export function collectExtraSocketedEquipment(build: Build): ExtraSocketedEquipm
     const mAbyss = slot.match(ABYSSAL_SOCKET_RE);
     if (mAbyss) {
       const parentSlot = mAbyss[1]!;
+      const socketIdx = Number(mAbyss[2]);
       const parentId = equippedMap[parentSlot];
       const parentItem = parentId ? build.items[parentId] : undefined;
+      if (parentItem?.sockets) {
+        const abyssCount = (parentItem.sockets.match(/A/gi) ?? []).length;
+        if (socketIdx > abyssCount) continue;
+      }
       const effectPct = extractSocketedAbyssalJewelEffectPct(parentItem);
       const effectMult = 1 + effectPct / 100;
       result.push({ slot, item, effectMult });
@@ -671,9 +787,15 @@ export function collectExtraSocketedEquipment(build: Build): ExtraSocketedEquipm
       continue;
     }
 
-    // 3. PoE 2 0.5 Equipment Jewel Sockets (Gloves Jewel Socket 1, etc.)
-    if (EQUIP_JEWEL_SOCKET_RE.test(slot)) {
-      result.push({ slot, item, effectMult: 1 });
+    // 3. PoE 2 0.5 Equipment Jewel Sockets (Gloves/Belt/Boots/Helmet Jewel Socket 1, etc.)
+    const mEquipJewel = slot.match(EQUIP_JEWEL_SOCKET_RE);
+    if (mEquipJewel) {
+      const parentSlot = mEquipJewel[1]!;
+      const parentId = equippedMap[parentSlot];
+      const parentItem = parentId ? build.items[parentId] : undefined;
+      const effectPct = extractSocketedAbyssalJewelEffectPct(parentItem);
+      const effectMult = 1 + effectPct / 100;
+      result.push({ slot, item, effectMult });
     }
   }
 
@@ -940,12 +1062,24 @@ export function evaluateSpecialUniqueGearMechanics(
       if (mPrism) {
         const bonus = Number(mPrism[1]);
         const rawSkill = mPrism[2]!.trim();
-        const words = rawSkill.toLowerCase().split(/\s+/);
-        const isGeneric = words.every((w) => GENERIC_GEM_TAG_NAMES.has(w));
-        if (!isGeneric && rawSkill.length > 0) {
-          skillSpecificGemLevels[rawSkill] = (skillSpecificGemLevels[rawSkill] ?? 0) + bonus;
+        const skillKey = rawSkill.toLowerCase();
+        const words = skillKey.split(/\s+/).filter(Boolean);
+        const isGeneric = words.length > 0 && words.every((w) => GENERIC_GEM_TAG_NAMES.has(w));
+        if (!isGeneric && skillKey.length > 0) {
+          const parsedGemLevelKey = `GemLevel:${words.join('+')}`;
+          const alreadyParsedByModParser = db
+            .calcStat(parsedGemLevelKey)
+            .sources.some(
+              (s) =>
+                s.type === 'BASE' &&
+                typeof s.value === 'number' &&
+                Math.abs(s.value - bonus) < 1e-6,
+            );
+          if (!alreadyParsedByModParser) {
+            skillSpecificGemLevels[skillKey] = (skillSpecificGemLevels[skillKey] ?? 0) + bonus;
+          }
           db.addMod({
-            name: `SkillLevel:${rawSkill}`,
+            name: `SkillLevel:${skillKey}`,
             type: 'BASE',
             value: bonus,
             flags: 0,
@@ -976,7 +1110,7 @@ export function evaluateSpecialUniqueGearMechanics(
 
       // 7. Sacred Flame
       if (
-        /^Enemies in your Presence Resist Elemental Damage based on their Lowest Resistance$/i.test(
+        /^Enemies in your Presence Resist Elemental Damage based on their Lowest (?:Elemental )?Resistance$/i.test(
           line,
         )
       ) {
@@ -1071,16 +1205,20 @@ export function evaluateSpecialUniqueGearMechanics(
     }
   }
 
-  // Apply Widowhail extra Quiver bonuses (scaled by N/100 on top of the 1x quiver already equipped)
-  if (widowhailQuiverBonusPct > 0) {
+  // Apply Widowhail + Passive Tree / Jewel QuiverEffect bonuses (scaled by N/100 on top of the 1x quiver already equipped)
+  const totalQuiverBonusPct = Math.max(
+    widowhailQuiverBonusPct,
+    db.sum('INC', ['QuiverEffect', 'EffectOfBonusesFromQuiver']),
+  );
+  if (totalQuiverBonusPct > 0) {
     const quiverEntry = equippedItems.find(
       ({ slot, item }) =>
         (slot === 'Weapon 2' || slot === 'Weapon 2 Swap') &&
         item.baseName.toLowerCase().includes('quiver'),
     );
     if (quiverEntry) {
-      const totalMult = 1 + widowhailQuiverBonusPct / 100;
-      const quiverSrc = `Widowhail (+${widowhailQuiverBonusPct}% Quiver: ${quiverEntry.item.name})`;
+      const totalMult = 1 + totalQuiverBonusPct / 100;
+      const quiverSrc = `Quiver Effect (+${totalQuiverBonusPct}% Quiver: ${quiverEntry.item.name})`;
       for (const raw of [...quiverEntry.item.implicits, ...quiverEntry.item.explicits]) {
         const line = cleanModLine(raw);
         if (!line) continue;
@@ -1092,6 +1230,99 @@ export function evaluateSpecialUniqueGearMechanics(
         }
       }
       appliedSources.push(quiverSrc);
+    }
+  }
+
+  // Apply Passive Tree / Jewel AmuletEffect bonuses (`% increased Bonus gained from Equipped Amulet`)
+  const totalAmuletBonusPct = db.sum('INC', ['AmuletEffect', 'EffectOfBonusesFromAmulet']);
+  if (totalAmuletBonusPct > 0) {
+    const amuletEntry = equippedItems.find(({ slot }) => slot === 'Amulet');
+    if (amuletEntry) {
+      const totalMult = 1 + totalAmuletBonusPct / 100;
+      const amuletSrc = `Amulet Effect (+${totalAmuletBonusPct}% Amulet: ${amuletEntry.item.name})`;
+      for (const raw of [...amuletEntry.item.implicits, ...amuletEntry.item.explicits]) {
+        const line = cleanModLine(raw);
+        if (!line) continue;
+        const deltaLine = buildDeltaScaledLine(line, totalMult);
+        if (!deltaLine) continue;
+        const parsed = parseModLines([deltaLine], amuletSrc);
+        if (parsed.length > 0) {
+          db.addMods(parsed);
+        }
+      }
+      appliedSources.push(amuletSrc);
+    }
+  }
+
+  // Apply Passive Tree / Ascendancy FocusEffect bonuses (e.g. Disciple of Varashta `Instruments of Power`:
+  // `50% reduced bonuses gained from Equipped Focus` -> `EffectOfBonusesFromFocus` = -50).
+  // Uses PoB 2 `CalcSetup.lua:1625-1636` + `ModStore.lua:114` (`m_modf(round(val * scale, 2))`) delta scaling.
+  const totalFocusBonusPct = db.sum('INC', ['FocusEffect', 'EffectOfBonusesFromFocus']);
+  if (totalFocusBonusPct !== 0 && !db.flag('FocusEffectApplied')) {
+    const focusEntry = equippedItems.find(
+      ({ slot, item }) =>
+        (slot === 'Weapon 2' || slot === 'Weapon 2 Swap') &&
+        /\bfocus\b/i.test(item.baseName),
+    );
+    if (focusEntry) {
+      const scale = Math.max(0, 1 + totalFocusBonusPct / 100) - 1;
+      if (Math.abs(scale) > 1e-9) {
+        const isReduction = scale < 0;
+        const signLabel = totalFocusBonusPct >= 0 ? `+${totalFocusBonusPct}%` : `${totalFocusBonusPct}%`;
+        const focusSrc = `Focus Effect (${signLabel} Focus: ${focusEntry.item.name})`;
+        let appliedAny = false;
+        for (const raw of [...focusEntry.item.implicits, ...focusEntry.item.explicits]) {
+          const line = cleanModLine(raw);
+          if (
+            !line ||
+            /^\+\d+ to maximum Energy Shield$/i.test(line) ||
+            /^\d+% (?:increased|reduced) (?:maximum )?Energy Shield$/i.test(line) ||
+            /^(?:Grants Skill:|Corrupted$|Mirrored$|Unidentified$|Requires Level)/i.test(line)
+          ) {
+            continue;
+          }
+          let anyNonZero = false;
+          const deltaLine = line.replace(/([+-]?)(\d+(?:\.\d+)?)/g, (_m, sign: string, numStr: string) => {
+            const rawNum = Number(numStr);
+            const dotIdx = numStr.indexOf('.');
+            const decimals = dotIdx === -1 ? 0 : numStr.length - dotIdx - 1;
+            let delta: number;
+            if (decimals === 0) {
+              // PoB 2 ModStore.lua:114: m_modf(round(value * scale, 2))
+              delta = Math.trunc(Math.round(rawNum * scale * 100) / 100);
+            } else {
+              const factor = Math.pow(10, decimals);
+              delta = Math.trunc(Math.round(rawNum * scale * factor * 100) / 100) / factor;
+            }
+            const mag = isReduction ? -delta : delta;
+            if (mag !== 0) anyNonZero = true;
+            return `${sign}${decimals > 0 ? mag.toFixed(decimals).replace(/\.?0+$/, '') : String(Math.max(0, mag))}`;
+          });
+          if (!anyNonZero) continue;
+          const parsed = parseModLines([deltaLine], focusSrc);
+          if (parsed.length === 0) continue;
+          const adjusted = isReduction
+            ? parsed.map((m) =>
+                typeof m.value === 'number' && (m.type === 'BASE' || m.type === 'INC' || m.type === 'MORE')
+                  ? { ...m, value: -m.value }
+                  : m,
+              )
+            : parsed;
+          db.addMods(adjusted);
+          appliedAny = true;
+        }
+        if (appliedAny) {
+          db.addMod({
+            name: 'FocusEffectApplied',
+            type: 'FLAG',
+            value: true,
+            flags: 0,
+            keywordFlags: 0,
+            source: focusSrc,
+          });
+          appliedSources.push(focusSrc);
+        }
+      }
     }
   }
 

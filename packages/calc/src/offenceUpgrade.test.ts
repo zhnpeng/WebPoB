@@ -65,6 +65,36 @@ describe('offenceUpgrade — 1. computePoe2CritMultiplier', () => {
     expect(res.critBifurcates).toBeCloseTo(4 / 3, 6);
     expect(res.effectiveBonusPct).toBeCloseTo(400, 6);
     expect(res.critMultiplierPct).toBeCloseTo(500, 6);
+
+    // Exact PoB 2 LuaJIT verification on Ritualist Lightning Spear (#54):
+    // base=24.76+1=25.76%, inc=273% -> 96.08% -> bifurcated 99.85%, conditional double-crit +92.45%
+    // baseBonus=(100+17)*(1+4.49)=642.33 -> * 1.924557 = 1236.20 + 94 (Sniper's Mark) = 1330.20 -> 1430%
+    const ritualistLs = computePoe2CritMultiplier({
+      baseCritChance: 24.76,
+      flatAddedBaseCrit: 1,
+      incCritChancePct: 273,
+      flatBonusPct: 17,
+      incBonusPct: 449,
+      enemyExtraCritFlatPct: 94,
+      bifurcatedCrit: true,
+    });
+    expect(ritualistLs.effectiveCritChance).toBeCloseTo(99.85, 2);
+    expect(Math.round(ritualistLs.critMultiplierPct)).toBe(1430);
+
+    // Exact PoB 2 LuaJIT verification on Deadeye Ice Shot (#26):
+    // base=10+1.22=11.22%, inc=379%, Garukhan cap=50% -> bifurcated 75% (+33.33% bonus)
+    // baseBonus=(100+25)*(1+6.45)=931.25 -> * 4/3 = 1241.67 -> 1342%
+    const deadeyeIceShot = computePoe2CritMultiplier({
+      baseCritChance: 10,
+      flatAddedBaseCrit: 1.22,
+      incCritChancePct: 379,
+      critChanceCap: 50,
+      flatBonusPct: 25,
+      incBonusPct: 645,
+      bifurcatedCrit: true,
+    });
+    expect(deadeyeIceShot.effectiveCritChance).toBeCloseTo(75, 4);
+    expect(Math.round(deadeyeIceShot.critMultiplierPct)).toBe(1342);
   });
 
   it('applies base crit overrides (Sunder the Flesh 15%, Overwhelm 8%, Sandstorm Visage)', () => {
@@ -231,10 +261,37 @@ describe('offenceUpgrade — 4. computeSkillSpecialDamage', () => {
 
     const rf21 = computeSkillSpecialDamage('Righteous Fire', 'poe1', {
       gemLevel: 21,
-      maxLife: 5000,
-      maxEs: 0,
+      maxLife: 4773,
+      maxEs: 1883,
     });
     expect(rf21.buffSpellMorePct).toBe(40);
+    // PoE 3.23+: pure 70% of Life + ES with zero flat level base (4659.2 at 4773+1883)
+    expect(rf21.baseDotDps.Fire).toBeCloseTo(4659.2, 4);
+
+    const rfArcane = computeSkillSpecialDamage('Righteous Fire of Arcane Devotion', 'poe1', {
+      gemLevel: 20,
+      maxMana: 8000,
+    });
+    expect(rfArcane.canHit).toBe(false);
+    expect(rfArcane.canIgnite).toBe(false);
+    expect(rfArcane.spellDmgAppliesToDot).toBe(true);
+    expect(rfArcane.baseDotDps.Fire).toBeCloseTo(5600, 4);
+  });
+
+  it('marks Bane and Bane of Condemnation as non-hitting Spell DoTs (canHit = false)', () => {
+    for (const skillName of ['Bane', 'Bane of Condemnation']) {
+      const res = computeSkillSpecialDamage(skillName, 'poe1', {
+        gemLevel: 20,
+        hasSkillDotData: true,
+      });
+      expect(res.canHit).toBe(false);
+      expect(res.spellDmgAppliesToDot).toBe(true);
+      expect(res.baseDotDps.Chaos).toBeUndefined();
+
+      const fallback = computeSkillSpecialDamage(skillName, 'poe1', { gemLevel: 20 });
+      expect(fallback.canHit).toBe(false);
+      expect(fallback.baseDotDps.Chaos).toBeGreaterThan(1200);
+    }
   });
 
   it('computes PoE 1 Spell DoT skills (Exsanguinate, Reap, Corrupting Fever, Essence Drain, Blight, Vortex, Cold Snap, Forbidden Rite)', () => {

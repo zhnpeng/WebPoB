@@ -63,13 +63,71 @@ export function getPoe1MonsterLife(enemyLevel: number): number {
   return POE1_MONSTER_LIFE_ANCHORS[POE1_MONSTER_LIFE_ANCHORS.length - 1]![1];
 }
 
+/**
+ * Exact PoB 1 `Data/Misc.lua:11` `monsterAllyLifeTable` (levels 1..100).
+ * Used for PoE 1 Spell Totem / Ballista Totem life calculations (e.g. Bodyswap Spell Totem Self Explosion).
+ */
+const POE1_MONSTER_ALLY_LIFE_TABLE: readonly number[] = [
+  15, 16, 18, 20, 22, 24, 27, 29, 32, 35,
+  38, 41, 44, 48, 52, 56, 60, 65, 70, 75,
+  81, 87, 93, 99, 106, 114, 121, 130, 138, 148,
+  158, 168, 179, 190, 203, 215, 229, 244, 259, 275,
+  292, 310, 328, 348, 369, 392, 415, 440, 465, 493,
+  522, 552, 584, 618, 653, 691, 730, 772, 816, 862,
+  910, 961, 1015, 1072, 1131, 1194, 1260, 1329, 1402, 1478,
+  1559, 1644, 1733, 1827, 1926, 2029, 2138, 2253, 2373, 2500,
+  2633, 2773, 2919, 3074, 3236, 3406, 3585, 3773, 3970, 4178,
+  4395, 4624, 4864, 5116, 5381, 5659, 5951, 6257, 6578, 6916,
+];
+
+/** Exact PoB 1 `Data/Skills/sup_str.lua` `SupportSpellTotem` `totem_support_gem_level` table (Lv1..40). */
+const POE1_SPELL_TOTEM_LEVEL_BY_GEM_LEVEL: readonly number[] = [
+  8, 10, 13, 17, 21, 25, 29, 33, 37, 40,
+  43, 46, 49, 52, 55, 58, 61, 64, 67, 70,
+  72, 74, 76, 78, 80, 82, 84, 86, 88, 90,
+  91, 92, 93, 94, 95, 96, 97, 98, 99, 100,
+];
+
+/** Maps a PoE 1 Spell Totem Support gem level (1..40) to its exact monster-ally totem level (8..100). */
+export function getPoe1SpellTotemLevel(gemLevel: number): number {
+  const idx = Math.max(1, Math.min(40, Math.round(gemLevel))) - 1;
+  return POE1_SPELL_TOTEM_LEVEL_BY_GEM_LEVEL[idx] ?? 70;
+}
+
+/** Computes PoB 1 base totem maximum life (`CalcOffence.lua:340`: `floor(monsterAllyLifeTable[totemLevel] * totemLifeMult)`). */
+export function getPoe1TotemBaseLife(totemLevel: number, totemLifeMult = 1): number {
+  const lv = Math.max(1, Math.min(100, Math.round(totemLevel)));
+  const base = POE1_MONSTER_ALLY_LIFE_TABLE[lv - 1] ?? 1478;
+  return Math.floor(base * Math.max(0, totemLifeMult));
+}
+
 export interface ResolveSkillPartOptions {
   /** Override enemy / corpse level (defaults to 84 for PoE 1, 82 for PoE 2). */
   enemyLevel?: number;
-  /** Override explicit corpse life for Detonate Dead variants. */
+  /** Override explicit corpse life for Detonate Dead / Bodyswap variants. */
   corpseLife?: number;
   /** Override game context (defaults to `gemDef.game`). */
   game?: GameId;
+  /** Total skill duration multiplier `(1 + Duration INC/100) * Duration MORE` (e.g. Earthquake of Amplification Aftershock). */
+  durationMultiplier?: number;
+  /** Effective gem quality including Enhance / Dialla / Ashes bonuses (defaults to `gemInst.quality`). */
+  effectiveQuality?: number;
+  /** Player maximum life for self-explosion skills (e.g. PoE 1 Bodyswap Part 1). */
+  playerMaxLife?: number;
+  /** Totem maximum life when Bodyswap is cast by a Spell Totem (`isTotem = true`). */
+  totemMaxLife?: number;
+  /** Optional Spell Totem support gem level (1..40) used to compute base totem life when `totemMaxLife` is omitted. */
+  totemSkillLevel?: number;
+  /** Optional PoB 1 `totemLifeMult` multiplier (default 1.0 for Spell Totem). */
+  totemLifeMult?: number;
+  /** Optional summed `TotemLife` INC % when computing fallback totem life for `isTotem = true`. */
+  totemLifeIncPct?: number;
+  /** Optional product of `TotemLife` MORE multipliers when computing fallback totem life for `isTotem = true`. */
+  totemLifeMoreMult?: number;
+  /** True when the active skill is cast by a Totem (routes Bodyswap Self Explosion to `totemMaxLife`). */
+  isTotem?: boolean;
+  /** Minion maximum life for Bodyswap of Sacrifice Part 2 (Minion Explosion). */
+  minionMaxLife?: number;
 }
 
 export interface ResolvedSkillPartStats {
@@ -133,6 +191,8 @@ function resolveLevelFromMap(
   if (!levels) return undefined;
   const clamped = Math.max(1, Math.min(40, Math.round(effLevel)));
   if (levels[clamped]) return levels[clamped];
+  // Level 20 is stored directly on GemDefinition / SkillPartDefinition when omitted from `ls`
+  if (clamped === 20) return undefined;
   const keys = Object.keys(levels)
     .map(Number)
     .filter((n) => Number.isFinite(n))
@@ -188,6 +248,7 @@ function partHasDamagingStats(part: SkillPartDefinition, levelEntry?: GemLevelSt
   }
   const am =
     levelEntry?.attackDamageMultiplierPct ??
+    part.attackDamageMultiplierPct ??
     levelEntry?.attackSpeedMultiplier ??
     part.attackSpeedMultiplier;
   if (am !== undefined && am > 0) {
@@ -259,49 +320,92 @@ export function resolveActiveSkillPartAndStats(
     }
   }
 
+  const partHasOwnLevelMap = Boolean(
+    selectedPart?.levels && Object.keys(selectedPart.levels).length > 0,
+  );
   const baseLevelEntry = resolveLevelFromMap(
     gemDef.levelScaling as Record<number, GemLevelStats> | undefined,
     clampedLevel,
   );
-  const partLevelEntry = selectedPart
-    ? resolveLevelFromMap(selectedPart.levels, clampedLevel)
-    : undefined;
+  const partLevelEntry =
+    selectedPart && partHasOwnLevelMap
+      ? resolveLevelFromMap(selectedPart.levels, clampedLevel)
+      : undefined;
 
   const partIndex = selectedPart?.index ?? explicitPartIdx ?? 1;
   const partName = selectedPart?.name ?? gemDef.name.en;
 
-  const baseDamage = cloneDamageMap(
-    partLevelEntry?.baseDamage ??
-      selectedPart?.baseDamage ??
-      baseLevelEntry?.baseDamage ??
-      gemDef.baseDamage,
-  );
+  const selectedPartDotData = selectedPart?.skillData ?? partLevelEntry?.skillData;
+  const partIsPureDot =
+    Boolean(
+      selectedPart &&
+        !partLevelEntry?.baseDamage &&
+        !selectedPart.baseDamage &&
+        selectedPartDotData &&
+        (typeof selectedPartDotData.PhysicalDot === 'number' ||
+          typeof selectedPartDotData.FireDot === 'number' ||
+          typeof selectedPartDotData.ColdDot === 'number' ||
+          typeof selectedPartDotData.LightningDot === 'number' ||
+          typeof selectedPartDotData.ChaosDot === 'number'),
+    );
 
-  const damageEffectivenessPct =
-    partLevelEntry?.damageEffectivenessPct ??
-    selectedPart?.damageEffectiveness ??
-    baseLevelEntry?.damageEffectivenessPct ??
-    gemDef.damageEffectivenessPct ??
-    100;
+  const baseDamage = partIsPureDot
+    ? {}
+    : cloneDamageMap(
+        partHasOwnLevelMap
+          ? (partLevelEntry?.baseDamage ??
+              selectedPart?.baseDamage ??
+              baseLevelEntry?.baseDamage ??
+              gemDef.baseDamage)
+          : (baseLevelEntry?.baseDamage ??
+              selectedPart?.baseDamage ??
+              gemDef.baseDamage),
+      );
 
-  const attackDamageMultiplierPct =
-    partLevelEntry?.attackDamageMultiplierPct ??
-    baseLevelEntry?.attackDamageMultiplierPct ??
-    gemDef.attackDamageMultiplierPct;
+  const damageEffectivenessPct = partHasOwnLevelMap
+    ? (partLevelEntry?.damageEffectivenessPct ??
+        selectedPart?.damageEffectiveness ??
+        baseLevelEntry?.damageEffectivenessPct ??
+        gemDef.damageEffectivenessPct ??
+        100)
+    : (baseLevelEntry?.damageEffectivenessPct ??
+        selectedPart?.damageEffectiveness ??
+        gemDef.damageEffectivenessPct ??
+        100);
 
-  const attackSpeedMultiplier =
-    partLevelEntry?.attackSpeedMultiplier ??
-    selectedPart?.attackSpeedMultiplier ??
-    gemDef.attackSpeedMultiplier ??
-    1;
+  const attackDamageMultiplierPct = partHasOwnLevelMap
+    ? (partLevelEntry?.attackDamageMultiplierPct ??
+        selectedPart?.attackDamageMultiplierPct ??
+        baseLevelEntry?.attackDamageMultiplierPct ??
+        gemDef.attackDamageMultiplierPct)
+    : (baseLevelEntry?.attackDamageMultiplierPct ??
+        selectedPart?.attackDamageMultiplierPct ??
+        gemDef.attackDamageMultiplierPct);
+
+  const attackSpeedMultiplier = partHasOwnLevelMap
+    ? (partLevelEntry?.attackSpeedMultiplier ??
+        selectedPart?.attackSpeedMultiplier ??
+        baseLevelEntry?.attackSpeedMultiplier ??
+        gemDef.attackSpeedMultiplier ??
+        1)
+    : (baseLevelEntry?.attackSpeedMultiplier ??
+        selectedPart?.attackSpeedMultiplier ??
+        gemDef.attackSpeedMultiplier ??
+        1);
 
   const critChance =
     partLevelEntry?.critChance ?? selectedPart?.critChance ?? gemDef.baseCritChance ?? 0;
 
-  const compiledMods: CompiledGemMod[] = [
-    ...(baseLevelEntry?.compiledMods ?? gemDef.compiledMods ?? []),
-    ...(partLevelEntry?.compiledMods ?? selectedPart?.compiledMods ?? []),
-  ];
+  const compiledMods: CompiledGemMod[] = partHasOwnLevelMap
+    ? (partLevelEntry?.compiledMods ??
+        selectedPart?.compiledMods ??
+        baseLevelEntry?.compiledMods ??
+        gemDef.compiledMods ??
+        [])
+    : (baseLevelEntry?.compiledMods ??
+        selectedPart?.compiledMods ??
+        gemDef.compiledMods ??
+        []);
 
   const skillData: Record<string, number | boolean | string> = {
     ...(gemDef.skillData ?? {}),
@@ -326,12 +430,12 @@ export function resolveActiveSkillPartAndStats(
   const partNameLower = partName.trim().toLowerCase();
 
   // Iconic multi-part & sequence multipliers
-  if (skillKey === 'molten strike of the zenith') {
-    // Every 5th attack deals 1000% more Damage with Hits (11x hit; sequence average = (4 + 11)/5 = 3x)
-    if (/(?:5th|fifth|zenith)/i.test(partNameLower) || partIndex === 2 || partIndex === 4) {
-      sequenceDamageMultiplier = 11;
-    } else if (/(?:average|sequence|combined)/i.test(partNameLower) || partIndex === 3) {
+  if (skillKey === 'molten strike of the zenith' && !selectedPart?.compiledMods?.length) {
+    // Synthetic / uncompiled fallback for 5th-attack 1000% more (11x) & sequence average ((4*1 + 11)/5 = 3x)
+    if (/(?:average|sequence)/i.test(partNameLower)) {
       sequenceDamageMultiplier = 3;
+    } else if (/(?:5th|fifth)/i.test(partNameLower)) {
+      sequenceDamageMultiplier = 11;
     }
   } else if (skillKey === 'tempest flurry') {
     // PoE 2 Quarterstaff combo sequence (1st/2nd normal, 3rd double-hit, 4th final slam, or sequence average)
@@ -345,9 +449,18 @@ export function resolveActiveSkillPartAndStats(
     }
   } else if (skillKey === 'earthquake of amplification') {
     if (/aftershock/i.test(partNameLower) || partIndex === 2) {
-      const durationSec =
+      const baseDurationSec =
         typeof skillData.duration === 'number' && skillData.duration > 0 ? skillData.duration : 2.0;
-      // 10% more Damage per 0.1s duration (default 2.0s -> 200% more = 3.0x)
+      const qualDurBonusSec =
+        typeof options.effectiveQuality === 'number' && options.effectiveQuality > 0
+          ? Math.trunc(options.effectiveQuality * 25) / 1000
+          : 0;
+      const durMult =
+        typeof options.durationMultiplier === 'number' && Number.isFinite(options.durationMultiplier)
+          ? Math.max(0, options.durationMultiplier)
+          : 1;
+      const durationSec = (baseDurationSec + qualDurBonusSec) * durMult;
+      // 10% more Damage per 0.1s scaled duration (default 2.0s * 1 -> 200% more = 3.0x; e.g. 9.3s -> 10.3x)
       sequenceDamageMultiplier = 1 + Math.round((durationSec / 0.1) * 10) / 100;
     }
   } else if (skillKey === 'earthquake') {
@@ -356,14 +469,89 @@ export function resolveActiveSkillPartAndStats(
       sequenceDamageMultiplier = 2.5;
     }
   } else if (skillKey === 'ice nova of frostbolts') {
-    // Cast on Frostbolts expands up to 4 times per cast
+    // Cast on Frostbolts expands up to 4 times per cast ONLY when an explicit part is selected
+    // (`poe1_icenovaaltx` in poe1-gems.json has no parts, so `partName` defaults to "Ice Nova of Frostbolts").
     const repeats =
       typeof skillData.frostboltExpansions === 'number' && skillData.frostboltExpansions >= 1
         ? Math.round(skillData.frostboltExpansions)
         : 4;
-    if (/frostbolt/i.test(partNameLower) || partIndex === 2) {
+    if (Boolean(selectedPart) && (partIndex === 2 || /cast on frostbolt/i.test(partNameLower))) {
       hitsPerUse = repeats;
       sequenceDamageMultiplier = repeats;
+    }
+  } else if (skillKey === 'bodyswap' || skillKey === 'bodyswap of sacrifice') {
+    // PoB1 act_int.lua:2286-2465 (`Bodyswap` & `BodyswapAltX`):
+    // - Part 1 ("Self Explosion"): adds `lifePool * selfFireExplosionLifeMultiplier` flat Fire damage
+    //   (`Bodyswap`: 6% base + floor(quality * 0.3)% per CalcTools.lua:197; `Bodyswap of Sacrifice`: 4% base).
+    // - Part 2 ("Corpse Explosion" / "Minion Explosion"): replaces base Fire with corpse/minion life explosion.
+    const isSacrifice = skillKey === 'bodyswap of sacrifice';
+    const isSecondaryPart =
+      partIndex === 2 || /(?:corpse|minion)/i.test(partNameLower);
+    const effQual = Math.max(0, options.effectiveQuality ?? gemInst.quality ?? 0);
+
+    if (!isSecondaryPart) {
+      const baseSelfPct =
+        typeof skillData.selfFireExplosionLifeMultiplier === 'number' &&
+        skillData.selfFireExplosionLifeMultiplier > 0
+          ? skillData.selfFireExplosionLifeMultiplier
+          : isSacrifice
+            ? 0.04
+            : 0.06;
+      const qualSelfPct = isSacrifice ? 0 : Math.trunc(effQual * 0.3) / 100;
+      const totalSelfPct = baseSelfPct + qualSelfPct;
+      const computedTotemLife = options.isTotem
+        ? typeof options.totemMaxLife === 'number' && options.totemMaxLife > 0
+          ? options.totemMaxLife
+          : Math.round(
+              getPoe1TotemBaseLife(
+                getPoe1SpellTotemLevel(options.totemSkillLevel ?? clampedLevel),
+                options.totemLifeMult ?? 1,
+              ) *
+                Math.max(0, 1 + (options.totemLifeIncPct ?? 0) / 100) *
+                Math.max(0, options.totemLifeMoreMult ?? 1),
+            )
+        : 0;
+      const lifePool =
+        options.isTotem && computedTotemLife > 0
+          ? computedTotemLife
+          : typeof options.playerMaxLife === 'number' && options.playerMaxLife > 0
+            ? options.playerMaxLife
+            : 0;
+      if (lifePool > 0 && totalSelfPct > 0) {
+        const bonusFire = Math.round(lifePool * totalSelfPct);
+        const prev = baseDamage.Fire;
+        baseDamage.Fire = prev ? [prev[0] + bonusFire, prev[1] + bonusFire] : [bonusFire, bonusFire];
+        skillData.FireBonusMin = lifePool * totalSelfPct;
+        skillData.FireBonusMax = lifePool * totalSelfPct;
+        corpseLife = lifePool;
+        corpseExplosionPct = totalSelfPct;
+        corpseExplosionDamageType = 'Fire';
+      }
+    } else if (!isSacrifice) {
+      const enemyLevel = options.enemyLevel ?? 84;
+      corpseLife = options.corpseLife ?? getPoe1MonsterLife(enemyLevel);
+      corpseExplosionPct =
+        typeof skillData.corpseExplosionLifeMultiplier === 'number' &&
+        skillData.corpseExplosionLifeMultiplier > 0
+          ? skillData.corpseExplosionLifeMultiplier
+          : (60 + (clampedLevel - 1)) / 1000;
+      corpseExplosionDamageType = 'Fire';
+      const corpseDmg = Math.round(corpseLife * corpseExplosionPct);
+      // PoB1 act_int.lua:2311 tags spell FireMin/FireMax with skillPart = 1; Part 2 deals pure corpse explosion
+      baseDamage.Fire = [corpseDmg, corpseDmg];
+    } else if (typeof options.minionMaxLife === 'number' && options.minionMaxLife > 0) {
+      const baseMinionPct =
+        typeof skillData.selfFireExplosionLifeMultiplier === 'number' &&
+        skillData.selfFireExplosionLifeMultiplier > 0
+          ? skillData.selfFireExplosionLifeMultiplier
+          : 0.29;
+      const qualMinionPct = Math.trunc(effQual * 0.25) / 100;
+      const totalMinionPct = baseMinionPct + qualMinionPct;
+      const minionDmg = Math.round(options.minionMaxLife * totalMinionPct);
+      corpseLife = options.minionMaxLife;
+      corpseExplosionPct = totalMinionPct;
+      corpseExplosionDamageType = 'Fire';
+      baseDamage.Fire = [minionDmg, minionDmg];
     }
   } else if (
     skillKey === 'detonate dead' ||
@@ -454,18 +642,38 @@ export function isPoe2MetaGemDefinition(def: GemDefinition): boolean {
 
 export interface Poe2MetaGemResolution {
   isMetaGroup: boolean;
+  /** True when the meta wrapper is PoE 2 `Spell Totem` (`SummonMetaTotemSpellTotemPlayer` / `SupportMetaTotemSpellTotemPlayer`). */
+  isSpellTotemMeta?: boolean;
   metaGem?: GemInstance;
   metaDef?: GemDefinition;
   payloadActives: Array<{ inst: GemInstance; def: GemDefinition }>;
+  /** Enabled non-meta support gems in the group that should be routed onto the payload active skill. */
+  routedSupports?: Array<{ inst: GemInstance; def: GemDefinition }>;
+  /** Implicit support modifiers contributed by the meta wrapper (e.g. Spell Totem `-25%` less Cast Speed). */
+  metaSupportMods?: Mod[];
+  /** Extra SkillTypes granted to the payload active skill by the meta wrapper (e.g. `UsedByTotem`, `Totem`). */
+  addedSkillTypes?: string[];
   estimatedTriggerRate: number;
+}
+
+function isSpellTotemMetaDef(def: GemDefinition): boolean {
+  const key = normalizeGemLookupName(def.name.en);
+  if (key === 'spell totem' || key === 'supportmetatotemspelltotemplayer') {
+    return true;
+  }
+  const idLower = def.id.toLowerCase();
+  if (idLower === 'poe2_metaspelltotem' || idLower.includes('metatotemspelltotem')) {
+    return true;
+  }
+  return (def.altIds ?? []).some((a) => /metatotemspelltotem|skillgemspelltotem/i.test(a));
 }
 
 /**
  * Detects PoE 2 Meta Gem wrapper groups (`Cast on Critical`, `Cast on Shock`, `Cast on Freeze`,
  * `Cast on Ignite`, `Cast on Elemental Ailment`, `Cast on Minion Death`, `Cast on Block`,
- * `Elemental Invocation`, `Reaper's Invocation`, `Spellslinger`) and extracts the socketed
- * payload active spell(s) along with an estimated trigger rate so calculation engines never
- * report `0 DPS` on Meta Gem wrappers.
+ * `Elemental Invocation`, `Reaper's Invocation`, `Spellslinger`, and `Spell Totem`) and extracts
+ * the socketed payload active spell(s), routed supports, and wrapper modifiers (`Spell Totem`
+ * `-25%` less cast speed with `estimatedTriggerRate: 0` so totem cast speed is calculated normally).
  */
 export function resolvePoe2MetaGemGroup(
   group: SkillGroup,
@@ -480,7 +688,7 @@ export function resolvePoe2MetaGemGroup(
     const def = getGemDef(inst.gemId);
     if (!def) continue;
     resolved.push({ inst, def });
-    if (!metaGem && isPoe2MetaGemDefinition(def)) {
+    if (!metaGem && (isPoe2MetaGemDefinition(def) || isSpellTotemMetaDef(def))) {
       metaGem = inst;
       metaDef = def;
     }
@@ -494,39 +702,77 @@ export function resolvePoe2MetaGemGroup(
     };
   }
 
+  const isSpellTotem = isSpellTotemMetaDef(metaDef);
   const payloadActives = resolved.filter(
     ({ inst, def }) =>
       inst !== metaGem &&
       def.category === 'active' &&
       !def.isAuraOrBuff &&
-      !isPoe2MetaGemDefinition(def),
+      !isPoe2MetaGemDefinition(def) &&
+      !isSpellTotemMetaDef(def),
+  );
+  const routedSupports = resolved.filter(
+    ({ inst, def }) => inst !== metaGem && def.category === 'support',
   );
 
   if (payloadActives.length === 0) {
     return {
       isMetaGroup: true,
+      ...(isSpellTotem ? { isSpellTotemMeta: true } : {}),
       metaGem,
       metaDef,
       payloadActives: [],
+      routedSupports,
       estimatedTriggerRate: 0,
     };
   }
 
-  const metaKey = normalizeGemLookupName(metaDef.name.en);
-  const baseRate = POE2_META_GEM_BASE_RATES[metaKey] ?? 1.8;
-  const qualityMult = 1 + Math.max(0, metaGem.quality) * 0.01;
-  const levelMult = 1 + Math.max(0, metaGem.level - 1) * 0.015;
-  const primaryCastTime = payloadActives[0]?.def.castTime ?? 0.7;
-  const energyCastFactor = Math.max(0.5, Math.min(2.0, 0.7 / Math.max(0.35, primaryCastTime)));
-  const rawRate = (baseRate * qualityMult * levelMult * energyCastFactor) / payloadActives.length;
-  const estimatedTriggerRate = Math.round(Math.min(10, Math.max(0.25, rawRate)) * 100) / 100;
+  if (isSpellTotem) {
+    // PoB 2 Data/Skills/act_str.lua:18285-18300 SupportMetaTotemSpellTotemPlayer:
+    // -25% less Cast Speed (ModFlag.Cast), ActiveTotemLimit OVERRIDE 2, adds Totem / UsedByTotem skill types.
+    // estimatedTriggerRate MUST stay 0 so engine.ts uses payload cast speed instead of a trigger override.
+    const metaSupportMods: Mod[] = [
+      {
+        name: 'Speed',
+        type: 'MORE',
+        value: -25,
+        flags: ModFlag.Cast,
+        keywordFlags: 0,
+        source: 'Spell Totem',
+      },
+      {
+        name: 'ActiveTotemLimit',
+        type: 'OVERRIDE',
+        value: 2,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Spell Totem',
+      },
+    ];
+    return {
+      isMetaGroup: true,
+      isSpellTotemMeta: true,
+      metaGem,
+      metaDef,
+      payloadActives,
+      routedSupports,
+      metaSupportMods,
+      addedSkillTypes: ['UsedByTotem', 'UsedByProxy', 'SupportedBySpellTotem', 'Totem'],
+      estimatedTriggerRate: 0,
+    };
+  }
 
+  // Official PoB 2 (`CalcTriggers.lua`) does NOT override Speed with a synthetic energy trigger rate
+  // for PoE 2 energy-meta gems (`Cast on Critical`, `Cast on Shock/Freeze/Ignite`, `Elemental Invocation`,
+  // etc.); it computes the payload spell's own cast speed (e.g. Comet `+1.0s` total cast time -> `0.68/s`).
+  // Returning `estimatedTriggerRate: 0` lets `engine.ts` compute the exact payload spell cast speed.
   return {
     isMetaGroup: true,
     metaGem,
     metaDef,
     payloadActives,
-    estimatedTriggerRate,
+    routedSupports,
+    estimatedTriggerRate: 0,
   };
 }
 
@@ -558,6 +804,7 @@ export function evaluatePersistentBuffAndStanceSkills(
   getGemDef: GemDefLookup,
 ): PersistentBuffEvalResult {
   const appliedSkills: string[] = [];
+  const seenPersistentBuffs = new Set<string>();
   const playerModsAdded: Mod[] = [];
   const enemyModsAdded: Mod[] = [];
   let activeStance: 'Blood' | 'Sand' | undefined;
@@ -703,16 +950,23 @@ export function evaluatePersistentBuffAndStanceSkills(
       // PoE 2 Persistent Spirit Buffs (plus cross-game Trinity / Plague Bearer)
       if (game === 'poe2') {
         if (lower === 'wind dancer') {
-          const stages = Math.min(4, Math.max(1, Math.round(gem.count ?? 3)));
-          const perStagePct = Math.floor(10 + (level - 1) * 0.5);
-          addPlayerMod({
-            name: 'Evasion',
-            type: 'MORE',
-            value: perStagePct * stages,
-            flags: 0,
-            keywordFlags: 0,
-            source: `Wind Dancer (${stages} stages)`,
-          });
+          const ctxMult = playerDb.getEvalContext().multipliers;
+          const configuredStages =
+            gem.count !== undefined
+              ? gem.count
+              : (ctxMult.WindDancerStage ?? ctxMult.WindDancerStacks ?? 0);
+          const stages = Math.min(6, Math.max(0, Math.round(configuredStages)));
+          if (stages > 0) {
+            const perStagePct = Math.floor(10 + (level - 1) * 0.5);
+            addPlayerMod({
+              name: 'Evasion',
+              type: 'MORE',
+              value: perStagePct * stages,
+              flags: 0,
+              keywordFlags: 0,
+              source: `Wind Dancer (${stages} stages)`,
+            });
+          }
           playerDb.setMultiplier('WindDancerStage', stages);
           appliedSkills.push('Wind Dancer');
           continue;
@@ -771,31 +1025,45 @@ export function evaluatePersistentBuffAndStanceSkills(
         }
 
         if (lower === 'scavenged plating') {
-          const stacks = Math.min(10, Math.max(1, Math.round(gem.count ?? 10)));
-          const perStackPct = Math.floor(4 + (level - 1) * 0.15);
-          addPlayerMod({
-            name: 'Armour',
-            type: 'MORE',
-            value: perStackPct * stacks,
-            flags: 0,
-            keywordFlags: 0,
-            source: `Scavenged Plating (${stacks} stacks)`,
-          });
-          addPlayerMod({
-            name: 'Thorns',
-            type: 'BASE',
-            value: stacks * (5 + level * 2),
-            flags: 0,
-            keywordFlags: 0,
-            source: `Scavenged Plating (${stacks} stacks)`,
-          });
+          const ctxMult = playerDb.getEvalContext().multipliers;
+          const configuredStacks =
+            gem.count !== undefined
+              ? gem.count
+              : (ctxMult.ScavengedPlatingStack ?? ctxMult.ScavengedPlatingStacks ?? 0);
+          const stacks = Math.min(12, Math.max(0, Math.round(configuredStacks)));
+          if (stacks > 0) {
+            const perStackPct = Math.floor(4 + (level - 1) * 0.15);
+            addPlayerMod({
+              name: 'Armour',
+              type: 'MORE',
+              value: perStackPct * stacks,
+              flags: 0,
+              keywordFlags: 0,
+              source: `Scavenged Plating (${stacks} stacks)`,
+            });
+            addPlayerMod({
+              name: 'Thorns',
+              type: 'BASE',
+              value: stacks * (5 + level * 2),
+              flags: 0,
+              keywordFlags: 0,
+              source: `Scavenged Plating (${stacks} stacks)`,
+            });
+          }
           playerDb.setMultiplier('ScavengedPlatingStack', stacks);
           appliedSkills.push('Scavenged Plating');
           continue;
         }
 
         if (lower === 'berserk') {
-          const rageEffectPct = 20 + Math.max(0, level - 1) * 2;
+          if (seenPersistentBuffs.has('berserk')) continue;
+          seenPersistentBuffs.add('berserk');
+          // PoB 2 Data/Skills/act_str.lua:1447,1524-1563 BerserkPlayer:
+          // Lv1=40%..Lv30=69% (+1/lv), Lv31-40=+1 per 2 lv (max 74%) + 0.5% per quality (+10% at Q20).
+          // Emits RageEffect INC cleanly for engine.ts (CalcPerform.lua:789) without double-applying Damage MORE.
+          const baseRageEffect = level <= 30 ? 39 + level : 69 + Math.floor((level - 30) / 2);
+          const qualityRageEffect = Math.floor(Math.max(0, gem.quality ?? 0) * 0.5);
+          const rageEffectPct = baseRageEffect + qualityRageEffect;
           addPlayerMod({
             name: 'RageEffect',
             type: 'INC',
@@ -804,26 +1072,14 @@ export function evaluatePersistentBuffAndStanceSkills(
             keywordFlags: 0,
             source: 'Berserk',
           });
-          const activeRage = playerDb.getEvalContext().multipliers.Rage ?? 0;
-          if (activeRage > 0) {
-            const extraRageDmg = Math.floor((activeRage * rageEffectPct) / 100);
-            if (extraRageDmg > 0) {
-              addPlayerMod({
-                name: 'Damage',
-                type: 'MORE',
-                value: extraRageDmg,
-                flags: ModFlag.Attack,
-                keywordFlags: 0,
-                source: `Berserk (${activeRage} Rage)`,
-              });
-            }
-          }
           playerDb.setCondition('Berserk', true);
           appliedSkills.push('Berserk');
           continue;
         }
 
         if (lower === 'overwhelming presence') {
+          if (seenPersistentBuffs.has('overwhelming presence')) continue;
+          seenPersistentBuffs.add('overwhelming presence');
           const thresholdReduction = 20 + Math.max(0, level - 1);
           addEnemyMod({
             name: 'AilmentThreshold',
@@ -846,8 +1102,14 @@ export function evaluatePersistentBuffAndStanceSkills(
         }
 
         if (lower === 'withering presence') {
+          if (seenPersistentBuffs.has('withering presence')) continue;
+          seenPersistentBuffs.add('withering presence');
           const stacks = Math.min(10, Math.max(1, Math.round(gem.count ?? 10)));
-          const chaosTakenInc = stacks * 5;
+          // Scale PoE 2 Withered (5% per stack, max 10 stacks) by WitherEffect (e.g. +60% -> 8%/stack = 80%).
+          const witherEffectInc =
+            playerDb.sum('INC', 'WitherEffect') + enemyDb.sum('INC', 'WitherEffect');
+          const perStackPct = Math.floor(5 * Math.max(0, 1 + witherEffectInc / 100) + 1e-9);
+          const chaosTakenInc = stacks * perStackPct;
           witheredStacksApplied = Math.max(witheredStacksApplied, stacks);
           addEnemyMod({
             name: 'ChaosDamageTaken',
@@ -871,6 +1133,8 @@ export function evaluatePersistentBuffAndStanceSkills(
         }
 
         if (lower === 'combat frenzy') {
+          if (seenPersistentBuffs.has('combat frenzy')) continue;
+          seenPersistentBuffs.add('combat frenzy');
           addPlayerMod({
             name: 'CombatFrenzyActive',
             type: 'FLAG',
@@ -893,8 +1157,85 @@ export function evaluatePersistentBuffAndStanceSkills(
         }
       }
 
-      // Cross-game persistent buffs: Trinity & Plague Bearer
+      // Cross-game persistent buffs: Trinity & Plague Bearer (deduplicated across socket groups)
       if (lower === 'trinity') {
+        if (seenPersistentBuffs.has('trinity')) continue;
+        seenPersistentBuffs.add('trinity');
+
+        if (game === 'poe2') {
+          // PoB 2 Data/Skills/act_int.lua:21847-21919 TrinityPlayer:
+          // Grants MORE Elemental Damage per 30 Resonance (0% Elemental Penetration in PoE 2).
+          // Prefer level-scaled `def.levelScaling[level].compiledMods` / `def.compiledMods` when present.
+          const POE2_TRINITY_PER_30: readonly number[] = [
+            1, 1, 1, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 3, 3, 4, 4, 5, 5, 6,
+            6, 6, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 10, 10,
+          ];
+          const lvEntry = resolveLevelFromMap(
+            def.levelScaling as Record<number, GemLevelStats> | undefined,
+            level,
+          );
+          const compiledCandidates = lvEntry?.compiledMods ?? def.compiledMods ?? [];
+          const compiledPer30Mod = compiledCandidates.find(
+            (cm) => cm.name === 'ElementalDamage' && cm.type === 'MORE' && typeof cm.value === 'number',
+          );
+          const per30 =
+            typeof compiledPer30Mod?.value === 'number' && compiledPer30Mod.value > 0
+              ? compiledPer30Mod.value
+              : (POE2_TRINITY_PER_30[Math.min(40, Math.max(1, level)) - 1] ?? 6);
+
+          const ctx = playerDb.getEvalContext();
+          const rawResonance = ctx.multipliers.ResonanceCount ?? ctx.stats.ResonanceCount ?? 0;
+          // Handle both conventions cleanly:
+          // - `engine.ts` pre-divides PoE 2 `configResonanceCount` (default 300) by 30 into stacks `1..10`
+          // - Direct callers / tests may pass raw Resonance `0..300` (0 defaults to max 300 = 10 stacks)
+          let resonanceStacks: number;
+          let effectiveResonance: number;
+          if (rawResonance <= 0) {
+            resonanceStacks = 10;
+            effectiveResonance = 300;
+          } else if (rawResonance <= 10) {
+            resonanceStacks = Math.floor(rawResonance);
+            effectiveResonance = resonanceStacks * 30;
+          } else {
+            effectiveResonance = Math.min(300, rawResonance);
+            resonanceStacks = Math.min(10, Math.floor(effectiveResonance / 30));
+          }
+
+          const eleMorePct = resonanceStacks * per30;
+          if (eleMorePct > 0) {
+            addPlayerMod({
+              name: 'ElementalDamage',
+              type: 'MORE',
+              value: eleMorePct,
+              flags: 0,
+              keywordFlags: 0,
+              source: 'Trinity (Resonance)',
+            });
+          }
+          const qualSpeedInc = Math.floor(Math.max(0, gem.quality ?? 0) * 0.75);
+          if (qualSpeedInc > 0 && effectiveResonance >= 250) {
+            addPlayerMod({
+              name: 'Speed',
+              type: 'INC',
+              value: qualSpeedInc,
+              flags: ModFlag.Attack,
+              keywordFlags: 0,
+              source: 'Trinity (Quality)',
+            });
+            addPlayerMod({
+              name: 'Speed',
+              type: 'INC',
+              value: qualSpeedInc,
+              flags: ModFlag.Spell,
+              keywordFlags: 0,
+              source: 'Trinity (Quality)',
+            });
+          }
+          appliedSkills.push('Trinity');
+          continue;
+        }
+
+        // PoE 1 Trinity Support / Buff: MORE Elemental Damage + Elemental Penetration
         const eleMorePct = 18 + Math.min(22, Math.max(0, level - 1));
         const elePenPct = 8 + Math.min(12, Math.floor(level / 2));
         addPlayerMod({
@@ -1121,7 +1462,16 @@ export function resolveEffectiveWeaponSetForSkill(
   defaultWeaponSet: WeaponSetId,
   game: GameId,
 ): WeaponSetId {
-  if (game !== 'poe2' || !mainGroup?.weaponSets || mainGroup.weaponSets.length === 0) {
+  if (game !== 'poe2' || !mainGroup) {
+    return defaultWeaponSet;
+  }
+  if (mainGroup.slot === 'Weapon 1 Swap' || mainGroup.slot === 'Weapon 2 Swap') {
+    return 2;
+  }
+  if (mainGroup.slot === 'Weapon 1' || mainGroup.slot === 'Weapon 2') {
+    return 1;
+  }
+  if (!mainGroup.weaponSets || mainGroup.weaponSets.length === 0) {
     return defaultWeaponSet;
   }
   const uniqueSets = Array.from(new Set(mainGroup.weaponSets));

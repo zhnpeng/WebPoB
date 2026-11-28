@@ -421,7 +421,7 @@ export const useWebPobStore = create<WebPobState>((set, get) => {
 
     setBuildMeta: (patch) => {
       const cur = get().build;
-      const tree = getTreeForGame(cur.game);
+      const tree = getTreeForGame(cur.game, cur.tree.treeVersion);
       let next: Build = { ...cur, ...patch };
       if (patch.classId && patch.classId !== cur.classId) {
         const classes = getClassesForGame(cur.game);
@@ -457,7 +457,7 @@ export const useWebPobStore = create<WebPobState>((set, get) => {
     togglePassiveNode: (nodeId) => {
       const cur = get().build;
       const mode = get().treePaintMode;
-      const tree = getTreeForGame(cur.game);
+      const tree = getTreeForGame(cur.game, cur.tree.treeVersion);
       const startId = tree.classStartNodeIds[cur.classId] ?? cur.tree.allocatedNodeIds[0] ?? 0;
       const ascStartId = getAscendancyStartNodeId(tree, cur.ascendancyId);
       const rootIds = ascStartId ? [startId, ascStartId] : [startId];
@@ -566,7 +566,7 @@ export const useWebPobStore = create<WebPobState>((set, get) => {
 
     resetPassiveTree: () => {
       const cur = get().build;
-      const tree = getTreeForGame(cur.game);
+      const tree = getTreeForGame(cur.game, cur.tree.treeVersion);
       const startId = tree.classStartNodeIds[cur.classId] ?? Object.values(tree.classStartNodeIds)[0]!;
       commitBuild({
         ...cur,
@@ -825,6 +825,9 @@ export const useWebPobStore = create<WebPobState>((set, get) => {
         treeSpecs: specs,
         activeTreeSpecIndex: index,
       });
+      if (target.treeVersion && !hasOfficialTreeLoaded(cur.game, target.treeVersion)) {
+        void get().ensureOfficialDataLoaded(cur.game, target.treeVersion);
+      }
     },
 
     addTreeSpec: (title, cloneCurrent = true) => {
@@ -832,7 +835,7 @@ export const useWebPobStore = create<WebPobState>((set, get) => {
       const specs = cur.treeSpecs && cur.treeSpecs.length > 0 ? [...cur.treeSpecs] : [cur.tree];
       const curIdx = Math.max(0, Math.min(specs.length - 1, cur.activeTreeSpecIndex ?? 0));
       specs[curIdx] = cur.tree;
-      const tree = getTreeForGame(cur.game);
+      const tree = getTreeForGame(cur.game, cur.tree.treeVersion);
       const startId = tree.classStartNodeIds[cur.classId] ?? cur.tree.allocatedNodeIds[0] ?? 0;
       const newSpec = cloneCurrent
         ? {

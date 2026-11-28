@@ -14,6 +14,7 @@ import {
   type Item,
   type Mod,
   type NodePowerDelta,
+  type PassiveNode,
   type StatBreakdownRow,
 } from '@webpob/core';
 import {
@@ -22,9 +23,13 @@ import {
   getClassDef,
   getClusterNotable,
   getGemById,
+  getPoe2RunesData,
   getRuleset,
+  getTimelessJewelData,
+  getTimelessLutBuffer,
   getTreeForGame,
   removeNodeAndPruneDisconnected,
+  resolveGemFromPobRef,
 } from '@webpob/data';
 import { ModDB } from './modDb.js';
 import { parseModLines } from './modParser.js';
@@ -58,7 +63,9 @@ import {
   resolveEffectiveChargesAndRage,
 } from './offenceUpgrade.js';
 import {
+  POE1_EXPANSION_SOCKETS,
   applyPoolZeroingAndKeystoneRules,
+  encodeClusterNodeId,
   evaluateAllocatedClusterJewels,
   evaluateAurasAndWatchersEye,
 } from './clusterAndReservation.js';
@@ -72,6 +79,31 @@ import {
   splitModDBIntoActorBuses,
   type ActorModBuses,
 } from './skillActorRuntime.js';
+import {
+  collectSquireSupportsForMainHand,
+  computeSkillInstanceCountMultiplier,
+  evaluatePersistentBuffAndStanceSkills,
+  isPoe2MetaGemDefinition,
+  resolveActiveSkillPartAndStats,
+  resolveEffectiveWeaponSetForSkill,
+  resolvePoe2MetaGemGroup,
+} from './multiPartAndMetaRuntime.js';
+import {
+  applyPoolConversionsAndKeystones,
+  evaluateIngenuityAndRingBonuses,
+  evaluatePerSocketItemModifiers,
+  evaluatePostPoolBuildEnablingUniques,
+  evaluatePreStatBuildEnablingUniques,
+  type PostPoolUniqueResult,
+  type PreStatUniqueResult,
+} from './uniqueMechanicsRuntime.js';
+import {
+  createBinaryDatasetTimelessLutLookup,
+  evaluatePoe2UnbakedSocketedRunes,
+  evaluateTattoosAndRunegrafts,
+  evaluateTimelessJewels,
+  resolvePoe2ItemLocalRuneLines,
+} from './timelessAndTattooRuntime.js';
 
 function getActiveEquippedItems(build: Build): Array<{ slot: EquipmentSlotId; item: Item }> {
   const result: Array<{ slot: EquipmentSlotId; item: Item }> = [];
@@ -97,7 +129,105 @@ function getActiveEquippedItems(build: Build): Array<{ slot: EquipmentSlotId; it
       result.push({ slot, item });
     }
   }
+  // Support Ring 3 (PoE 2 Ritualist Unfurled Finger / PoE 1 Phrecia) when equipped
+  if (!ruleset.equipmentSlots.includes('Ring 3') && build.equipped['Ring 3']) {
+    const r3 = build.items[build.equipped['Ring 3']];
+    if (r3) {
+      result.push({ slot: 'Ring 3', item: r3 });
+    }
+  }
   return result;
+}
+
+const TWO_HANDED_IN_ONE_HAND_MOD_RE =
+  /You can wield Two-Handed Axes, Maces and Swords in one hand|可以[单單]手[装裝][备備][双雙]手斧、[双雙]手[锤錘]和[双雙]手[剑劍]/i;
+const CANT_USE_BODY_ARMOUR_MOD_RE =
+  /Can't use (?:Body|Chest) armour|[无無]法使用胸甲/i;
+const BRINGER_OF_RAIN_NAME_RE = /^(?:the\s+)?bringer of rain$|^祭[礼禮]之雨$/i;
+
+function isBringerOfRainItem(item: Item): boolean {
+  return (
+    BRINGER_OF_RAIN_NAME_RE.test(item.name.trim()) ||
+    Boolean(item.nameZh && BRINGER_OF_RAIN_NAME_RE.test(item.nameZh.trim())) ||
+    Boolean(item.nameZhTw && BRINGER_OF_RAIN_NAME_RE.test(item.nameZhTw.trim()))
+  );
+}
+
+/**
+ * Returns true when a PoE 2 build can wield Two-Handed Axes, Maces, and Swords
+ * in one hand (either via the Giant's Blood keystone or an equipped unique such
+ * as The Bringer of Rain / 祭礼之雨).
+ */
+export function canWieldTwoHandedMartialInOneHand(
+  build: Build,
+  allocatedNodes?: PassiveNode[],
+): boolean {
+  if (build.game !== 'poe2') return false;
+  const nodes = allocatedNodes ?? (() => {
+    const tree = getTreeForGame(build.game, build.tree.treeVersion);
+    const out: PassiveNode[] = [];
+    const seen = new Set<number>();
+    const activeSetNodes =
+      build.activeWeaponSet === 2 ? build.tree.weaponSet2NodeIds : build.tree.weaponSet1NodeIds;
+    for (const id of [...build.tree.allocatedNodeIds, ...activeSetNodes]) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const node = tree.nodes[id];
+      if (node) out.push(node);
+    }
+    return out;
+  })();
+
+  if (
+    nodes.some(
+      (n) =>
+        n.name.en.trim().toLowerCase() === "giant's blood" ||
+        n.stats.some((s) => TWO_HANDED_IN_ONE_HAND_MOD_RE.test(s)),
+    )
+  ) {
+    return true;
+  }
+
+  for (const { slot, item } of getActiveEquippedItems(build)) {
+    if (slot.startsWith('Flask ') || slot.startsWith('Charm ')) continue;
+    if (isBringerOfRainItem(item)) return true;
+    if ([...item.implicits, ...item.explicits].some((line) => TWO_HANDED_IN_ONE_HAND_MOD_RE.test(line))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Checks whether a weapon can be wielded in a single hand (so it can be
+ * dual-wielded or paired with a shield/offhand).
+ */
+export function canWieldWeaponInOneHand(
+  weaponStats: { weaponType?: string; twoHanded?: boolean } | undefined,
+  canWield2HIn1H: boolean,
+): boolean {
+  if (!weaponStats) return false;
+  if (!weaponStats.twoHanded) return true;
+  if (!canWield2HIn1H) return false;
+  return (
+    weaponStats.weaponType === 'Axe' ||
+    weaponStats.weaponType === 'Mace' ||
+    weaponStats.weaponType === 'Sword'
+  );
+}
+
+/**
+ * Returns true when an equipped item disables Body Armour (e.g. The Bringer of Rain).
+ */
+export function hasCantUseBodyArmour(build: Build): boolean {
+  for (const { slot, item } of getActiveEquippedItems(build)) {
+    if (slot === 'Body Armour' || slot.startsWith('Flask ') || slot.startsWith('Charm ')) continue;
+    if (isBringerOfRainItem(item)) return true;
+    if ([...item.implicits, ...item.explicits].some((line) => CANT_USE_BODY_ARMOUR_MOD_RE.test(line))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function getActiveWeapons(build: Build): { main?: Item; off?: Item } {
@@ -149,7 +279,32 @@ function injectChargeScaling(db: ModDB, chargeType: 'Power' | 'Frenzy' | 'Endura
   };
   inject(`DamagePer${chargeType}Charge`, 'Damage', 'INC');
   inject(`CritMultiPer${chargeType}Charge`, 'CritMultiplier', 'BASE');
+  inject(`CritChancePer${chargeType}Charge`, 'CritChance', 'INC');
   inject(`SpeedPer${chargeType}Charge`, 'Speed', 'INC');
+  inject(`ArmourPer${chargeType}Charge`, 'Armour', 'INC');
+  inject(`EvasionPer${chargeType}Charge`, 'Evasion', 'INC');
+  inject(`EnergyShieldPer${chargeType}Charge`, 'EnergyShield', 'INC');
+  inject(`MovementSpeedPer${chargeType}Charge`, 'MovementSpeed', 'INC');
+  inject(`AreaOfEffectPer${chargeType}Charge`, 'AreaOfEffect', 'INC');
+
+  for (const prefix of [`FlatMinPer${chargeType}Charge:`, `FlatMaxPer${chargeType}Charge:`] as const) {
+    for (const [key, mods] of db.entriesByPrefix(prefix)) {
+      const [, dmgType] = key.split(':');
+      if (!dmgType) continue;
+      const suffix = prefix.startsWith('FlatMin') ? 'Min' : 'Max';
+      for (const mod of mods) {
+        if (mod.type !== 'BASE' || typeof mod.value !== 'number') continue;
+        db.addMod({
+          name: `${dmgType}${suffix}`,
+          type: 'BASE',
+          value: active * mod.value,
+          flags: mod.flags,
+          keywordFlags: mod.keywordFlags,
+          source: `${chargeType} Charge Scaling (${active})`,
+        });
+      }
+    }
+  }
 }
 
 function injectAttributeScaling(db: ModDB, str: number, dex: number, int: number): void {
@@ -180,13 +335,73 @@ function injectAttributeScaling(db: ModDB, str: number, dex: number, int: number
       if (value <= 0 || !dmgType) continue;
       for (const mod of mods) {
         if (mod.type !== 'BASE' || typeof mod.value !== 'number') continue;
+        const scaled = Math.floor(value * mod.value + 1e-9);
+        if (scaled === 0) continue;
         db.addMod({
           name: `${dmgType}${prefix === 'FlatMinPerAttr:' ? 'Min' : 'Max'}`,
           type: 'BASE',
-          value: Math.floor(value * mod.value),
+          value: scaled,
           flags: mod.flags,
           keywordFlags: mod.keywordFlags,
-          source: `Attribute Stacking (${attr} ${value})`,
+          source: `${mod.source} (${attr} ${value})`,
+        });
+      }
+    }
+  }
+
+  // Defence, Pool, Accuracy, Speed & Block Per-Attribute scaling from modParserPoe1
+  const incPerAttrMap: ReadonlyArray<[string, string, number]> = [
+    ['ArmourPerAttr:', 'Armour', 0],
+    ['EvasionPerAttr:', 'Evasion', 0],
+    ['EvasionRatingPerAttr:', 'Evasion', 0],
+    ['EnergyShieldPerAttr:', 'EnergyShield', 0],
+    ['AccuracyRatingPerAttr:', 'Accuracy', 0],
+    ['MeleePhysicalDamagePerAttr:', 'PhysicalDamage', ModFlag.Melee],
+    ['AttackSpeedPerAttr:', 'Speed', ModFlag.Attack],
+    ['CastSpeedPerAttr:', 'Speed', ModFlag.Spell],
+  ];
+  for (const [prefix, targetStat, extraFlags] of incPerAttrMap) {
+    for (const [key, mods] of db.entriesByPrefix(prefix)) {
+      const [, attr] = key.split(':');
+      const value = attrValue(attr ?? '');
+      if (value <= 0) continue;
+      for (const mod of mods) {
+        if (typeof mod.value !== 'number') continue;
+        const scaled = Math.floor(value * mod.value + 1e-9);
+        if (scaled === 0) continue;
+        db.addMod({
+          name: targetStat,
+          type: 'INC',
+          value: scaled,
+          flags: mod.flags | extraFlags,
+          keywordFlags: mod.keywordFlags,
+          source: `${mod.source} (${attr} ${value})`,
+        });
+      }
+    }
+  }
+
+  const basePerAttrMap: ReadonlyArray<[string, string]> = [
+    ['LifePerAttr:', 'Life'],
+    ['ManaPerAttr:', 'Mana'],
+    ['BlockChancePerAttr:', 'BlockChance'],
+  ];
+  for (const [prefix, targetStat] of basePerAttrMap) {
+    for (const [key, mods] of db.entriesByPrefix(prefix)) {
+      const [, attr] = key.split(':');
+      const value = attrValue(attr ?? '');
+      if (value <= 0) continue;
+      for (const mod of mods) {
+        if (mod.type !== 'BASE' || typeof mod.value !== 'number') continue;
+        const scaled = Math.floor(value * mod.value + 1e-9);
+        if (scaled === 0) continue;
+        db.addMod({
+          name: targetStat,
+          type: 'BASE',
+          value: scaled,
+          flags: mod.flags,
+          keywordFlags: mod.keywordFlags,
+          source: `${mod.source} (${attr} ${value})`,
         });
       }
     }
@@ -197,15 +412,117 @@ function injectAttributeScaling(db: ModDB, str: number, dex: number, int: number
  * Pure TypeScript Path of Building calculation engine.
  * Supports both PoE 1 and PoE 2 via `GameRuleset`, with full stat breakdowns.
  */
-export function calculateBuild(build: Build): CalcOutput {
+export function calculateBuild(inputBuild: Build): CalcOutput {
+  const initialMainGroup =
+    inputBuild.skills.find((g) => g.id === inputBuild.mainSkillGroupId) ??
+    inputBuild.skills.find((g) => g.enabled);
+  let resolvedWeaponSet = resolveEffectiveWeaponSetForSkill(
+    initialMainGroup,
+    inputBuild.activeWeaponSet,
+    inputBuild.game,
+  );
+  if (
+    inputBuild.game === 'poe2' &&
+    resolvedWeaponSet === inputBuild.activeWeaponSet &&
+    initialMainGroup &&
+    !initialMainGroup.slot &&
+    (!initialMainGroup.weaponSets || initialMainGroup.weaponSets.length !== 1)
+  ) {
+    // In PoE 2, non-Shapeshift Spells (e.g. Volcano) auto-swap away from an Animal Talisman set if the alternate set holds a non-Talisman weapon
+    const mainActiveDef = initialMainGroup.gems
+      .filter((gm) => gm.enabled)
+      .map((gm) => getGemById('poe2', gm.gemId))
+      .find((d) => d && d.category === 'active' && !isPoe2MetaGemDefinition(d));
+    const isHumanSpell =
+      mainActiveDef &&
+      (mainActiveDef.tags.includes('spell') || (mainActiveDef.skillTypes ?? []).some((t) => t.toLowerCase() === 'spell')) &&
+      !(mainActiveDef.skillTypes ?? []).some((t) => /^(?:shapeshift|bear|wolf|wyvern)$/i.test(t));
+    if (isHumanSpell) {
+      const curSlot = resolvedWeaponSet === 2 ? 'Weapon 1 Swap' : 'Weapon 1';
+      const altSet: 1 | 2 = resolvedWeaponSet === 2 ? 1 : 2;
+      const altSlot = altSet === 2 ? 'Weapon 1 Swap' : 'Weapon 1';
+      const curWep = inputBuild.equipped[curSlot] ? inputBuild.items[inputBuild.equipped[curSlot]!] : undefined;
+      const altWep = inputBuild.equipped[altSlot] ? inputBuild.items[inputBuild.equipped[altSlot]!] : undefined;
+      if (
+        curWep &&
+        /\btalisman\b/i.test(curWep.baseName) &&
+        altWep &&
+        !/\btalisman\b/i.test(altWep.baseName)
+      ) {
+        resolvedWeaponSet = altSet;
+      }
+    }
+  }
+  if (resolvedWeaponSet !== inputBuild.activeWeaponSet) {
+    const defOut = calculateBuildSingleWeaponSet(inputBuild);
+    const offOut = calculateBuildSingleWeaponSet({
+      ...inputBuild,
+      activeWeaponSet: resolvedWeaponSet,
+    });
+    return {
+      ...defOut,
+      offence: offOut.offence,
+    };
+  }
+  return calculateBuildSingleWeaponSet(inputBuild);
+}
+
+function calculateBuildSingleWeaponSet(build: Build): CalcOutput {
+  const initialMainGroup =
+    build.skills.find((g) => g.id === build.mainSkillGroupId) ??
+    build.skills.find((g) => g.enabled);
   const ruleset = getRuleset(build.game);
   const classDef = getClassDef(build.game, build.classId);
-  const tree = getTreeForGame(build.game);
+  const tree = getTreeForGame(build.game, build.tree.treeVersion);
   const db = new ModDB();
   const warnings: CalcOutput['warnings'] = [];
   const cfg = build.config;
+  const poe2RunesDataset = build.game === 'poe2' ? getPoe2RunesData() : null;
+  const refreshPoe2ItemRunesFromDataset = (item: Item): Item => {
+    if (build.game !== 'poe2' || !poe2RunesDataset?.runes || !item.rawText || !/\{rune\}/i.test(item.rawText)) {
+      return item;
+    }
+    const rawRuneMatches = [...item.rawText.matchAll(/^\s*Rune\s*[:：]\s*(.+?)\s*$/gim)]
+      .map((m) => m[1]!.trim())
+      .filter((r) => Boolean(r) && !/^none$/i.test(r));
+    if (rawRuneMatches.length === 0) return item;
+    const lowerDatasetKeys = new Set(Object.keys(poe2RunesDataset.runes).map((k) => k.trim().toLowerCase()));
+    if (!rawRuneMatches.every((r) => lowerDatasetKeys.has(r.toLowerCase()))) {
+      return item;
+    }
+    const staleRuneCleanSet = new Set(
+      item.rawText
+        .split(/\r?\n/)
+        .filter((l) => /\{rune\}/i.test(l))
+        .map((l) => l.replace(/\{[^}]*\}/g, '').trim().toLowerCase())
+        .filter(Boolean),
+    );
+    if (staleRuneCleanSet.size === 0) return item;
+    const cleanedImplicits = item.implicits.filter(
+      (imp) => !staleRuneCleanSet.has(imp.replace(/\{[^}]*\}/g, '').trim().toLowerCase()),
+    );
+    const cleanedRawText = item.rawText
+      .split(/\r?\n/)
+      .filter((l) => !/\{rune\}/i.test(l))
+      .join('\n');
+    return {
+      ...item,
+      implicits: cleanedImplicits,
+      rawText: cleanedRawText,
+      __poe2RunesRefreshed: true,
+    } as Item;
+  };
+  const expandPoe2LocalRunes = (slot: string, rawInItem: Item): Item => {
+    if (build.game !== 'poe2') return rawInItem;
+    const item = refreshPoe2ItemRunesFromDataset(rawInItem);
+    const localRuneLines = resolvePoe2ItemLocalRuneLines(slot, item, poe2RunesDataset);
+    return localRuneLines.length > 0
+      ? { ...item, implicits: [...localRuneLines, ...item.implicits] }
+      : item;
+  };
 
   // 1. Character base stats & level scaling
+  db.setMultiplier('Level', build.level);
   db.addMod({ name: 'Str', type: 'BASE', value: classDef.baseStr, flags: 0, keywordFlags: 0, source: `Class: ${classDef.name.en}` });
   db.addMod({ name: 'Dex', type: 'BASE', value: classDef.baseDex, flags: 0, keywordFlags: 0, source: `Class: ${classDef.name.en}` });
   db.addMod({ name: 'Int', type: 'BASE', value: classDef.baseInt, flags: 0, keywordFlags: 0, source: `Class: ${classDef.name.en}` });
@@ -300,8 +617,11 @@ export function calculateBuild(build: Build): CalcOutput {
     }
   }
 
-  // 2. Passive Skill Tree (Shared + PoE 2 active weapon set nodes + Anoints + Jewels + Radius/Tattoos)
+  // 2. Passive Skill Tree (Shared + PoE 1 cluster subgraph IDs + PoE 2 active weapon set nodes + Anoints + Jewels + Radius/Tattoos)
   const activeTreeNodes = new Set<number>(build.tree.allocatedNodeIds);
+  for (const cid of build.tree.clusterNodeIds ?? []) {
+    activeTreeNodes.add(cid);
+  }
   if (ruleset.supportsWeaponSetPassives) {
     const setNodes =
       build.activeWeaponSet === 2
@@ -315,17 +635,145 @@ export function calculateBuild(build: Build): CalcOutput {
   const anointNodes = collectAllocatedAnointNodes(build, tree, activeTreeNodes);
   const activeSocketedJewels = resolveActiveSocketedJewels(build, tree, activeTreeNodes);
   const allJewelItems = activeSocketedJewels.map((j) => j.jewel);
+  const clusterEval =
+    build.game === 'poe1'
+      ? evaluateAllocatedClusterJewels(activeSocketedJewels, activeTreeNodes, getClusterNotable)
+      : null;
+
+  // Build synthetic Cluster Jewel subgraph adjacency so Split Personality inside expansion sockets computes exact BFS distance
+  const clusterAdjacency = new Map<number, number[]>();
+  if (clusterEval && clusterEval.entries.length > 0) {
+    const linkUndirected = (a: number, b: number) => {
+      let la = clusterAdjacency.get(a);
+      if (!la) {
+        la = [];
+        clusterAdjacency.set(a, la);
+      }
+      if (!la.includes(b)) la.push(b);
+      let lb = clusterAdjacency.get(b);
+      if (!lb) {
+        lb = [];
+        clusterAdjacency.set(b, lb);
+      }
+      if (!lb.includes(a)) lb.push(a);
+    };
+    const medSocketByLargeAndMedIdx = new Map<string, number>();
+    const smallSocketByParent = new Map<number, number>();
+    for (const [sockIdStr, info] of Object.entries(POE1_EXPANSION_SOCKETS)) {
+      const sockId = Number(sockIdStr);
+      if (info.socketSize === 1) {
+        medSocketByLargeAndMedIdx.set(`${info.largeSocketIndex}:${info.mediumSocketIndex}`, sockId);
+      } else if (info.socketSize === 0 && info.parentSocketId !== undefined) {
+        smallSocketByParent.set(info.parentSocketId, sockId);
+      }
+    }
+    const largeSlotToMedIdx: Record<number, number> = { 4: 0, 8: 2, 6: 1 };
+    for (const entry of clusterEval.entries) {
+      if (entry.largeSocketIndex === null) continue;
+      const medIdx = entry.mediumSocketIndex ?? 0;
+      // Map all active ring positions (0..11) in this cluster subgraph in angular order
+      const ringPosToNodeId = new Map<number, number>();
+      for (const cid of entry.allocatedClusterNodeIds) {
+        const pos = cid & 0xf;
+        if (pos <= 11) ringPosToNodeId.set(pos, cid);
+      }
+      if (entry.sizeIndex === 2) {
+        for (const [slotPosStr, subMedIdx] of Object.entries(largeSlotToMedIdx)) {
+          const medSockId = medSocketByLargeAndMedIdx.get(`${entry.largeSocketIndex}:${subMedIdx}`);
+          if (medSockId && activeTreeNodes.has(medSockId)) {
+            ringPosToNodeId.set(Number(slotPosStr), medSockId);
+          }
+        }
+      } else if (entry.sizeIndex === 1) {
+        const smSockId = smallSocketByParent.get(entry.nodeId);
+        if (smSockId && activeTreeNodes.has(smSockId)) {
+          ringPosToNodeId.set(6, smSockId);
+        }
+      }
+      const entranceId =
+        ringPosToNodeId.get(0) ??
+        encodeClusterNodeId({
+          nodeIndex: 0,
+          sizeIndex: entry.sizeIndex,
+          largeSocketIndex: entry.largeSocketIndex,
+          mediumSocketIndex: medIdx,
+        });
+      linkUndirected(entry.nodeId, entranceId);
+      const sortedPositions = [...ringPosToNodeId.keys()].sort((a, b) => a - b);
+      if (sortedPositions.length >= 2) {
+        for (let i = 0; i < sortedPositions.length; i++) {
+          const curNode = ringPosToNodeId.get(sortedPositions[i]!)!;
+          const nextNode = ringPosToNodeId.get(sortedPositions[(i + 1) % sortedPositions.length]!)!;
+          if (curNode !== nextNode) {
+            linkUndirected(curNode, nextNode);
+          }
+        }
+      }
+    }
+  }
+
   const classStartIdForRadius =
     tree.classStartNodeIds[build.classId] ?? build.tree.allocatedNodeIds[0] ?? 0;
+  const scaledRadiusJewels = activeSocketedJewels.map(({ nodeId, jewel }) => {
+    if (/split personality/i.test(jewel.name)) {
+      return { nodeId, jewel };
+    }
+    let socketEffectPct = 0;
+    const sockNode = tree.nodes[nodeId];
+    if (sockNode) {
+      for (const st of sockNode.stats ?? []) {
+        const mSockEff = st.match(
+          /^(\d+)% increased Effect of (?:bonuses gained from |the )?Socketed Jewel$/i,
+        );
+        if (mSockEff) socketEffectPct += Number(mSockEff[1]);
+      }
+    }
+    const scaled = scaleJewelModLines(jewel, allJewelItems, build.game, socketEffectPct);
+    if (
+      scaled.scale.globalScale === 1 &&
+      scaled.scale.prefixScale === 1 &&
+      scaled.scale.suffixScale === 1
+    ) {
+      return { nodeId, jewel };
+    }
+    return {
+      nodeId,
+      jewel: {
+        ...jewel,
+        implicits: scaled.implicits,
+        explicits: scaled.explicits,
+      },
+    };
+  });
   const radiusJewelEval = evaluateRadiusAndDistanceJewels(
-    activeSocketedJewels,
+    scaledRadiusJewels,
     tree,
     activeTreeNodes,
     classStartIdForRadius,
+    clusterAdjacency.size > 0 ? clusterAdjacency : undefined,
+    build.tree.nodeOverrides,
   );
+  const timelessDataset = getTimelessJewelData(build.game);
+  const timelessLutLookup = createBinaryDatasetTimelessLutLookup(
+    timelessDataset,
+    getTimelessLutBuffer,
+  );
+  const timelessEval = evaluateTimelessJewels(activeSocketedJewels, tree, activeTreeNodes, {
+    game: build.game,
+    lutLookup: timelessLutLookup,
+    useOfficialSmallNodeRules: Boolean(timelessDataset),
+  });
+  const tattooEval = evaluateTattoosAndRunegrafts(build, tree, activeTreeNodes, {
+    socketedJewels: activeSocketedJewels,
+    skipNativelyParsedRunegraftStats: true,
+  });
 
   const allAllocatedNodeDefs = [
     ...[...activeTreeNodes]
+      .filter(
+        (id) =>
+          !radiusJewelEval.suppressedNodeIds.has(id) && !timelessEval.suppressedNodeIds.has(id),
+      )
       .map((id) => tree.nodes[id])
       .filter((n): n is NonNullable<typeof n> => Boolean(n)),
     ...anointNodes,
@@ -335,7 +783,9 @@ export function calculateBuild(build: Build): CalcOutput {
   const attrOverrides = build.tree.attributeOverrides ?? {};
   const nodeOverrides = build.tree.nodeOverrides ?? {};
   for (const nodeId of activeTreeNodes) {
-    if (radiusJewelEval.suppressedNodeIds.has(nodeId)) continue;
+    if (radiusJewelEval.suppressedNodeIds.has(nodeId) || timelessEval.suppressedNodeIds.has(nodeId)) {
+      continue;
+    }
     const node = tree.nodes[nodeId];
     if (!node) continue;
     const tattooOverride = nodeOverrides[nodeId];
@@ -354,7 +804,14 @@ export function calculateBuild(build: Build): CalcOutput {
       effectiveStats,
       `Tree: ${tattooOverride?.name ?? node.name.en}`,
     );
-    const isRegularSmall = node.kind === 'small' && !node.ascendancyId;
+    const isAttributeTravelSmall =
+      node.kind === 'small' &&
+      !node.ascendancyId &&
+      effectiveStats.length === 1 &&
+      /^\+\d+\s+to\s+(?:Strength|Dexterity|Intelligence|any Attribute)$/i.test(effectiveStats[0]!.trim());
+    // PoE 2 Titan Hulking Form scales attribute travel nodes too (+5 -> +7, +8 -> +12)
+    const isRegularSmall =
+      node.kind === 'small' && !node.ascendancyId && (build.game === 'poe2' || !isAttributeTravelSmall);
     db.addMods(
       isRegularSmall && smallPassiveMult !== 1
         ? scaleSmallPassiveMods(parsedNodeMods, smallPassiveMult)
@@ -376,10 +833,6 @@ export function calculateBuild(build: Build): CalcOutput {
   }
 
   // Socketed Passive Tree Jewels (Exact PoE 1 >=65536 Cluster Subgraphs, Standard, Voices, The Adorned & Prefix/Suffix scaled)
-  const clusterEval =
-    build.game === 'poe1'
-      ? evaluateAllocatedClusterJewels(activeSocketedJewels, activeTreeNodes, getClusterNotable)
-      : null;
   if (clusterEval && clusterEval.mods.length > 0) {
     db.addMods(clusterEval.mods);
   }
@@ -388,7 +841,17 @@ export function calculateBuild(build: Build): CalcOutput {
   );
   for (const { nodeId, jewel } of activeSocketedJewels) {
     const src = `Jewel (${nodeId}): ${jewel.name}`;
-    const scaled = scaleJewelModLines(jewel, allJewelItems, build.game);
+    let socketEffectPct = 0;
+    const sockNode = tree.nodes[nodeId];
+    if (sockNode) {
+      for (const st of sockNode.stats ?? []) {
+        const mSockEff = st.match(
+          /^(\d+)% increased Effect of (?:bonuses gained from |the )?Socketed Jewel$/i,
+        );
+        if (mSockEff) socketEffectPct += Number(mSockEff[1]);
+      }
+    }
+    const scaled = scaleJewelModLines(jewel, allJewelItems, build.game, socketEffectPct);
     db.addMods(parseModLines(scaled.implicits, `${src} [Implicit]`));
     if (!evaluatedClusterSocketIds.has(nodeId)) {
       db.addMods(parseModLines(scaled.explicits, src));
@@ -402,20 +865,46 @@ export function calculateBuild(build: Build): CalcOutput {
   if (radiusJewelEval.addedMods.length > 0) {
     db.addMods(radiusJewelEval.addedMods);
   }
+  // Timeless Jewel synthetic grants & Conqueror Keystones + Tattoos & Runegrafts
+  for (const entry of timelessEval.addedStatLines) {
+    db.addMods(parseModLines(entry.lines, entry.source));
+  }
+  if (timelessEval.addedMods.length > 0) {
+    db.addMods(timelessEval.addedMods);
+  }
+  for (const entry of tattooEval.addedStatLines) {
+    db.addMods(parseModLines(entry.lines, entry.source));
+  }
+  if (tattooEval.addedMods.length > 0) {
+    db.addMods(tattooEval.addedMods);
+  }
 
   // Dual-Wielding inherent PoE 1 bonuses (10% more Attack Speed + 20% Attack Block)
+  const hasHollowPalm =
+    build.game === 'poe2' &&
+    allAllocatedNodeDefs.some((n) => n.name.en.trim().toLowerCase() === 'hollow palm technique');
   const activeWeapons = getActiveWeapons(build);
+  const hollowPalmActive = hasHollowPalm && !activeWeapons.main && !activeWeapons.off;
+  if (hollowPalmActive) {
+    db.setCondition('HollowPalm', true);
+  }
+  const canWield2HIn1H = canWieldTwoHandedMartialInOneHand(build, allAllocatedNodeDefs);
+  const cantUseBodyArmour = hasCantUseBodyArmour(build);
+  const mainWeaponSlot = build.game === 'poe2' && build.activeWeaponSet === 2 && (build.equipped['Weapon 1 Swap'] || build.equipped['Weapon 2 Swap']) ? 'Weapon 1 Swap' : 'Weapon 1';
+  const offWeaponSlot = build.game === 'poe2' && build.activeWeaponSet === 2 && (build.equipped['Weapon 1 Swap'] || build.equipped['Weapon 2 Swap']) ? 'Weapon 2 Swap' : 'Weapon 2';
   const mainWeaponResolved = activeWeapons.main
-    ? resolveItemEffectiveStats(activeWeapons.main, build.game).weaponStats
+    ? resolveItemEffectiveStats(expandPoe2LocalRunes(mainWeaponSlot, activeWeapons.main), build.game).weaponStats
     : undefined;
   const offWeaponResolved = activeWeapons.off
-    ? resolveItemEffectiveStats(activeWeapons.off, build.game).weaponStats
+    ? resolveItemEffectiveStats(expandPoe2LocalRunes(offWeaponSlot, activeWeapons.off), build.game).weaponStats
     : undefined;
+  const mainFitsOneHand = canWieldWeaponInOneHand(mainWeaponResolved, canWield2HIn1H);
+  const offFitsOneHand = canWieldWeaponInOneHand(offWeaponResolved, canWield2HIn1H);
   const isDualWielding = Boolean(
     mainWeaponResolved &&
       offWeaponResolved &&
-      !mainWeaponResolved.twoHanded &&
-      !offWeaponResolved.twoHanded,
+      mainFitsOneHand &&
+      offFitsOneHand,
   );
   if (isDualWielding && build.game === 'poe1') {
     db.addMod({
@@ -546,20 +1035,58 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
   // PoE 2 Shaman ascendancy ("Shaman" / 萨满) unlocks Bonded ("Bonded:" / "羁绊：") modifiers on items.
   const allowBonded = build.game === 'poe2' && build.ascendancyId.trim().toLowerCase() === 'shaman';
   const itemModOpts = allowBonded ? { allowBonded: true } : undefined;
+  const hasNecromanticAegis =
+    build.game === 'poe1' &&
+    allAllocatedNodeDefs.some((n) => n.name.en.trim().toLowerCase() === 'necromantic aegis');
+  const necromanticAegisMods: Mod[] = [];
   const equippedItems = getActiveEquippedItems(build);
   const nonFlaskEquippedForUniques: Array<{ slot: string; item: Item }> = [];
   let bodyLocalArmour = 0;
   let bodyLocalEvasion = 0;
   let bodyLocalEs = 0;
+  let bodyArmourRarity: Item['rarity'] | undefined;
   let helmetLocalArmour = 0;
   let helmetLocalEvasion = 0;
   let helmetLocalEs = 0;
+  let glovesLocalArmour = 0;
+  let glovesLocalEvasion = 0;
+  let glovesLocalEs = 0;
+  let bootsLocalArmour = 0;
+  let bootsLocalEvasion = 0;
+  let bootsLocalEs = 0;
   let shieldLocalArmour = 0;
   let shieldLocalEvasion = 0;
   let shieldLocalEs = 0;
+  let focusLocalEs = 0;
+  let beltCharmSlots = 0;
   let corruptedEquippedCount = 0;
   let usingShield = false;
+  let shieldBaseBlock = 0;
+  let bodyArmourEquipped = false;
+  let bodyArmourHasLifeMod = false;
+  let totalSocketFilledCount = 0;
+  let bodyArmourFilledRunes = 0;
+  const socketColorTotals = { R: 0, G: 0, B: 0, W: 0 };
+  const socketColorBySlot: Record<string, { R: number; G: number; B: number; W: number }> = {};
+  const influenceCounts: Record<string, number> = {
+    ShaperItem: 0,
+    ElderItem: 0,
+    CrusaderItem: 0,
+    HunterItem: 0,
+    RedeemerItem: 0,
+    WarlordItem: 0,
+    ExarchItem: 0,
+    EaterItem: 0,
+  };
+  const slotAttrReqs: Record<string, { str: number; dex: number; int: number }> = {};
+  let yndasStandWardPct = 0;
+  let yndasStandReplacesBodyDef = false;
+  let nightgripWardChaosPct = 0;
   for (const { slot, item: rawItem } of equippedItems) {
+    if (cantUseBodyArmour && slot === 'Body Armour') {
+      // Disabled by items such as The Bringer of Rain ("Can't use Body Armour" / "Can't use Chest armour")
+      continue;
+    }
     if (!slot.startsWith('Flask ') && !slot.startsWith('Charm ') && rawItem.corrupted) {
       corruptedEquippedCount++;
     }
@@ -578,41 +1105,227 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
       // Flasks are evaluated after equipment & tree via `evaluateActiveFlasks` (supports Mageblood & FlaskEffect scaling)
       continue;
     }
-    nonFlaskEquippedForUniques.push({ slot, item });
-    const src = `Item (${slot}): ${rawItem.name}${mirroredLabel}`;
-    const levelExpandedItem: Item = {
-      ...item,
-      implicits: expandPerPlayerLevelMods(item.implicits, build.level),
-      explicits: expandPerPlayerLevelMods(item.explicits, build.level),
-    };
-    const resolved = resolveItemEffectiveStats(levelExpandedItem, build.game);
-    const filledSockets = countFilledSockets(item);
-    const effectiveImplicits = expandPerSocketFilledMods(resolved.globalImplicits, filledSockets);
-    const effectiveExplicits = expandPerSocketFilledMods(resolved.globalExplicits, filledSockets);
-    if (slot === 'Body Armour') {
-      bodyLocalArmour = resolved.armourStats?.armour ?? 0;
-      bodyLocalEvasion = resolved.armourStats?.evasion ?? 0;
-      bodyLocalEs = resolved.armourStats?.energyShield ?? 0;
-    } else if (slot === 'Helmet') {
-      helmetLocalArmour = resolved.armourStats?.armour ?? 0;
-      helmetLocalEvasion = resolved.armourStats?.evasion ?? 0;
-      helmetLocalEs = resolved.armourStats?.energyShield ?? 0;
-    } else if ((slot === 'Weapon 2' || slot === 'Weapon 2 Swap') && resolved.armourStats) {
-      shieldLocalArmour = resolved.armourStats.armour ?? 0;
-      shieldLocalEvasion = resolved.armourStats.evasion ?? 0;
-      shieldLocalEs = resolved.armourStats.energyShield ?? 0;
-      if ((resolved.armourStats.blockChance ?? 0) > 0 || /shield|buckler/i.test(item.baseName)) {
-        usingShield = true;
+    if (slot.startsWith('Charm ')) {
+      // PoE 2 Charms only grant combat effects when explicitly toggled active; equipped charms do not passively apply
+      if (!build.activeFlaskSlots?.[slot]) {
+        continue;
       }
     }
-    if (resolved.armourStats?.armour) {
-      db.addMod({ name: 'Armour', type: 'BASE', value: resolved.armourStats.armour, flags: 0, keywordFlags: 0, source: src });
+    const isNecromanticAegisShield =
+      hasNecromanticAegis &&
+      slot === 'Weapon 2' &&
+      (Boolean(item.armourStats) || /shield|buckler/i.test(item.baseName));
+    if (isNecromanticAegisShield) {
+      const aegisSrc = `Necromantic Aegis (Shield): ${item.name}`;
+      const aegisResolved = resolveItemEffectiveStats(item, build.game);
+      if (aegisResolved.armourStats?.armour) {
+        necromanticAegisMods.push({ name: 'Armour', type: 'BASE', value: aegisResolved.armourStats.armour, flags: 0, keywordFlags: 0, source: aegisSrc });
+      }
+      if (aegisResolved.armourStats?.evasion) {
+        necromanticAegisMods.push({ name: 'Evasion', type: 'BASE', value: aegisResolved.armourStats.evasion, flags: 0, keywordFlags: 0, source: aegisSrc });
+      }
+      if (aegisResolved.armourStats?.energyShield) {
+        necromanticAegisMods.push({ name: 'EnergyShield', type: 'BASE', value: aegisResolved.armourStats.energyShield, flags: 0, keywordFlags: 0, source: aegisSrc });
+      }
+      if (aegisResolved.armourStats?.blockChance) {
+        necromanticAegisMods.push({ name: 'BlockChance', type: 'BASE', value: aegisResolved.armourStats.blockChance, flags: 0, keywordFlags: 0, source: aegisSrc });
+      }
+      necromanticAegisMods.push(
+        ...parseModLines(aegisResolved.globalImplicits, `${aegisSrc} [Implicit]`),
+        ...parseModLines(aegisResolved.globalExplicits, aegisSrc),
+      );
+      continue;
     }
-    if (resolved.armourStats?.evasion) {
-      db.addMod({ name: 'Evasion', type: 'BASE', value: resolved.armourStats.evasion, flags: 0, keywordFlags: 0, source: src });
+    const refreshedItem = refreshPoe2ItemRunesFromDataset(item);
+    nonFlaskEquippedForUniques.push({ slot, item: refreshedItem });
+    const src = `Item (${slot}): ${rawItem.name}${mirroredLabel}`;
+    const runeExpandedItem = expandPoe2LocalRunes(slot, refreshedItem);
+    const levelExpandedItem: Item = {
+      ...runeExpandedItem,
+      implicits: expandPerPlayerLevelMods(runeExpandedItem.implicits, build.level),
+      explicits: expandPerPlayerLevelMods(runeExpandedItem.explicits, build.level),
+    };
+    const resolved = resolveItemEffectiveStats(levelExpandedItem, build.game, itemModOpts);
+    const filledSockets = countFilledSockets(item);
+    totalSocketFilledCount += filledSockets;
+    if (slot === 'Body Armour') {
+      bodyArmourEquipped = true;
+      bodyArmourFilledRunes = filledSockets;
+      if (item.rawText && /\{tags:[^}]*\blife\b/i.test(item.rawText)) {
+        bodyArmourHasLifeMod = true;
+      } else {
+        for (const bl of [...item.implicits, ...item.explicits]) {
+          const cleanBl = bl.replace(/\{[^}]*\}/g, '').trim();
+          if (
+            /\blife\b/i.test(cleanBl) &&
+            !/no life modifiers|their maximum life|enemy'?s maximum life|corpse'?s maximum life/i.test(
+              cleanBl,
+            )
+          ) {
+            bodyArmourHasLifeMod = true;
+            break;
+          }
+        }
+      }
     }
-    if (resolved.armourStats?.energyShield) {
-      db.addMod({ name: 'EnergyShield', type: 'BASE', value: resolved.armourStats.energyShield, flags: 0, keywordFlags: 0, source: src });
+    if (item.sockets) {
+      const slotCols = { R: 0, G: 0, B: 0, W: 0 };
+      for (const ch of item.sockets.toUpperCase()) {
+        if (ch === 'R') {
+          socketColorTotals.R++;
+          slotCols.R++;
+        } else if (ch === 'G') {
+          socketColorTotals.G++;
+          slotCols.G++;
+        } else if (ch === 'B') {
+          socketColorTotals.B++;
+          slotCols.B++;
+        } else if (ch === 'W') {
+          socketColorTotals.W++;
+          slotCols.W++;
+        }
+      }
+      socketColorBySlot[slot] = slotCols;
+    }
+    if (item.rawText) {
+      const rt = item.rawText;
+      if (/^\s*Shaper Item\s*$/im.test(rt)) influenceCounts.ShaperItem!++;
+      if (/^\s*Elder Item\s*$/im.test(rt)) influenceCounts.ElderItem!++;
+      if (/^\s*Crusader Item\s*$/im.test(rt)) influenceCounts.CrusaderItem!++;
+      if (/^\s*Hunter Item\s*$/im.test(rt)) influenceCounts.HunterItem!++;
+      if (/^\s*Redeemer Item\s*$/im.test(rt)) influenceCounts.RedeemerItem!++;
+      if (/^\s*Warlord Item\s*$/im.test(rt)) influenceCounts.WarlordItem!++;
+      if (/^\s*Searing Exarch Item\s*$/im.test(rt)) influenceCounts.ExarchItem!++;
+      if (/^\s*Eater of Worlds Item\s*$/im.test(rt)) influenceCounts.EaterItem!++;
+      let reqStr = 0;
+      let reqDex = 0;
+      let reqInt = 0;
+      const mReqLine = rt.match(/^\s*Requires\s*:\s*(.+)$/im);
+      if (mReqLine?.[1]) {
+        const rl = mReqLine[1];
+        const ms = rl.match(/(\d+)\s*Str(?:ength)?\b/i);
+        const md = rl.match(/(\d+)\s*Dex(?:terity)?\b/i);
+        const mi = rl.match(/(\d+)\s*Int(?:elligence)?\b/i);
+        if (ms) reqStr = Number(ms[1]);
+        if (md) reqDex = Number(md[1]);
+        if (mi) reqInt = Number(mi[1]);
+      }
+      const mStrHdr = rt.match(/^\s*(?:Str|Strength)\s*:\s*(\d+)/im);
+      const mDexHdr = rt.match(/^\s*(?:Dex|Dexterity)\s*:\s*(\d+)/im);
+      const mIntHdr = rt.match(/^\s*(?:Int|Intelligence)\s*:\s*(\d+)/im);
+      if (mStrHdr) reqStr = Math.max(reqStr, Number(mStrHdr[1]));
+      if (mDexHdr) reqDex = Math.max(reqDex, Number(mDexHdr[1]));
+      if (mIntHdr) reqInt = Math.max(reqInt, Number(mIntHdr[1]));
+      if (
+        build.game === 'poe2' &&
+        reqStr === 0 &&
+        reqDex === 0 &&
+        reqInt === 0 &&
+        item.levelReq &&
+        item.levelReq > 0 &&
+        resolved.armourStats
+      ) {
+        const hasArm = (resolved.armourStats.armour ?? 0) > 0;
+        const hasEva = (resolved.armourStats.evasion ?? 0) > 0;
+        const hasEs = (resolved.armourStats.energyShield ?? 0) > 0;
+        const defKinds = (hasArm ? 1 : 0) + (hasEva ? 1 : 0) + (hasEs ? 1 : 0);
+        const factor =
+          defKinds === 1
+            ? slot === 'Gloves'
+              ? 1.23
+              : slot === 'Boots'
+                ? 1.35
+                : 1.41
+            : defKinds === 2
+              ? 0.78
+              : 0.55;
+        if (hasArm) reqStr = Math.round(item.levelReq * factor);
+        if (hasEva) reqDex = Math.round(item.levelReq * factor);
+        if (hasEs) reqInt = Math.round(item.levelReq * factor);
+      }
+      slotAttrReqs[slot] = { str: reqStr, dex: reqDex, int: reqInt };
+    }
+    const effectiveImplicits = expandPerSocketFilledMods(resolved.globalImplicits, filledSockets);
+    const effectiveExplicits = expandPerSocketFilledMods(resolved.globalExplicits, filledSockets);
+    if (slot === 'Belt' && build.game === 'poe2') {
+      for (const bl of [...effectiveImplicits, ...effectiveExplicits]) {
+        const mHasCharms = bl.match(/^Has (\d+) Charm Slots?$/i);
+        if (mHasCharms) beltCharmSlots = Math.max(beltCharmSlots, Number(mHasCharms[1]));
+        const mPlusCharms = bl.match(/^\+(\d+) Charm Slots?$/i);
+        if (mPlusCharms) beltCharmSlots += Number(mPlusCharms[1]);
+      }
+      if (beltCharmSlots === 0 && item.rawText) {
+        const mHeader = item.rawText.match(/^\s*Charm Slots\s*:\s*(\d+)/im);
+        if (mHeader) beltCharmSlots = Number(mHeader[1]);
+      }
+      if (beltCharmSlots === 0) beltCharmSlots = 1;
+    }
+    for (const checkLine of [...effectiveImplicits, ...effectiveExplicits]) {
+      const mYnda = checkLine.match(
+        /^Gain Ward (equal to|instead of) (\d+)% of Armour and Evasion Rating (?:on|from) Equipped Body Armour$/i,
+      );
+      if (mYnda) {
+        yndasStandWardPct += Number(mYnda[2]);
+        if (mYnda[1]!.toLowerCase() === 'instead of') {
+          yndasStandReplacesBodyDef = true;
+        }
+      }
+      const mNightgrip = checkLine.match(
+        /^(?:Gain|Adds) Chaos Damage equal to (\d+)% of Ward$/i,
+      );
+      if (mNightgrip) nightgripWardChaosPct += Number(mNightgrip[1]);
+    }
+    const hasStalkingPanther =
+      build.game === 'poe2' &&
+      allAllocatedNodeDefs.some((n) => n.name.en.trim().toLowerCase() === 'stalking panther');
+    const slotEvaMult = hasStalkingPanther
+      ? slot === 'Body Armour'
+        ? 0.5
+        : slot === 'Helmet' || slot === 'Gloves' || slot === 'Boots'
+          ? 2
+          : 1
+      : 1;
+    const effArmour = resolved.armourStats?.armour ?? 0;
+    const effEvasion = Math.round((resolved.armourStats?.evasion ?? 0) * slotEvaMult);
+    const effEs = resolved.armourStats?.energyShield ?? 0;
+    if (slot === 'Body Armour') {
+      bodyLocalArmour = effArmour;
+      bodyLocalEvasion = effEvasion;
+      bodyLocalEs = effEs;
+      bodyArmourRarity = item.rarity;
+    } else if (slot === 'Helmet') {
+      helmetLocalArmour = effArmour;
+      helmetLocalEvasion = effEvasion;
+      helmetLocalEs = effEs;
+    } else if (slot === 'Gloves') {
+      glovesLocalArmour = effArmour;
+      glovesLocalEvasion = effEvasion;
+      glovesLocalEs = effEs;
+    } else if (slot === 'Boots') {
+      bootsLocalArmour = effArmour;
+      bootsLocalEvasion = effEvasion;
+      bootsLocalEs = effEs;
+    } else if ((slot === 'Weapon 2' || slot === 'Weapon 2 Swap') && resolved.armourStats) {
+      if (/\bfocus\b/i.test(item.baseName)) {
+        focusLocalEs = effEs;
+      } else {
+        shieldLocalArmour = effArmour;
+        shieldLocalEvasion = effEvasion;
+        shieldLocalEs = effEs;
+      }
+      if ((resolved.armourStats.blockChance ?? 0) > 0 || /shield|buckler/i.test(item.baseName)) {
+        usingShield = true;
+        shieldBaseBlock = resolved.armourStats.blockChance ?? 0;
+      }
+    }
+    if (effArmour) {
+      db.addMod({ name: 'Armour', type: 'BASE', value: effArmour, flags: 0, keywordFlags: 0, source: src });
+    }
+    if (effEvasion) {
+      db.addMod({ name: 'Evasion', type: 'BASE', value: effEvasion, flags: 0, keywordFlags: 0, source: src });
+    }
+    if (effEs) {
+      db.addMod({ name: 'EnergyShield', type: 'BASE', value: effEs, flags: 0, keywordFlags: 0, source: src });
     }
     if (resolved.armourStats?.ward) {
       db.addMod({ name: 'Ward', type: 'BASE', value: resolved.armourStats.ward, flags: 0, keywordFlags: 0, source: src });
@@ -620,8 +1333,21 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     if (resolved.armourStats?.blockChance) {
       db.addMod({ name: 'BlockChance', type: 'BASE', value: resolved.armourStats.blockChance, flags: 0, keywordFlags: 0, source: src });
     }
-    db.addMods(parseModLines(effectiveImplicits, `${src} [Implicit]`, itemModOpts));
-    db.addMods(parseModLines(effectiveExplicits, src, itemModOpts));
+    const parsedImpMods = parseModLines(effectiveImplicits, `${src} [Implicit]`, itemModOpts);
+    const parsedExpMods = parseModLines(effectiveExplicits, src, itemModOpts);
+    if (build.game === 'poe2' && resolved.weaponStats) {
+      const wepScopeFlags =
+        ModFlag.Attack | weaponTypeToModFlags(resolved.weaponStats.weaponType, resolved.weaponStats.twoHanded);
+      for (const m of [...parsedImpMods, ...parsedExpMods]) {
+        if (m.name === 'CritDamageBonusFlat' && m.flags === 0) {
+          m.flags = wepScopeFlags;
+        }
+      }
+    }
+    const globalImpMods = parsedImpMods.filter((m) => !m.tags?.some((t) => t.type === 'SocketedIn'));
+    const globalExpMods = parsedExpMods.filter((m) => !m.tags?.some((t) => t.type === 'SocketedIn'));
+    db.addMods(globalImpMods);
+    db.addMods(globalExpMods);
     if (build.game === 'poe2') {
       const legacyLines = evaluatePoe2MagebloodLegacies(item);
       if (legacyLines.length > 0) {
@@ -630,8 +1356,11 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     }
   }
 
-  // Extra Socketed Equipment: PoE 1 Abyssal Sockets (with Darkness Enthroned scaling) & PoE 2 0.5 Grafted Limbs / Equipment Jewel Sockets
+  // Extra Socketed Equipment: PoE 1 Abyssal Sockets / Grafts & PoE 2 0.5 Grafted Limbs / Equipment Jewel Sockets
   for (const { slot, item: extraItem, effectMult } of collectExtraSocketedEquipment(build)) {
+    if (cantUseBodyArmour && /^Body Armour\s+(?:Abyssal|Jewel)\s+Socket/i.test(slot)) {
+      continue;
+    }
     const src = `Socketed (${slot}): ${extraItem.name}`;
     const imps =
       effectMult !== 1
@@ -645,8 +1374,171 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     db.addMods(parseModLines(exps, src, itemModOpts));
   }
 
-  // Evaluate Active Flasks (PoE 1 Mageblood auto-activation, magic utility flask base buffs, Enkindling/Alchemist + global FlaskEffect scaling)
-  const flaskEval = evaluateActiveFlasks(build, db.sum('INC', 'FlaskEffect'));
+  // PoE 2 Unbaked Runes, Soul Cores, Idols & Abyssal Eyes (`Rune:` headers without `{rune}` implicits)
+  if (build.game === 'poe2') {
+    const poe2RunesEval = evaluatePoe2UnbakedSocketedRunes(
+      nonFlaskEquippedForUniques,
+      build.game,
+      { datasetRunes: poe2RunesDataset, allowBonded },
+    );
+    for (const entry of poe2RunesEval.addedStatLines) {
+      db.addMods(parseModLines(entry.lines, entry.source, itemModOpts));
+    }
+    if (poe2RunesEval.addedMods.length > 0) {
+      db.addMods(poe2RunesEval.addedMods);
+    }
+  }
+
+  // PoE 2 Morior Invictus / per-Socket / per-Empty-Socket & Ingenuity / Ritualist Mystic Attunement Ring+Amulet scaling
+  evaluatePerSocketItemModifiers(nonFlaskEquippedForUniques, db, itemModOpts);
+  const hasMysticAttunement =
+    build.game === 'poe2' &&
+    allAllocatedNodeDefs.some((n) => n.name.en.trim().toLowerCase() === 'mystic attunement');
+  const ringBonusEvalInput = hasMysticAttunement
+    ? [
+        ...nonFlaskEquippedForUniques,
+        {
+          slot: 'Ascendancy',
+          item: {
+            id: '__mystic_attunement__',
+            name: 'Mystic Attunement',
+            baseName: 'Ascendancy',
+            rarity: 'UNIQUE' as const,
+            slotType: 'Any' as const,
+            quality: 0,
+            implicits: [],
+            explicits: ['25% increased bonuses gained from Equipped Rings'],
+          },
+        },
+      ]
+    : nonFlaskEquippedForUniques;
+  const ingenuityRes = evaluateIngenuityAndRingBonuses(ringBonusEvalInput, db, itemModOpts);
+  // Also apply Ingenuity/Mystic Attunement ring bonus to Ring 3 and Mystic Attunement +25% to Amulet
+  const ring3Entry = nonFlaskEquippedForUniques.find((e) => e.slot === 'Ring 3');
+  if (ring3Entry && ingenuityRes.allRingsBonusPct !== 0) {
+    evaluateIngenuityAndRingBonuses(
+      [
+        { slot: 'Ring 1', item: ring3Entry.item },
+        {
+          slot: 'Belt',
+          item: {
+            id: '__ring3_scaler__',
+            name: 'Ring Bonus Scaler',
+            baseName: 'Belt',
+            rarity: 'UNIQUE',
+            slotType: 'Belt',
+            quality: 0,
+            implicits: [],
+            explicits: [
+              `${Math.abs(ingenuityRes.allRingsBonusPct)}% ${ingenuityRes.allRingsBonusPct >= 0 ? 'increased' : 'reduced'} bonuses gained from Equipped Left Ring`,
+            ],
+          },
+        },
+      ],
+      db,
+      itemModOpts,
+    );
+  }
+  // Amulet +25% from Mystic Attunement is already applied via `AmuletEffect INC 25` (ascendancyMods.ts -> equipmentAndFlasks.ts).
+  if (yndasStandWardPct > 0 && bodyLocalArmour + bodyLocalEvasion > 0) {
+    const clampedYndaPct = Math.min(100, Math.max(0, yndasStandWardPct));
+    db.addMod({
+      name: 'Ward',
+      type: 'BASE',
+      value: Math.floor(((bodyLocalArmour + bodyLocalEvasion) * clampedYndaPct) / 100),
+      flags: 0,
+      keywordFlags: 0,
+      source: "Unique: Ynda's Stand",
+    });
+    if (yndasStandReplacesBodyDef) {
+      const removedArm = Math.floor((bodyLocalArmour * clampedYndaPct) / 100);
+      const removedEva = Math.floor((bodyLocalEvasion * clampedYndaPct) / 100);
+      if (removedArm > 0) {
+        db.addMod({
+          name: 'Armour',
+          type: 'BASE',
+          value: -removedArm,
+          flags: 0,
+          keywordFlags: 0,
+          source: "Unique: Ynda's Stand (Body Armour -> Ward)",
+        });
+        bodyLocalArmour = Math.max(0, bodyLocalArmour - removedArm);
+      }
+      if (removedEva > 0) {
+        db.addMod({
+          name: 'Evasion',
+          type: 'BASE',
+          value: -removedEva,
+          flags: 0,
+          keywordFlags: 0,
+          source: "Unique: Ynda's Stand (Body Armour -> Ward)",
+        });
+        bodyLocalEvasion = Math.max(0, bodyLocalEvasion - removedEva);
+      }
+    }
+  }
+
+  // Count main skill support colors (for Gemling Legionnaire) & Smith's Masterwork connected notables BEFORE Flasks & Auras
+  const mainSupportColors = { red: 0, green: 0, blue: 0 };
+  if (initialMainGroup) {
+    for (const gm of initialMainGroup.gems) {
+      if (!gm.enabled) continue;
+      const gd = getGemById(build.game, gm.gemId);
+      if (!gd || gd.category !== 'support') continue;
+      if (gd.color === 'red') mainSupportColors.red++;
+      else if (gd.color === 'green') mainSupportColors.green++;
+      else if (gd.color === 'blue') mainSupportColors.blue++;
+    }
+  }
+  const smithMasterworkNode = allAllocatedNodeDefs.find(
+    (n) => n.name.en.trim().toLowerCase() === "smith's masterwork",
+  );
+  const connectedNotableCount = smithMasterworkNode
+    ? smithMasterworkNode.adjacent.filter(
+        (adjId) => activeTreeNodes.has(adjId) && tree.nodes[adjId]?.kind === 'notable',
+      ).length
+    : 0;
+  db.setMultiplier('AllocatedConnectedNotable', connectedNotableCount);
+
+  // Pre-stat Ascendancy Mechanics BEFORE Flasks & Auras so Nature's Boon (+30% FlaskEffect) & Inspirational (+30% AuraEffect) apply!
+  applyPreStatAscendancyMechanics({
+    game: build.game,
+    db,
+    allocatedNodes: allAllocatedNodeDefs,
+    config: cfg,
+    bodyArmourStats: {
+      armour: bodyLocalArmour,
+      evasion: bodyLocalEvasion,
+      energyShield: bodyLocalEs,
+    },
+    bodyArmourRarity,
+    connectedNotableCount,
+    mainSkillSupportColors: mainSupportColors,
+    activeAuraCount: 0,
+    masteryCount: 0,
+  });
+
+  // Pre-stat Build-Enabling Uniques BEFORE Auras so Ashes of the Stars (+GemLevel/+GemQuality) scales Aura Gems too!
+  const preUniqueRes: PreStatUniqueResult = evaluatePreStatBuildEnablingUniques({
+    db,
+    equippedItems: nonFlaskEquippedForUniques,
+    socketedJewels: allJewelItems,
+    classBaseAttributes: {
+      str: classDef.baseStr,
+      dex: classDef.baseDex,
+      int: classDef.baseInt,
+    },
+    game: build.game,
+  });
+
+  // Evaluate Active Flasks & Tinctures (PoE 1 Mageblood auto-activation, magic utility flask base buffs, Enkindling/Alchemist + global FlaskEffect scaling)
+  const flaskEval = evaluateActiveFlasks(build, db.sum('INC', 'FlaskEffect'), {
+    ironFlaskEffectPct: db.sum('INC', 'IronFlaskEffect'),
+    tinctureEffectPct: db.sum('INC', 'TinctureEffect'),
+  });
+  if (flaskEval.activeSlots.length > 0) {
+    db.setCondition('UsingFlask', true);
+  }
   if (flaskEval.modLines.length > 0) {
     db.addMods(parseModLines(flaskEval.modLines, 'Active Flasks', itemModOpts));
   }
@@ -659,6 +1551,16 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     { socketedJewels: allJewelItems, skipHeistBaseMagnitudes: true },
   );
 
+  // Parse & apply Custom Modifiers BEFORE keystone pool conversions, auras, and Pain Attunement (62dfba0)
+  const customModLines = cfg.customMods
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => Boolean(l) && !l.startsWith('#') && !l.startsWith('//') && !l.startsWith('--'));
+  const parsedCustomAffixMods = parseModLines(customModLines, 'Custom Modifiers');
+  if (parsedCustomAffixMods.length > 0) {
+    db.addMods(parsedCustomAffixMods);
+  }
+
   // 4. Pool-Zeroing Keystones/Uniques + Global Auras, Curses/Marks, Persistent Buffs & Watcher's Eye
   const keystonePoolResult = applyPoolZeroingAndKeystoneRules({
     game: build.game,
@@ -669,20 +1571,623 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     baseMaxBlockChance: ruleset.maxBlockChance,
   });
 
-  const customModLines = cfg.customMods
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-  const parsedCustomAffixMods = parseModLines(customModLines, 'Custom Modifiers');
-  const customAuraEffect = parsedCustomAffixMods
-    .filter((m) => m.name === 'AuraEffect' && m.type === 'INC' && typeof m.value === 'number')
-    .reduce((sum, m) => sum + (m.value as number), 0);
-  const customCurseEffect = parsedCustomAffixMods
-    .filter((m) => m.name === 'CurseEffect' && m.type === 'INC' && typeof m.value === 'number')
-    .reduce((sum, m) => sum + (m.value as number), 0);
+  const customAuraEffect = 0;
+  const customCurseEffect = 0;
 
   const auraMinionDb = new ModDB();
   const auraEnemyDb = new ModDB();
+  if (necromanticAegisMods.length > 0) {
+    auraMinionDb.addMods(necromanticAegisMods);
+  }
+  if (cfg.importedPartyMods && cfg.importedPartyMods.length > 0) {
+    for (const pm of cfg.importedPartyMods) {
+      if (pm.target === 'enemy') {
+        auraEnemyDb.addMod(pm);
+      } else {
+        db.addMod(pm);
+      }
+    }
+  }
+  // Boss & Pinnacle enemy context conditions + PoE 2 Unique Boss curse/exposure penalties
+  if (cfg.enemyIsBoss !== 'None') {
+    auraEnemyDb.setCondition('RareOrUnique', true);
+    db.setCondition('EnemyRareOrUnique', true);
+    db.setMultiplier('EnemyPower', 20);
+    if (cfg.enemyIsBoss === 'Pinnacle') {
+      auraEnemyDb.setCondition('PinnacleBoss', true);
+      db.setCondition('EnemyPinnacleBoss', true);
+    }
+    if (build.game === 'poe2') {
+      auraEnemyDb.setCondition('Unique', true);
+      auraEnemyDb.addMod({
+        name: 'CurseEffectOnSelf',
+        type: 'MORE',
+        value: -50,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Unique Boss',
+      });
+      auraEnemyDb.addMod({
+        name: 'ExposureEffectOnSelf',
+        type: 'MORE',
+        value: -50,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Unique Boss',
+      });
+    }
+    if (cfg.rawInputs?.__enemyIsUber) {
+      auraEnemyDb.addMod({
+        name: 'DamageTaken',
+        type: 'MORE',
+        value: -70,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Uber Pinnacle Boss',
+      });
+    }
+  }
+
+  // Populate generic PoB <ConfigSet><Input> Conditions & Multipliers BEFORE Aura/Buff & Stat evaluation
+  if (build.game === 'poe1' && cfg.rawInputs?.bloodSandStance !== 'SAND') {
+    db.setCondition('BloodStance', true);
+    auraEnemyDb.setCondition('BloodStance', true);
+  } else if (build.game === 'poe1' && cfg.rawInputs?.bloodSandStance === 'SAND') {
+    db.setCondition('SandStance', true);
+    auraEnemyDb.setCondition('SandStance', true);
+  }
+  if (cfg.rawInputs?.bannerPlanted) {
+    db.setCondition('BannerPlanted', true);
+    if (build.game === 'poe1') {
+      const maxValour = 50 + db.sum('BASE', 'MaximumValour');
+      const rawValour =
+        typeof cfg.rawInputs.bannerValour === 'number' ? cfg.rawInputs.bannerValour : maxValour;
+      const effValour = Math.max(0, Math.min(maxValour, rawValour));
+      db.setMultiplier('ValourStacks', effValour);
+      db.setMultiplier('BannerValour', effValour);
+    }
+  }
+  if (build.game === 'poe1') {
+    if (cfg.rawInputs?.Unbound) {
+      db.setCondition('Unbound', true);
+    }
+    if (cfg.rawInputs?.bladestormInBloodstorm) {
+      db.setCondition('BladestormInBloodstorm', true);
+    }
+    if (cfg.rawInputs?.bladestormInSandstorm) {
+      db.setCondition('BladestormInSandstorm', true);
+    }
+    if (typeof cfg.rawInputs?.barkskinStacks === 'number') {
+      const bs = Math.max(0, Math.min(10, cfg.rawInputs.barkskinStacks));
+      db.setMultiplier('BarkskinStacks', bs);
+      db.setMultiplier('MissingBarkskinStacks', 10 - bs);
+    }
+  }
+  const prideMaxEffect = cfg.rawInputs?.prideEffect === 'MAX';
+  db.setCondition('PrideMaxEffect', prideMaxEffect);
+  auraEnemyDb.setCondition('PrideMaxEffect', prideMaxEffect);
+  if (db.sum('BASE', 'FewerEnemiesToBeSurrounded') >= 5) {
+    db.setCondition('Surrounded', true);
+  }
+  if (cfg.rawInputs) {
+    let risingTempestCount = 0;
+    for (const [rawKey, rawVal] of Object.entries(cfg.rawInputs)) {
+      if (typeof rawVal === 'boolean') {
+        if (rawKey.startsWith('conditionEnemy') && rawKey.length > 'conditionEnemy'.length) {
+          const enemyVar = rawKey.slice('conditionEnemy'.length);
+          db.setCondition(`Enemy${enemyVar}`, rawVal);
+          auraEnemyDb.setCondition(enemyVar, rawVal);
+          if (enemyVar === 'Ignited' && rawVal) {
+            db.setCondition('EnemyBurning', true);
+            auraEnemyDb.setCondition('Burning', true);
+          } else if (enemyVar === 'CriticalWeakness' && rawVal && build.game === 'poe2') {
+            const cwStacks =
+              typeof cfg.rawInputs.enemyCriticalWeaknessStacks === 'number'
+                ? cfg.rawInputs.enemyCriticalWeaknessStacks
+                : 20;
+            const cwCrit = Math.max(0, Math.min(20, cwStacks)) / 2;
+            if (cwCrit > 0) {
+              auraEnemyDb.addMod({
+                name: 'SelfCritChance',
+                type: 'BASE',
+                value: cwCrit,
+                flags: 0,
+                keywordFlags: 0,
+                source: 'Critical Weakness',
+              });
+            }
+          } else if (enemyVar === 'CoveredInAsh' && rawVal) {
+            auraEnemyDb.addMod({
+              name: 'FireDamageTaken',
+              type: 'INC',
+              value: 20,
+              flags: 0,
+              keywordFlags: 0,
+              source: 'Covered in Ash',
+            });
+          } else if (enemyVar === 'CoveredInFrost' && rawVal) {
+            auraEnemyDb.addMod({
+              name: 'ColdDamageTaken',
+              type: 'INC',
+              value: 20,
+              flags: 0,
+              keywordFlags: 0,
+              source: 'Covered in Frost',
+            });
+          } else if (enemyVar === 'Brittle' && rawVal && build.game === 'poe1') {
+            const brittleVal =
+              typeof cfg.rawInputs.conditionBrittleEffect === 'number'
+                ? Math.max(0, Math.min(6, cfg.rawInputs.conditionBrittleEffect))
+                : 6;
+            if (brittleVal > 0) {
+              auraEnemyDb.addMod({
+                name: 'SelfCritChance',
+                type: 'BASE',
+                value: brittleVal,
+                flags: 0,
+                keywordFlags: 0,
+                source: 'Brittle',
+              });
+            }
+          } else if (enemyVar === 'OnBrittleGround' && rawVal && build.game === 'poe1') {
+            auraEnemyDb.setCondition('Brittle', true);
+            db.setCondition('EnemyBrittle', true);
+            if (!cfg.rawInputs.conditionEnemyBrittle) {
+              auraEnemyDb.addMod({
+                name: 'SelfCritChance',
+                type: 'BASE',
+                value: 2,
+                flags: 0,
+                keywordFlags: 0,
+                source: 'Brittle Ground',
+              });
+            }
+          } else if (enemyVar === 'Scorched' && rawVal && build.game === 'poe1') {
+            const scorchVal =
+              typeof cfg.rawInputs.conditionScorchedEffect === 'number'
+                ? Math.max(0, Math.min(30, cfg.rawInputs.conditionScorchedEffect))
+                : 30;
+            if (scorchVal > 0) {
+              for (const r of ['FireResist', 'ColdResist', 'LightningResist'] as const) {
+                auraEnemyDb.addMod({
+                  name: r,
+                  type: 'BASE',
+                  value: -scorchVal,
+                  flags: 0,
+                  keywordFlags: 0,
+                  source: 'Scorched',
+                });
+              }
+            }
+          } else if (enemyVar === 'OnScorchedGround' && rawVal && build.game === 'poe1') {
+            auraEnemyDb.setCondition('Scorched', true);
+            db.setCondition('EnemyScorched', true);
+            if (!cfg.rawInputs.conditionEnemyScorched) {
+              for (const r of ['FireResist', 'ColdResist', 'LightningResist'] as const) {
+                auraEnemyDb.addMod({
+                  name: r,
+                  type: 'BASE',
+                  value: -10,
+                  flags: 0,
+                  keywordFlags: 0,
+                  source: 'Scorched Ground',
+                });
+              }
+            }
+          }
+        } else if (rawKey === 'conditionOldSpear' && rawVal) {
+          db.setCondition('SpearOlderThanHalfSecond', true);
+        } else if (rawKey.startsWith('condition') && rawKey.length > 'condition'.length) {
+          db.setCondition(rawKey.slice('condition'.length), rawVal);
+        } else if (
+          (rawKey === 'risingTempestLightning' ||
+            rawKey === 'risingTempestCold' ||
+            rawKey === 'risingTempestFire') &&
+          rawVal
+        ) {
+          risingTempestCount += 1;
+        } else if (rawKey === 'momentumDamage' && rawVal) {
+          db.setCondition('Moved2m', true);
+        } else if (rawKey === 'parryActive' && rawVal) {
+          db.setCondition('ParryActive', true);
+        } else if (rawKey === 'onLeyline' && rawVal) {
+          db.setCondition('OnLeyline', true);
+        } else if (rawKey.startsWith('buff') && rawKey.length > 'buff'.length) {
+          db.setCondition(rawKey.slice('buff'.length), rawVal);
+          if (rawKey === 'buffUnholyMight' && rawVal) {
+            if (build.game === 'poe1') {
+              db.addMod({
+                name: 'PhysicalDamageConvertToChaos',
+                type: 'BASE',
+                value: 100,
+                flags: 0,
+                keywordFlags: 0,
+                source: 'Unholy Might',
+              });
+            } else {
+              db.addMod({
+                name: 'DamageGainAsChaos',
+                type: 'BASE',
+                value: 30,
+                flags: 0,
+                keywordFlags: 0,
+                source: 'Chaotic Might',
+              });
+            }
+          } else if (rawKey === 'buffDiamondShrine' && rawVal) {
+            db.addMod({
+              name: 'DiamondShrineCrit',
+              type: 'FLAG',
+              value: true,
+              flags: 0,
+              keywordFlags: 0,
+              source: 'Diamond Shrine',
+            });
+          } else if (rawKey === 'buffAdrenaline' && rawVal) {
+            db.addMod({ name: 'Damage', type: 'INC', value: 100, flags: 0, keywordFlags: 0, source: 'Adrenaline' });
+            db.addMod({ name: 'Speed', type: 'INC', value: 25, flags: ModFlag.Attack, keywordFlags: 0, source: 'Adrenaline' });
+            db.addMod({ name: 'Speed', type: 'INC', value: 25, flags: ModFlag.Spell, keywordFlags: 0, source: 'Adrenaline' });
+            db.addMod({ name: 'MovementSpeed', type: 'INC', value: 25, flags: 0, keywordFlags: 0, source: 'Adrenaline' });
+            db.addMod({ name: 'PhysDamageReduction', type: 'BASE', value: 10, flags: 0, keywordFlags: 0, source: 'Adrenaline' });
+          }
+        } else if (rawKey === 'brandAttachedToEnemy' && rawVal) {
+          db.setCondition('TargetingBrandedEnemy', true);
+        } else if (rawKey === 'infusedChannellingInfusion' && rawVal) {
+          db.setCondition('InfusionActive', true);
+        } else if (rawKey === 'arcaneCloakUsedRecentlyCheck' && rawVal) {
+          db.setCondition('ArcaneCloakUsedRecently', true);
+        }
+      } else if (typeof rawVal === 'number') {
+        if (rawKey.startsWith('multiplier') && rawKey.length > 'multiplier'.length) {
+          const multVar = rawKey.slice('multiplier'.length);
+          db.setMultiplier(multVar, rawVal);
+          db.setStat(multVar, rawVal);
+          if (multVar.endsWith('Count') && multVar.length > 5) {
+            const baseVar = multVar.slice(0, -5);
+            db.setMultiplier(baseVar, rawVal);
+            db.setStat(baseVar, rawVal);
+          }
+          if (multVar === 'PoisonOnEnemy') {
+            db.setMultiplier('PoisonStacks', rawVal);
+          } else if (multVar === 'NearbyEnemies' && rawVal === 1) {
+            db.setCondition('OnlyOneNearbyEnemy', true);
+            db.setCondition('AtMostOneNearbyRareOrUniqueEnemy', true);
+          }
+        } else if (rawKey === 'conditionEnemyChilledEffect') {
+          db.setMultiplier('EnemyChillEffect', rawVal);
+        } else if (rawKey === 'aspectOfTheSpiderWebStacks') {
+          auraEnemyDb.setMultiplier('SpiderWeb', rawVal);
+        } else if (rawKey === 'frostShieldStages') {
+          db.setMultiplier('FrostShieldStage', rawVal);
+        } else if (rawKey === 'sigilOfPowerStages') {
+          db.setMultiplier('SigilOfPowerStage', rawVal);
+        } else if (rawKey === 'intensifyIntensity') {
+          db.setMultiplier('Intensity', rawVal);
+        } else if (rawKey === 'overrideCruelty') {
+          db.setMultiplier('Cruelty', Math.min(40, Math.max(0, rawVal)));
+        } else if (rawKey === 'configResonanceCount') {
+          const effRes =
+            build.game === 'poe2'
+              ? Math.max(0, Math.min(10, rawVal > 10 ? Math.floor(rawVal / 30) : rawVal))
+              : Math.max(0, Math.min(50, rawVal));
+          db.setMultiplier('ResonanceCount', effRes);
+          db.setStat('ResonanceCount', effRes);
+        } else if (rawKey === 'configUnholyResonanceCount') {
+          const effURes = Math.max(0, Math.min(50, rawVal));
+          db.setMultiplier('UnholyResonanceCount', effURes);
+          db.setStat('UnholyResonanceCount', effURes);
+          db.setMultiplier('ResonanceCount', effURes);
+          db.setStat('ResonanceCount', effURes);
+        } else if (rawKey === 'BrandsAttachedToEnemy') {
+          db.setMultiplier('BrandsAttachedToEnemy', rawVal);
+          if (rawVal > 0) db.setCondition('TargetingBrandedEnemy', true);
+        } else if (rawKey === 'SecondsSinceInevitableCrit') {
+          db.setMultiplier('SecondsSinceInevitableCrit', rawVal);
+          if (rawVal < 4) {
+            db.setCondition('CritRecently', true);
+            db.setCondition('SkillCritRecently', true);
+          }
+        } else if (rawKey === 'incisionConsumedRecently') {
+          db.setMultiplier('IncisionConsumedRecently', rawVal);
+        } else if (rawKey === 'windDancerStacks') {
+          db.setMultiplier('WindDancerStacks', rawVal);
+        } else if (rawKey === 'purpleFlameStacks') {
+          db.setMultiplier('PurpleFlamesCount', Math.min(10, Math.max(0, rawVal)));
+        } else if (rawKey === 'TotemsSummoned') {
+          db.setMultiplier('SummonedTotem', rawVal);
+          db.setMultiplier('TotemsSummoned', rawVal);
+        }
+      } else if (typeof rawVal === 'string') {
+        if (rawKey === 'prideEffect' && rawVal.toUpperCase() === 'MAX') {
+          db.setCondition('PrideMaxEffect', true);
+          auraEnemyDb.setCondition('PrideMaxEffect', true);
+        } else if (rawKey === 'bloodSandStance') {
+          if (rawVal.toUpperCase() === 'SAND') {
+            db.setCondition('SandStance', true);
+            db.setCondition('BloodStance', false);
+          } else if (rawVal.toUpperCase() === 'BLOOD') {
+            db.setCondition('BloodStance', true);
+            db.setCondition('SandStance', false);
+          }
+        }
+      }
+    }
+    if (risingTempestCount > 0) {
+      db.setMultiplier('DifferentElementalSkillUsedRecently', risingTempestCount);
+    }
+  }
+  // Pre-set stance & stage multipliers from enabled persistent skills before evaluateAurasAndWatchersEye
+  for (const grp of build.skills) {
+    if (!grp.enabled) continue;
+    for (const gm of grp.gems) {
+      if (!gm.enabled) continue;
+      const gd = getGemById(build.game, gm.gemId);
+      if (!gd) continue;
+      const gn = gd.name.en.trim().toLowerCase();
+      if (gn === 'blood and sand' || gn === 'flesh and stone') {
+        const sp = gm.skillPart ?? grp.skillPart ?? 1;
+        if (sp === 2) {
+          db.setCondition('SandStance', true);
+          db.setCondition('BloodStance', false);
+        } else {
+          db.setCondition('BloodStance', true);
+          db.setCondition('SandStance', false);
+        }
+      } else if (gn === 'wind dancer' && build.game === 'poe2') {
+        const rawWd = Number(
+          cfg.rawInputs?.windDancerStacks ??
+            cfg.rawInputs?.multiplierWindDancerStacks ??
+            cfg.rawInputs?.multiplierWindDancerStage ??
+            (gm.count !== undefined ? gm.count : 0),
+        );
+        const wdStacks = Number.isFinite(rawWd) ? Math.min(6, Math.max(0, Math.round(rawWd))) : 0;
+        db.setMultiplier('WindDancerStage', wdStacks);
+        db.setMultiplier('WindDancerStacks', wdStacks);
+      } else if (gn === 'scavenged plating' && build.game === 'poe2') {
+        const rawSp = Number(
+          cfg.rawInputs?.scavengedPlatingStacks ??
+            cfg.rawInputs?.multiplierScavengedPlatingStacks ??
+            cfg.rawInputs?.multiplierScavengedPlatingStack ??
+            (gm.count !== undefined ? gm.count : 0),
+        );
+        const spStacks = Number.isFinite(rawSp) ? Math.min(12, Math.max(0, Math.round(rawSp))) : 0;
+        db.setMultiplier('ScavengedPlatingStack', spStacks);
+        db.setMultiplier('ScavengedPlatingStacks', spStacks);
+      } else if (gn === 'trinity') {
+        const defaultRes = build.game === 'poe2' ? 10 : 50;
+        const rawRes = Number(cfg.rawInputs?.configResonanceCount ?? (build.game === 'poe2' ? 300 : 50));
+        const effRes =
+          build.game === 'poe2'
+            ? Math.max(0, Math.min(10, Math.floor((Number.isFinite(rawRes) ? rawRes : 300) / 30)))
+            : Math.max(0, Math.min(50, Number.isFinite(rawRes) ? rawRes : defaultRes));
+        db.setMultiplier('ResonanceCount', effRes);
+        db.setStat('ResonanceCount', effRes);
+      } else if (gn === 'demon form' && build.game === 'poe2' && cfg.rawInputs?.inDemonForm !== false) {
+        db.setCondition('DemonForm', true);
+        db.setCondition('Shapeshifted', true);
+        const dfStacks = Number(cfg.rawInputs?.demonFormStacks ?? 10);
+        db.setMultiplier('DemonFlameStacks', Number.isFinite(dfStacks) && dfStacks > 0 ? dfStacks : 10);
+      } else if (
+        build.game === 'poe1' &&
+        gn === 'frost shield' &&
+        Number(cfg.rawInputs?.frostShieldStages ?? 0) > 0
+      ) {
+        const fsStages = Math.min(4, Math.max(0, Math.round(Number(cfg.rawInputs?.frostShieldStages ?? 0))));
+        const fsLvl = resolveGemLevelEntry(gd, Math.max(1, Math.min(40, gm.level)));
+        const fsCmods = fsLvl?.compiledMods ?? gd.compiledMods ?? [];
+        const critMod = fsCmods.find((m) => m.name === 'CritChance' && m.type === 'BASE' && typeof m.value === 'number');
+        if (critMod && typeof critMod.value === 'number' && fsStages > 0) {
+          db.addMod({
+            name: 'BaseCritChance',
+            type: 'BASE',
+            value: critMod.value * fsStages,
+            flags: ModFlag.Spell,
+            keywordFlags: 0,
+            source: `Skill: Frost Shield (${fsStages} stages)`,
+          });
+        }
+      } else if (
+        build.game === 'poe1' &&
+        gn === 'sigil of power' &&
+        Number(cfg.rawInputs?.sigilOfPowerStages ?? 0) > 0
+      ) {
+        const spStages = Math.min(4, Math.max(0, Math.round(Number(cfg.rawInputs?.sigilOfPowerStages ?? 0))));
+        const spLvl = resolveGemLevelEntry(gd, Math.max(1, Math.min(40, gm.level)));
+        const spCmods = spLvl?.compiledMods ?? gd.compiledMods ?? [];
+        const lMinMod = spCmods.find((m) => m.name === 'LightningMin' && m.type === 'BASE' && typeof m.value === 'number');
+        const lMaxMod = spCmods.find((m) => m.name === 'LightningMax' && m.type === 'BASE' && typeof m.value === 'number');
+        if (lMinMod && lMaxMod && typeof lMinMod.value === 'number' && typeof lMaxMod.value === 'number' && spStages > 0) {
+          db.addMod({
+            name: 'LightningMin',
+            type: 'BASE',
+            value: lMinMod.value * spStages,
+            flags: 0,
+            keywordFlags: 0,
+            source: `Skill: Sigil of Power (${spStages} stages)`,
+          });
+          db.addMod({
+            name: 'LightningMax',
+            type: 'BASE',
+            value: lMaxMod.value * spStages,
+            flags: 0,
+            keywordFlags: 0,
+            source: `Skill: Sigil of Power (${spStages} stages)`,
+          });
+        }
+      } else if (
+        build.game === 'poe1' &&
+        (gn === 'molten shell' || gn === 'vaal molten shell') &&
+        gm.enableGlobal1 !== false
+      ) {
+        const msLvl = resolveGemLevelEntry(gd, Math.max(1, Math.min(40, gm.level)));
+        const msCmods = msLvl?.compiledMods ?? gd.compiledMods ?? [];
+        const flatArmMod = msCmods.find((m) => m.name === 'Armour' && m.type === 'BASE' && typeof m.value === 'number');
+        if (flatArmMod && typeof flatArmMod.value === 'number' && flatArmMod.value > 0) {
+          const buffEffMult = Math.max(0, 1 + db.sum('INC', 'BuffEffect') / 100) * db.more('BuffEffect');
+          db.addMod({
+            name: 'Armour',
+            type: 'BASE',
+            value: Math.floor(flatArmMod.value * buffEffMult + 1e-9),
+            flags: 0,
+            keywordFlags: 0,
+            source: `Skill: ${gd.name.en}`,
+          });
+        }
+      }
+    }
+  }
+
+  // PoE 1 Warcry Player Buffs (when enabled and NOT linked to Autoexertion — aligned with PoB1 CalcPerform.lua:2476)
+  if (build.game === 'poe1' && !db.flag('CannotGainWarcryBuffs')) {
+    const appliedWarcryBuffs = new Set<string>();
+    const hasRedbladeBanner = nonFlaskEquippedForUniques.some(
+      (e) => e.item.name.trim().toLowerCase() === 'redblade banner',
+    );
+    const minWarcryPower = db.sum('BASE', 'MinimumWarcryPower');
+    const baseEnemyPower = cfg.enemyIsBoss !== 'None' ? 20 : 5;
+    const warcryPower = hasRedbladeBanner ? 100 : Math.max(baseEnemyPower, minWarcryPower);
+    const globalDurInc = db.sum('INC', 'Duration') + db.sum('INC', 'WarcryDuration');
+    const globalDurMore = db.more('Duration') * db.more('WarcryDuration');
+    const globalCdrInc = db.sum('INC', 'CooldownRecovery') + db.sum('INC', 'WarcryCooldownRecoveryRate');
+    const warcryBuffEffMult =
+      Math.max(0, 1 + (db.sum('INC', 'BuffEffect') + db.sum('INC', 'WarcryBuffEffect')) / 100) *
+      db.more('BuffEffect');
+
+    for (const grp of build.skills) {
+      if (!grp.enabled) continue;
+      const hasAutoexertion = grp.gems.some((gm) => {
+        if (!gm.enabled) return false;
+        const d = getGemById('poe1', gm.gemId);
+        return Boolean(d && d.name.en.trim().toLowerCase() === 'autoexertion');
+      });
+      if (hasAutoexertion) continue;
+
+      for (const gm of grp.gems) {
+        if (!gm.enabled) continue;
+        const gd = getGemById('poe1', gm.gemId);
+        if (!gd || gd.category !== 'active') continue;
+        const gn = gd.name.en.trim().toLowerCase();
+        if (appliedWarcryBuffs.has(gn)) continue;
+        if (
+          gn !== 'seismic cry' &&
+          gn !== 'ancestral cry' &&
+          gn !== 'infernal cry' &&
+          gn !== 'intimidating cry' &&
+          gn !== "battlemage's cry"
+        ) {
+          continue;
+        }
+        appliedWarcryBuffs.add(gn);
+        const lvEntry = resolveGemLevelEntry(gd, Math.max(1, Math.min(40, gm.level)));
+        const sd = lvEntry?.skillData ?? gd.skillData ?? {};
+        const baseDur = typeof sd.duration === 'number' && sd.duration > 0 ? sd.duration : 3.4;
+        const baseCd = typeof sd.cooldown === 'number' && sd.cooldown > 0 ? sd.cooldown : 8;
+        const fullDur = baseDur * Math.max(0, 1 + globalDurInc / 100) * globalDurMore;
+        const actualCd = baseCd / Math.max(0.1, 1 + globalCdrInc / 100);
+        const uptime = Math.min(1, fullDur / Math.max(0.1, actualCd));
+        const powerCap = gn === 'ancestral cry' ? 15 : gn === "battlemage's cry" ? 30 : 25;
+        const powerBonus = Math.floor(Math.min(warcryPower, powerCap) / 5);
+        const mult = warcryBuffEffMult * powerBonus * uptime;
+        if (mult <= 0) continue;
+
+        if (gn === 'seismic cry') {
+          const armMore = Math.floor(5 * mult + 1e-9);
+          if (armMore > 0) {
+            db.addMod({ name: 'Armour', type: 'MORE', value: armMore, flags: 0, keywordFlags: 0, source: 'Skill: Seismic Cry' });
+          }
+        } else if (gn === 'ancestral cry') {
+          const maxRes = Math.floor(1 * mult + 1e-9);
+          const eleRes = Math.floor(5 * mult + 1e-9);
+          if (maxRes > 0) {
+            for (const mr of ['FireResistMax', 'ColdResistMax', 'LightningResistMax'] as const) {
+              db.addMod({ name: mr, type: 'BASE', value: maxRes, flags: 0, keywordFlags: 0, source: 'Skill: Ancestral Cry' });
+            }
+          }
+          if (eleRes > 0) {
+            for (const er of ['FireResist', 'ColdResist', 'LightningResist'] as const) {
+              db.addMod({ name: er, type: 'BASE', value: eleRes, flags: 0, keywordFlags: 0, source: 'Skill: Ancestral Cry' });
+            }
+          }
+        } else if (gn === 'infernal cry') {
+          const physAsFire = Math.floor(5 * mult + 1e-9);
+          if (physAsFire > 0) {
+            db.addMod({ name: 'PhysicalDamageGainAsFire', type: 'BASE', value: physAsFire, flags: 0, keywordFlags: 0, source: 'Skill: Infernal Cry' });
+          }
+        } else if (gn === 'intimidating cry') {
+          const msInc = Math.floor(3 * mult + 1e-9);
+          if (msInc > 0) {
+            db.addMod({ name: 'MovementSpeed', type: 'INC', value: msInc, flags: 0, keywordFlags: 0, source: 'Skill: Intimidating Cry' });
+          }
+        } else if (gn === "battlemage's cry") {
+          const baseCrit = Math.round(0.5 * mult * 100) / 100;
+          if (baseCrit > 0) {
+            db.addMod({ name: 'BaseCritChance', type: 'BASE', value: baseCrit, flags: ModFlag.Attack, keywordFlags: 0, source: "Skill: Battlemage's Cry" });
+          }
+        }
+      }
+    }
+  }
+
+  // PoE 2 Shapeshift Form inherent player buffs (Bear / Wolf / Wyvern on active main skill)
+  if (build.game === 'poe2' && initialMainGroup) {
+    for (const gm of initialMainGroup.gems) {
+      if (!gm.enabled) continue;
+      const gd = getGemById('poe2', gm.gemId);
+      if (!gd || gd.category !== 'active') continue;
+      const stLower = new Set((gd.skillTypes ?? []).map((t) => t.toLowerCase()));
+      const nmLower = gd.name.en.trim().toLowerCase();
+      if (
+        stLower.has('bear') ||
+        nmLower === 'maul' ||
+        nmLower === 'walking calamity' ||
+        nmLower === 'furious slam' ||
+        nmLower === 'ferocious roar' ||
+        nmLower === 'rampage'
+      ) {
+        db.setCondition('Shapeshifted', true);
+        db.setCondition('BearForm', true);
+        db.addMod({
+          name: 'Armour',
+          type: 'BASE',
+          value: 10 + 10 * build.level,
+          flags: 0,
+          keywordFlags: 0,
+          source: 'Bear Form',
+        });
+        db.addMod({
+          name: 'ArmourAppliesToEle',
+          type: 'BASE',
+          value: 30,
+          flags: 0,
+          keywordFlags: 0,
+          source: 'Bear Form',
+        });
+        break;
+      } else if (
+        stLower.has('wolf') ||
+        nmLower === 'shred' ||
+        nmLower === 'pounce' ||
+        nmLower === 'lunar assault'
+      ) {
+        db.setCondition('Shapeshifted', true);
+        db.setCondition('WolfForm', true);
+        db.addMod({
+          name: 'MovementSpeed',
+          type: 'INC',
+          value: 30,
+          flags: 0,
+          keywordFlags: 0,
+          source: 'Wolf Form',
+        });
+        break;
+      } else if (stLower.has('wyvern') || nmLower === 'rend' || nmLower === 'wing blast') {
+        db.setCondition('Shapeshifted', true);
+        db.setCondition('WyvernForm', true);
+        break;
+      }
+    }
+  }
+
   const auraEval = evaluateAurasAndWatchersEye({
     build,
     playerDb: db,
@@ -694,6 +2199,27 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     mainWeaponType: mainWeaponResolved?.weaponType,
   });
   const totalSpiritReserved = auraEval.totalSpiritReserved;
+
+  // Evaluate Vaal active buffs, Herald of Agony Virulence, & Plague Bearer (skipping skills already handled by auraEval)
+  const auraHandledNames = new Set(auraEval.auras.map((a) => a.gemName.trim().toLowerCase()));
+  const nonOverlappingPersistentGroups = build.skills.map((grp) => ({
+    ...grp,
+    gems: grp.gems.filter((gm) => {
+      const gd = getGemById(build.game, gm.gemId);
+      if (!gd) return false;
+      const gn = gd.name.en.trim().toLowerCase();
+      if (gn.startsWith('vaal ')) return true;
+      return !auraHandledNames.has(gn);
+    }),
+  }));
+  evaluatePersistentBuffAndStanceSkills(
+    nonOverlappingPersistentGroups,
+    build.activeWeaponSet,
+    build.game,
+    db,
+    auraEnemyDb,
+    (id) => getGemById(build.game, id),
+  );
 
   // 5. Build Configuration (Charges, Onslaught, Custom Mods)
   if (build.game === 'poe1') {
@@ -719,12 +2245,21 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     }
   }
 
-  if (cfg.onslaught) {
-    db.addMod({ name: 'Speed', type: 'INC', value: 20, flags: ModFlag.Attack, keywordFlags: 0, source: 'Onslaught' });
-    db.addMod({ name: 'Speed', type: 'INC', value: 20, flags: ModFlag.Spell, keywordFlags: 0, source: 'Onslaught' });
-    db.addMod({ name: 'MovementSpeed', type: 'INC', value: 20, flags: 0, keywordFlags: 0, source: 'Onslaught' });
+  const hasExistingOnslaught = db
+    .calcStat('MovementSpeed')
+    .sources.some((s) => s.type === 'INC' && /onslaught/i.test(s.source));
+  const onslaughtEffInc = db.sum('INC', ['OnslaughtEffect', 'BuffEffectOnSelf']);
+  if (cfg.onslaught && !hasExistingOnslaught) {
+    const silverFlaskForCfg = flaskEval.perFlask.find((f) => f.baseName === 'Silver Flask');
+    const flaskEffBonusPct = silverFlaskForCfg ? Math.round((silverFlaskForCfg.effectMult - 1) * 100) : 0;
+    const onslaughtVal = Math.floor(20 * Math.max(0, 1 + (flaskEffBonusPct + onslaughtEffInc) / 100) + 1e-9);
+    if (onslaughtVal > 0) {
+      db.addMod({ name: 'Speed', type: 'INC', value: onslaughtVal, flags: ModFlag.Attack, keywordFlags: 0, source: 'Onslaught' });
+      db.addMod({ name: 'Speed', type: 'INC', value: onslaughtVal, flags: ModFlag.Spell, keywordFlags: 0, source: 'Onslaught' });
+      db.addMod({ name: 'MovementSpeed', type: 'INC', value: onslaughtVal, flags: 0, keywordFlags: 0, source: 'Onslaught' });
+    }
   }
-  if (cfg.conditionLowLife && db.flag('PainAttunement')) {
+  if (build.game === 'poe1' && cfg.conditionLowLife && db.flag('PainAttunement')) {
     db.addMod({
       name: 'Damage',
       type: 'MORE',
@@ -734,16 +2269,42 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
       source: 'Pain Attunement (Low Life)',
     });
   }
-  if (cfg.buffArcaneSurge) {
-    // Official PoE 1 3.30 Arcane Surge buff: 20% increased Cast Speed & 30% increased Mana Regen
-    db.addMod({ name: 'Speed', type: 'INC', value: 20, flags: ModFlag.Spell, keywordFlags: 0, source: 'Arcane Surge' });
-    db.addMod({ name: 'ManaRegen', type: 'INC', value: 30, flags: 0, keywordFlags: 0, source: 'Arcane Surge' });
+  if (
+    cfg.buffArcaneSurge ||
+    db.getEvalContext().conditions.AffectedByArcaneSurge ||
+    db.flag('Condition:ArcaneSurge') ||
+    db.flag('Condition:AffectedByArcaneSurge')
+  ) {
+    db.setCondition('AffectedByArcaneSurge', true);
   }
-  if (cfg.buffTailwind) {
-    // Tailwind: 8% increased Action Speed (multiplicative with Attack/Cast/Movement Speed)
-    db.addMod({ name: 'Speed', type: 'MORE', value: 8, flags: ModFlag.Attack, keywordFlags: 0, source: 'Tailwind' });
-    db.addMod({ name: 'Speed', type: 'MORE', value: 8, flags: ModFlag.Spell, keywordFlags: 0, source: 'Tailwind' });
-    db.addMod({ name: 'MovementSpeed', type: 'MORE', value: 8, flags: 0, keywordFlags: 0, source: 'Tailwind' });
+  if (build.game === 'poe1' && (cfg.buffTailwind || db.flag('Condition:Tailwind'))) {
+    // PoE 1 3.25+ Tailwind: 8% increased Action Speed scaled by TailwindEffect (Deadeye Gathering Winds: +10% per Gale Force, cap 10 -> 16%)
+    // Added directly into `ActionSpeed INC` so it combines additively with Boots Action Speed (PoB1 CalcOffence.lua)
+    const rawGaleForce = Number(cfg.rawInputs?.multiplierGaleForce ?? db.getEvalContext().multipliers.GaleForce ?? 0);
+    const hasGatheringWinds = allAllocatedNodeDefs.some(
+      (n) => n.name.en.trim().toLowerCase() === 'gathering winds',
+    );
+    const galeForceEff =
+      hasGatheringWinds && Number.isFinite(rawGaleForce) && rawGaleForce > 0
+        ? Math.min(10, Math.floor(rawGaleForce)) * 10
+        : 0;
+    const tailwindEffInc = db.sum('INC', 'TailwindEffect') + galeForceEff;
+    const tailwindActionSpd = Math.floor(8 * Math.max(0, 1 + tailwindEffInc / 100) + 1e-9);
+    if (tailwindActionSpd > 0) {
+      db.addMod({ name: 'ActionSpeed', type: 'INC', value: tailwindActionSpd, flags: 0, keywordFlags: 0, source: 'Tailwind' });
+      db.addMod({ name: 'MovementSpeed', type: 'MORE', value: tailwindActionSpd, flags: 0, keywordFlags: 0, source: 'Tailwind' });
+    }
+  } else if (build.game === 'poe2') {
+    const rawTw = Number(cfg.rawInputs?.multiplierTailwind ?? db.getEvalContext().multipliers.Tailwind ?? 0);
+    const twStacks = Number.isFinite(rawTw) ? Math.min(10, Math.max(0, Math.floor(rawTw))) : 0;
+    if (twStacks > 0) {
+      // PoE 2 Tailwind (CalcSetup.lua:1013-1017): +2% Attack/Cast Speed, +1% MoveSpeed, +1% DeflectEffect, +10% Evasion per stack (cap 10)
+      db.addMod({ name: 'Speed', type: 'INC', value: 2 * twStacks, flags: ModFlag.Attack, keywordFlags: 0, source: `Tailwind (${twStacks})` });
+      db.addMod({ name: 'Speed', type: 'INC', value: 2 * twStacks, flags: ModFlag.Cast, keywordFlags: 0, source: `Tailwind (${twStacks})` });
+      db.addMod({ name: 'MovementSpeed', type: 'INC', value: twStacks, flags: 0, keywordFlags: 0, source: `Tailwind (${twStacks})` });
+      db.addMod({ name: 'DeflectEffect', type: 'INC', value: twStacks, flags: 0, keywordFlags: 0, source: `Tailwind (${twStacks})` });
+      db.addMod({ name: 'Evasion', type: 'INC', value: 10 * twStacks, flags: 0, keywordFlags: 0, source: `Tailwind (${twStacks})` });
+    }
   }
   if (cfg.enemyIntimidated) {
     db.addMod({ name: 'EnemyDamageTaken', type: 'INC', value: 10, flags: ModFlag.Attack, keywordFlags: 0, source: 'Intimidated' });
@@ -752,52 +2313,75 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     db.addMod({ name: 'EnemyDamageTaken', type: 'INC', value: 10, flags: ModFlag.Spell, keywordFlags: 0, source: 'Unnerved' });
   }
   if (cfg.witheredStacks && cfg.witheredStacks > 0) {
-    const stacks = Math.min(15, Math.max(0, Math.round(cfg.witheredStacks)));
-    db.addMod({
-      name: 'EnemyChaosDamageTaken',
-      type: 'INC',
-      value: stacks * 6,
-      flags: 0,
-      keywordFlags: 0,
-      source: `Withered (${stacks})`,
-    });
-  }
-  const extraExposure = db.sum('BASE', 'ExtraExposure');
-  const exposurePenalty = -(10 + extraExposure);
-  if (cfg.enemyFireExposure) {
-    db.addMod({ name: 'EnemyFireResist', type: 'BASE', value: exposurePenalty, flags: 0, keywordFlags: 0, source: 'Fire Exposure' });
-  }
-  if (cfg.enemyColdExposure) {
-    db.addMod({ name: 'EnemyColdResist', type: 'BASE', value: exposurePenalty, flags: 0, keywordFlags: 0, source: 'Cold Exposure' });
-  }
-  if (cfg.enemyLightningExposure) {
-    db.addMod({ name: 'EnemyLightningResist', type: 'BASE', value: exposurePenalty, flags: 0, keywordFlags: 0, source: 'Lightning Exposure' });
-  }
-  if (cfg.rage && cfg.rage > 0) {
-    // Official PoE 1 (3.30) & PoE 2 (0.5) Rage: Base Maximum Rage = 30, grants 1% more Attack Damage per Rage
-    const maxRage = Math.max(0, 30 + Math.round(db.sum('BASE', 'MaximumRage')));
-    const rageStacks = Math.min(maxRage, Math.max(0, Math.round(cfg.rage)));
-    if (rageStacks > 0) {
-      db.addMod({
-        name: 'Damage',
-        type: 'MORE',
-        value: rageStacks,
-        flags: ModFlag.Attack,
+    const maxWither = build.game === 'poe2' ? 10 : 15;
+    const stacks = Math.min(maxWither, Math.max(0, Math.round(cfg.witheredStacks)));
+    const basePerStack = build.game === 'poe2' ? 5 : 6;
+    const perStack = Math.floor(basePerStack * Math.max(0, 1 + db.sum('INC', 'WitherEffect') / 100) + 1e-9);
+    const witherInc = stacks * perStack;
+    if (witherInc > 0) {
+      auraEnemyDb.addMod({
+        name: 'ChaosDamageTaken',
+        type: 'INC',
+        value: witherInc,
+        flags: 0,
         keywordFlags: 0,
-        source: `Rage (${rageStacks})`,
+        source: `Withered (${stacks})`,
       });
     }
   }
-
-  if (cfg.customMods.trim()) {
-    db.addMods(parsedCustomAffixMods);
+  if (build.game === 'poe2') {
+    if (cfg.enemyFireExposure) {
+      auraEnemyDb.addMod({ name: 'FireExposure', type: 'BASE', value: 20, flags: 0, keywordFlags: 0, source: 'Fire Exposure' });
+      db.setCondition('EnemyFireExposure', true);
+      db.setCondition('EnemyExposure', true);
+      auraEnemyDb.setCondition('FireExposure', true);
+      auraEnemyDb.setCondition('Exposure', true);
+    }
+    if (cfg.enemyColdExposure) {
+      auraEnemyDb.addMod({ name: 'ColdExposure', type: 'BASE', value: 20, flags: 0, keywordFlags: 0, source: 'Cold Exposure' });
+      db.setCondition('EnemyColdExposure', true);
+      db.setCondition('EnemyExposure', true);
+      auraEnemyDb.setCondition('ColdExposure', true);
+      auraEnemyDb.setCondition('Exposure', true);
+    }
+    if (cfg.enemyLightningExposure) {
+      auraEnemyDb.addMod({ name: 'LightningExposure', type: 'BASE', value: 20, flags: 0, keywordFlags: 0, source: 'Lightning Exposure' });
+      db.setCondition('EnemyLightningExposure', true);
+      db.setCondition('EnemyExposure', true);
+      auraEnemyDb.setCondition('LightningExposure', true);
+      auraEnemyDb.setCondition('Exposure', true);
+    }
+  } else {
+    const extraExposure = db.sum('BASE', 'ExtraExposure');
+    const exposureEffMult = Math.max(0, 1 + db.sum('INC', 'ExposureEffect') / 100);
+    const exposurePenalty = -Math.floor((10 + extraExposure) * exposureEffMult + 1e-9);
+    if (cfg.enemyFireExposure) {
+      db.addMod({ name: 'EnemyFireResist', type: 'BASE', value: exposurePenalty, flags: 0, keywordFlags: 0, source: 'Fire Exposure' });
+      db.setCondition('EnemyFireExposure', true);
+      db.setCondition('EnemyExposure', true);
+    }
+    if (cfg.enemyColdExposure) {
+      db.addMod({ name: 'EnemyColdResist', type: 'BASE', value: exposurePenalty, flags: 0, keywordFlags: 0, source: 'Cold Exposure' });
+      db.setCondition('EnemyColdExposure', true);
+      db.setCondition('EnemyExposure', true);
+    }
+    if (cfg.enemyLightningExposure) {
+      db.addMod({ name: 'EnemyLightningResist', type: 'BASE', value: exposurePenalty, flags: 0, keywordFlags: 0, source: 'Lightning Exposure' });
+      db.setCondition('EnemyLightningExposure', true);
+      db.setCondition('EnemyExposure', true);
+    }
   }
 
-  // Grant Onslaught from Silver Flask if not already active via config
-  if (!cfg.onslaught && flaskEval.grantsOnslaught) {
-    db.addMod({ name: 'Speed', type: 'INC', value: 20, flags: ModFlag.Attack, keywordFlags: 0, source: 'Silver Flask (Onslaught)' });
-    db.addMod({ name: 'Speed', type: 'INC', value: 20, flags: ModFlag.Spell, keywordFlags: 0, source: 'Silver Flask (Onslaught)' });
-    db.addMod({ name: 'MovementSpeed', type: 'INC', value: 20, flags: 0, keywordFlags: 0, source: 'Silver Flask (Onslaught)' });
+  // Grant Onslaught from Silver Flask if not already active via config or unique (scaled by Silver Flask + OnslaughtEffect!)
+  if (!cfg.onslaught && !hasExistingOnslaught && flaskEval.grantsOnslaught) {
+    const silverFlask = flaskEval.perFlask.find((f) => f.baseName === 'Silver Flask');
+    const flaskEffPct = silverFlask ? Math.round((silverFlask.effectMult - 1) * 100) : 0;
+    const onslaughtVal = Math.floor(20 * Math.max(0, 1 + (flaskEffPct + onslaughtEffInc) / 100) + 1e-9);
+    if (onslaughtVal > 0) {
+      db.addMod({ name: 'Speed', type: 'INC', value: onslaughtVal, flags: ModFlag.Attack, keywordFlags: 0, source: 'Silver Flask (Onslaught)' });
+      db.addMod({ name: 'Speed', type: 'INC', value: onslaughtVal, flags: ModFlag.Spell, keywordFlags: 0, source: 'Silver Flask (Onslaught)' });
+      db.addMod({ name: 'MovementSpeed', type: 'INC', value: onslaughtVal, flags: 0, keywordFlags: 0, source: 'Silver Flask (Onslaught)' });
+    }
   }
 
   // Populate ModDB Tag Evaluation Context (Conditions, Multipliers, Equipment Stats)
@@ -805,10 +2389,95 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
   const usingStaff = wtMain === 'Staff' || wtMain === 'Quarterstaff';
   const usingTwoHanded = Boolean(mainWeaponResolved?.twoHanded);
   const usingOneHanded = Boolean(mainWeaponResolved && !mainWeaponResolved.twoHanded);
-  const hasActiveHerald = auraEval.auras.some((a) => a.isHerald);
+  const activeHeraldCount = auraEval.auras.filter((a) => a.isHerald).length;
+  const hasActiveHerald = activeHeraldCount > 0;
+  for (const a of auraEval.auras) {
+    if (!a.isHerald) continue;
+    const hKey = a.gemName.replace(/[^A-Za-z]/g, '');
+    if (hKey) {
+      db.setCondition(`AffectedBy${hKey}`, true);
+    }
+  }
   const activeAuraCount = auraEval.auras.filter((a) => a.isAura && a.appliesToPlayer).length;
+  const hasLifeResActive = auraEval.lifeReservations.some(
+    (r) => !r.zeroedByBlessing && (r.basePct > 0 || r.baseFlat > 0),
+  );
+  const hasManaResActive = auraEval.manaReservations.some(
+    (r) => !r.zeroedByBlessing && (r.basePct > 0 || r.baseFlat > 0),
+  );
+  if (!bodyArmourEquipped || !bodyArmourHasLifeMod) {
+    db.setCondition('NoLifeModOnBodyArmour', true);
+  }
+  if (hasLifeResActive && hasManaResActive) {
+    db.setCondition('ReservedLifeAndMana', true);
+  }
+  const surroundedEnemiesReq = 5 - db.sum('BASE', 'SurroundedEnemyReduction');
+  const cfgEnemyCount = Number(cfg.rawInputs?.enemyCount ?? cfg.rawInputs?.multiplierNearbyEnemyCount ?? 1);
+  if (
+    surroundedEnemiesReq <= (Number.isFinite(cfgEnemyCount) && cfgEnemyCount > 0 ? cfgEnemyCount : 1) ||
+    cfg.rawInputs?.conditionSurrounded === true
+  ) {
+    db.setCondition('Surrounded', true);
+  }
+  const hasCompanionActive = build.skills.some(
+    (grp) =>
+      grp.enabled &&
+      grp.gems.some((gm) => {
+        if (!gm.enabled) return false;
+        const gd = getGemById(build.game, gm.gemId);
+        if (!gd) return false;
+        const n = gd.name.en.toLowerCase();
+        return (
+          n.includes('companion') ||
+          n.includes('tame beast') ||
+          n.includes('rhoa mount') ||
+          gd.tags.some((t) => t.toLowerCase() === 'companion') ||
+          (gd.skillTypes ?? []).some((t) => t.toLowerCase() === 'companion')
+        );
+      }),
+  );
+  if (hasCompanionActive || cfg.rawInputs?.conditionCompanionInPresence === true) {
+    db.setCondition('CompanionInPresence', true);
+  }
+  const isBloodMageAsc =
+    build.game === 'poe2' && build.ascendancyId.trim().toLowerCase() === 'blood mage';
+  if (isBloodMageAsc || db.flag('BloodMagic') || db.sum('BASE', 'ManaCostConvertToLife') > 0) {
+    db.setCondition('SpellCostsLife', true);
+  }
+  const mainOccupiesBothHands = Boolean(mainWeaponResolved?.twoHanded && !mainFitsOneHand);
+  const offHandEmpty = !activeWeapons.off && !usingShield && focusLocalEs === 0 && !mainOccupiesBothHands;
+  db.setCondition('OffHandIsEmpty', offHandEmpty);
+  // Automatic PoB CalcPerform combat conditions derived from active skills
+  if (initialMainGroup) {
+    for (const gm of initialMainGroup.gems) {
+      if (!gm.enabled) continue;
+      const gd = getGemById(build.game, gm.gemId);
+      if (!gd || gd.category !== 'active') continue;
+      const tagsL = new Set([
+        ...gd.tags.map((t) => t.toLowerCase()),
+        ...(gd.skillTypes ?? []).map((t) => t.toLowerCase()),
+      ]);
+      const isTotemSkill = tagsL.has('totem') || tagsL.has('summonsattacktotem');
+      const isTrapSkill = tagsL.has('trap') || tagsL.has('trapped');
+      const isMineSkill = tagsL.has('mine') || tagsL.has('remote');
+      const isMinionSkill = tagsL.has('minion') || Boolean(gd.minionBase);
+      if (tagsL.has('channelling') || tagsL.has('channel')) {
+        db.setCondition('Channelling', true);
+      }
+      if (isTotemSkill) {
+        db.setCondition('HaveTotem', true);
+      }
+      break;
+    }
+  }
   db.setCondition('LowLife', Boolean(cfg.conditionLowLife));
-  db.setCondition('FullLife', !cfg.conditionLowLife);
+  db.setCondition(
+    'FullLife',
+    build.game === 'poe2'
+      ? Boolean(cfg.rawInputs?.conditionFullLife) || db.flag('ChaosInoculation')
+      : !cfg.conditionLowLife,
+  );
+  db.setCondition('FullMana', cfg.rawInputs?.conditionFullMana !== false && !hasManaResActive);
   db.setCondition('DualWielding', isDualWielding);
   db.setCondition('UsingShield', usingShield);
   db.setCondition('UsingStaff', usingStaff);
@@ -823,15 +2492,160 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
   db.setCondition('UsingMace', wtMain === 'Mace');
   db.setCondition('UsingQuarterstaff', wtMain === 'Quarterstaff');
   db.setCondition('UsingCrossbow', wtMain === 'Crossbow');
+  const mainHandItemForCond = nonFlaskEquippedForUniques.find((e) => e.slot === 'Weapon 1')?.item;
+  db.setCondition(
+    'UsingSpear',
+    (wtMain as string | undefined) === 'Spear' || Boolean(mainHandItemForCond && /spear/i.test(mainHandItemForCond.baseName)),
+  );
+  const rawCfgEnemyDist = Number(cfg.rawInputs?.enemyDistance ?? cfg.rawInputs?.projectileDistance ?? 20);
+  const effEnemyDist = Number.isFinite(rawCfgEnemyDist) && rawCfgEnemyDist >= 0 ? rawCfgEnemyDist : 20;
+  db.setStat('EnemyDistance', effEnemyDist);
+  db.setMultiplier('enemyDistance', effEnemyDist);
+  if (shieldLocalArmour > 0) db.setStat('ShieldArmour', shieldLocalArmour);
+  if (shieldLocalEvasion > 0) db.setStat('ShieldEvasion', shieldLocalEvasion);
+  if (
+    cfg.rawInputs?.conditionEnemyHeavyStunned ||
+    cfg.rawInputs?.conditionEnemyPinned ||
+    cfg.rawInputs?.conditionEnemyFrozen ||
+    cfg.rawInputs?.conditionEnemyElectrocuted
+  ) {
+    if (cfg.rawInputs?.conditionEnemyHeavyStunned) {
+      db.setCondition('EnemyHeavyStunned', true);
+      auraEnemyDb.setCondition('HeavyStunned', true);
+    }
+    db.setCondition('EnemyImmobilised', true);
+    auraEnemyDb.setCondition('Immobilised', true);
+  }
+  if (typeof cfg.rawInputs?.multiplierMinionsInPresence === 'number') {
+    const mpc = Math.max(0, cfg.rawInputs.multiplierMinionsInPresence);
+    db.setMultiplier('MinionPresenceCount', mpc);
+    auraEnemyDb.setMultiplier('MinionPresenceCount', mpc);
+  }
   db.setCondition('EnemyShocked', Boolean(cfg.enemyShocked));
   db.setCondition('EnemyChilled', Boolean(cfg.enemyChilled));
   db.setCondition('EnemyTaunted', Boolean(cfg.enemyTaunted));
   db.setCondition('AffectedByHerald', hasActiveHerald);
   db.setCondition('OnConsecratedGround', Boolean(flaskEval.grantsConsecratedGround));
+  db.setMultiplier('Herald', activeHeraldCount);
+  db.setMultiplier('AuraAffectingSelf', activeAuraCount);
+  db.setMultiplier('AuraOrHeraldAffectingSelf', activeAuraCount + activeHeraldCount);
+  db.setMultiplier('RedSocket', socketColorTotals.R);
+  db.setMultiplier('GreenSocket', socketColorTotals.G);
+  db.setMultiplier('BlueSocket', socketColorTotals.B);
+  db.setMultiplier('WhiteSocket', socketColorTotals.W);
+  db.setMultiplier('SocketFilled', totalSocketFilledCount);
+  db.setMultiplier('RunesSocketedInBody Armour', bodyArmourFilledRunes);
+  for (const [slotKey, cols] of Object.entries(socketColorBySlot)) {
+    db.setMultiplier(`RedSocketIn${slotKey}`, cols.R);
+    db.setMultiplier(`GreenSocketIn${slotKey}`, cols.G);
+    db.setMultiplier(`BlueSocketIn${slotKey}`, cols.B);
+    db.setMultiplier(`WhiteSocketIn${slotKey}`, cols.W);
+  }
+  if (
+    usingStaff &&
+    (socketColorBySlot['Weapon 1']?.R ?? 0) >= 1 &&
+    (socketColorBySlot['Weapon 1']?.B ?? 0) >= 1
+  ) {
+    db.setCondition('StaffHasRedAndBlueSocket', true);
+  }
+  for (const [infKey, infVal] of Object.entries(influenceCounts)) {
+    if (infVal > 0) db.setMultiplier(infKey, infVal);
+  }
+  // Empty coloured sockets on equipped gear (for The Untouched Soul)
+  if (build.game === 'poe1') {
+    const socketedGemColsBySlot: Record<string, { R: number; G: number; B: number }> = {};
+    for (const grp of build.skills) {
+      if (!grp.slot) continue;
+      const sc = (socketedGemColsBySlot[grp.slot] ??= { R: 0, G: 0, B: 0 });
+      for (const gm of grp.gems) {
+        const gd = getGemById('poe1', gm.gemId);
+        if (!gd) continue;
+        if (gd.color === 'red') sc.R++;
+        else if (gd.color === 'green') sc.G++;
+        else if (gd.color === 'blue') sc.B++;
+      }
+    }
+    let emptyR = 0;
+    let emptyG = 0;
+    let emptyB = 0;
+    const emptyW = socketColorTotals.W;
+    for (const [slotKey, cols] of Object.entries(socketColorBySlot)) {
+      const used = socketedGemColsBySlot[slotKey] ?? { R: 0, G: 0, B: 0 };
+      emptyR += Math.max(0, cols.R - used.R);
+      emptyG += Math.max(0, cols.G - used.G);
+      emptyB += Math.max(0, cols.B - used.B);
+    }
+    db.setMultiplier('EmptyRedSocketsInAnySlot', emptyR);
+    db.setMultiplier('EmptyGreenSocketsInAnySlot', emptyG);
+    db.setMultiplier('EmptyBlueSocketsInAnySlot', emptyB);
+    db.setMultiplier('EmptyWhiteSocketsInAnySlot', emptyW);
+    const lifePerEmptyR = db.sum('BASE', 'LifePerEmptyRedSocket');
+    if (lifePerEmptyR > 0 && emptyR > 0) {
+      db.addMod({ name: 'Life', type: 'BASE', value: lifePerEmptyR * emptyR, flags: 0, keywordFlags: 0, source: 'The Untouched Soul (Empty Red Sockets)' });
+    }
+    const accPerEmptyG = db.sum('BASE', 'AccuracyPerEmptyGreenSocket');
+    if (accPerEmptyG > 0 && emptyG > 0) {
+      db.addMod({ name: 'Accuracy', type: 'BASE', value: accPerEmptyG * emptyG, flags: 0, keywordFlags: 0, source: 'The Untouched Soul (Empty Green Sockets)' });
+    }
+    const manaPerEmptyB = db.sum('BASE', 'ManaPerEmptyBlueSocket');
+    if (manaPerEmptyB > 0 && emptyB > 0) {
+      db.addMod({ name: 'Mana', type: 'BASE', value: manaPerEmptyB * emptyB, flags: 0, keywordFlags: 0, source: 'The Untouched Soul (Empty Blue Sockets)' });
+    }
+    const resPerEmptyW = db.sum('BASE', 'AllEleResPerEmptyWhiteSocket');
+    if (resPerEmptyW > 0 && emptyW > 0) {
+      for (const rs of ['FireResist', 'ColdResist', 'LightningResist'] as const) {
+        db.addMod({ name: rs, type: 'BASE', value: resPerEmptyW * emptyW, flags: 0, keywordFlags: 0, source: 'The Untouched Soul (Empty White Sockets)' });
+      }
+    }
+  }
+  // Shrine buffs granted by items (Blunderbore, The Gull) scaled by ShrineBuffEffect
+  const shrineEffMult = Math.max(0, 1 + db.sum('INC', 'ShrineBuffEffect') / 100);
+  const massiveShrineTier = db.sum('BASE', 'ShrineBuff:Massive');
+  if (massiveShrineTier > 0) {
+    const basePct = massiveShrineTier >= 2 ? 40 : 20;
+    const scaledPct = Math.floor(basePct * shrineEffMult + 1e-9);
+    db.addMod({ name: 'Life', type: 'INC', value: scaledPct, flags: 0, keywordFlags: 0, source: 'Massive Shrine' });
+    db.addMod({ name: 'AreaOfEffect', type: 'INC', value: scaledPct, flags: 0, keywordFlags: 0, source: 'Massive Shrine' });
+  }
+  const brutalShrineTier = db.sum('BASE', 'ShrineBuff:Brutal');
+  if (brutalShrineTier > 0) {
+    const basePct = brutalShrineTier >= 2 ? 40 : 20;
+    const scaledPct = Math.floor(basePct * shrineEffMult + 1e-9);
+    db.addMod({ name: 'Damage', type: 'INC', value: scaledPct, flags: 0, keywordFlags: 0, source: 'Brutal Shrine' });
+  }
+  const accelShrineTier = db.sum('BASE', 'ShrineBuff:Acceleration');
+  if (accelShrineTier > 0) {
+    const baseAct = accelShrineTier >= 2 ? 50 : 15;
+    const scaledAct = Math.floor(baseAct * shrineEffMult + 1e-9);
+    db.addMod({ name: 'Speed', type: 'INC', value: scaledAct, flags: ModFlag.Attack, keywordFlags: 0, source: 'Acceleration Shrine' });
+    db.addMod({ name: 'Speed', type: 'INC', value: scaledAct, flags: ModFlag.Spell, keywordFlags: 0, source: 'Acceleration Shrine' });
+  }
+  db.setStat('ShieldBlock', shieldBaseBlock);
   db.setStat('BodyArmourES', bodyLocalEs);
   db.setStat('BodyArmourEvasion', bodyLocalEvasion);
   db.setStat('BodyArmourArmour', bodyLocalArmour);
+  db.setStat('EnergyShieldOnBody Armour', bodyLocalEs);
+  db.setStat('EvasionOnBody Armour', bodyLocalEvasion);
+  db.setStat('ArmourOnBody Armour', bodyLocalArmour);
   db.setStat('HelmetES', helmetLocalEs);
+  db.setStat('HelmetArmour', helmetLocalArmour);
+  db.setStat('HelmetEvasion', helmetLocalEvasion);
+  db.setStat('EnergyShieldOnHelmet', helmetLocalEs);
+  db.setStat('ArmourOnHelmet', helmetLocalArmour);
+  db.setStat('EvasionOnHelmet', helmetLocalEvasion);
+  db.setStat('GlovesArmour', glovesLocalArmour);
+  db.setStat('GlovesEvasion', glovesLocalEvasion);
+  db.setStat('GlovesES', glovesLocalEs);
+  db.setStat('ArmourOnGloves', glovesLocalArmour);
+  db.setStat('EvasionOnGloves', glovesLocalEvasion);
+  db.setStat('EnergyShieldOnGloves', glovesLocalEs);
+  db.setStat('BootsArmour', bootsLocalArmour);
+  db.setStat('BootsEvasion', bootsLocalEvasion);
+  db.setStat('BootsES', bootsLocalEs);
+  db.setStat('ArmourOnBoots', bootsLocalArmour);
+  db.setStat('EvasionOnBoots', bootsLocalEvasion);
+  db.setStat('EnergyShieldOnBoots', bootsLocalEs);
+  db.setStat('FocusES', focusLocalEs);
   db.setStat('ShieldES', shieldLocalEs);
   db.setStat('ShieldArmour', shieldLocalArmour);
   db.setStat('ShieldEvasion', shieldLocalEvasion);
@@ -839,24 +2653,104 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
   db.setStat('EvasionOnWeapon 2', shieldLocalEvasion);
   db.setStat('ArmourOrEvasionOnWeapon 2', shieldLocalArmour + shieldLocalEvasion);
   db.setStat('ArmourEvasionOnWeapon 2', shieldLocalArmour + shieldLocalEvasion);
-  db.setStat('EnergyShieldOnWeapon 2', shieldLocalEs);
+  db.setStat('EnergyShieldOnWeapon 2', shieldLocalEs + focusLocalEs);
+  const attrReqMult = Math.max(0, 1 + db.sum('INC', 'AttributeRequirements') / 100);
+  for (const sName of ['Helmet', 'Body Armour', 'Gloves', 'Boots'] as const) {
+    const rq = slotAttrReqs[sName];
+    if (rq) {
+      db.setStat(`StrRequirementsOn${sName}`, Math.round(rq.str * attrReqMult));
+      db.setStat(`DexRequirementsOn${sName}`, Math.round(rq.dex * attrReqMult));
+      db.setStat(`IntRequirementsOn${sName}`, Math.round(rq.int * attrReqMult));
+    }
+  }
+  const heavyArmourPct = db.sum('BASE', 'ArmourPerStrReqBootsGlovesHelmetPct');
+  if (heavyArmourPct > 0) {
+    const strReqTotal =
+      Math.round((slotAttrReqs.Helmet?.str ?? 0) * attrReqMult) +
+      Math.round((slotAttrReqs.Gloves?.str ?? 0) * attrReqMult) +
+      Math.round((slotAttrReqs.Boots?.str ?? 0) * attrReqMult);
+    const bonusArmour = Math.floor((strReqTotal * heavyArmourPct) / 100);
+    if (bonusArmour > 0) {
+      db.addMod({
+        name: 'Armour',
+        type: 'BASE',
+        value: bonusArmour,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Tree: Heavy Armour (Strength Requirements)',
+      });
+    }
+  }
+  db.setStat(
+    'EvasionOnAllArmourItems',
+    bodyLocalEvasion + helmetLocalEvasion + glovesLocalEvasion + bootsLocalEvasion + shieldLocalEvasion,
+  );
+  db.setStat(
+    'EnergyShieldOnAllArmourItems',
+    bodyLocalEs + helmetLocalEs + glovesLocalEs + bootsLocalEs + shieldLocalEs + focusLocalEs,
+  );
+  // Count all socketed gem colors across enabled skills (PoE 2 Gemling Virtuous Barrier / Thaumaturgical Infusion)
+  let totalStrMoteGems = 0;
+  let totalDexMoteGems = 0;
+  let totalIntMoteGems = 0;
+  for (const grp of build.skills) {
+    if (!grp.enabled) continue;
+    for (const gm of grp.gems) {
+      if (!gm.enabled) continue;
+      const gd = getGemById(build.game, gm.gemId);
+      if (!gd) continue;
+      if (gd.color === 'red') totalStrMoteGems++;
+      else if (gd.color === 'green') totalDexMoteGems++;
+      else if (gd.color === 'blue') totalIntMoteGems++;
+    }
+  }
+  db.setMultiplier('StrengthMoteSkillCount', totalStrMoteGems);
+  db.setMultiplier('DexterityMoteSkillCount', totalDexMoteGems);
+  db.setMultiplier('IntelligenceMoteSkillCount', totalIntMoteGems);
+  if (build.game === 'poe2') {
+    let passiveCharmSlots = 0;
+    for (const nd of allAllocatedNodeDefs) {
+      for (const st of nd.stats ?? []) {
+        const mCh = st.match(/^\+(\d+) Charm Slots?$/i);
+        if (mCh) passiveCharmSlots += Number(mCh[1]);
+      }
+    }
+    const questCharms = Number(cfg.rawInputs?.__questCharmSlots ?? 0);
+    const totalCharmSlots = db.flag('CannotUseCharms')
+      ? 0
+      : Math.min(3, Math.max(0, beltCharmSlots + questCharms + passiveCharmSlots));
+    const activeCharms = (['Charm 1', 'Charm 2', 'Charm 3'] as const).filter(
+      (s) => Boolean(build.activeFlaskSlots?.[s] && build.equipped[s]),
+    ).length;
+    db.setStat('EmptyCharms', Math.max(0, totalCharmSlots - activeCharms));
+  }
   db.setMultiplier('CorruptedItem', corruptedEquippedCount);
+  const distinctMasteryTypes = new Set<string>();
+  let allocatedLifeMasteryCount = 0;
+  for (const [mIdStr, mText] of Object.entries(build.tree.masteryEffects ?? {})) {
+    if (!mText) continue;
+    const mn = tree.nodes[Number(mIdStr)]?.name.en ?? mIdStr;
+    distinctMasteryTypes.add(mn);
+    if (mn.toLowerCase().includes('life mastery')) {
+      allocatedLifeMasteryCount++;
+    }
+  }
   db.setMultiplier('AllocatedMastery', Object.keys(build.tree.masteryEffects ?? {}).length);
+  db.setMultiplier('AllocatedMasteryType', distinctMasteryTypes.size);
+  db.setMultiplier('AllocatedLifeMastery', allocatedLifeMasteryCount);
+  db.setCondition('AtLeast6LifeMasteries', allocatedLifeMasteryCount >= 6);
 
-  // Pre-stat Ascendancy Mechanics (Invoker Spirit, Sunder the Flesh, Deadeye, Stormweaver, Slayer, Assassin, Necromancer, etc.)
-  applyPreStatAscendancyMechanics({
-    game: build.game,
-    db,
-    allocatedNodes: allAllocatedNodeDefs,
-    config: cfg,
-    bodyArmourStats: {
-      armour: bodyLocalArmour,
-      evasion: bodyLocalEvasion,
-      energyShield: bodyLocalEs,
-    },
-    activeAuraCount,
-    masteryCount: 0,
-  });
+  // Necromancer Commander of Darkness per-aura speed bonus (now that activeAuraCount is resolved)
+  if (
+    build.game === 'poe1' &&
+    activeAuraCount > 0 &&
+    allAllocatedNodeDefs.some((n) => n.name.en.trim().toLowerCase() === 'commander of darkness')
+  ) {
+    const speedBonus = activeAuraCount * 3;
+    db.addMod({ name: 'Speed', type: 'INC', value: speedBonus, flags: ModFlag.Attack, keywordFlags: 0, source: 'Ascendancy: Commander of Darkness' });
+    db.addMod({ name: 'Speed', type: 'INC', value: speedBonus, flags: ModFlag.Spell, keywordFlags: 0, source: 'Ascendancy: Commander of Darkness' });
+    db.addMod({ name: 'MinionSpeed', type: 'INC', value: speedBonus, flags: 0, keywordFlags: 0, source: 'Ascendancy: Commander of Darkness' });
+  }
 
   const hasMasterfulForm = allAllocatedNodeDefs.some(
     (n) => n.name.en.trim().toLowerCase() === 'masterful form',
@@ -928,17 +2822,45 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
   db.setMultiplier('PowerCharge', activePower);
   db.setMultiplier('FrenzyCharge', activeFrenzy);
   db.setMultiplier('EnduranceCharge', activeEndurance);
+  db.setStat('PowerCharges', activePower);
+  db.setStat('FrenzyCharges', activeFrenzy);
+  db.setStat('EnduranceCharges', activeEndurance);
   db.setMultiplier('RemovablePowerCharge', Math.max(0, activePower - minPower));
   db.setMultiplier('RemovableFrenzyCharge', Math.max(0, activeFrenzy - minFrenzy));
   db.setMultiplier('RemovableEnduranceCharge', Math.max(0, activeEndurance - minEndurance));
   db.setMultiplier('Rage', chargesAndRage.rage);
+  db.setStat('Rage', chargesAndRage.rage);
+  const rageEffScale =
+    Math.max(0, 1 + db.sum('INC', 'RageEffect') / 100) * db.more('RageEffect');
+  const rageEffOverride = db.override('RageEffect');
+  const effRageEffect =
+    rageEffOverride !== null
+      ? Math.floor(rageEffOverride + 1e-9)
+      : Math.floor(chargesAndRage.rage * rageEffScale + 1e-9);
+  db.setMultiplier('RageEffect', effRageEffect);
+  if (chargesAndRage.maxRage > 0 && chargesAndRage.rage >= chargesAndRage.maxRage) {
+    db.setCondition('HaveMaximumRage', true);
+  }
+  if (effRageEffect > 0 && !db.flag('NoRageEffect')) {
+    const grantsSpell =
+      db.flag('Condition:RageSpellDamage') || db.flag('RageSpellDamage');
+    db.addMod({
+      name: 'Damage',
+      type: 'MORE',
+      value: effRageEffect,
+      flags: grantsSpell ? ModFlag.Spell : ModFlag.Attack,
+      keywordFlags: 0,
+      source: `Rage (${chargesAndRage.rage})`,
+    });
+  }
+  db.setCondition('WeaponSet1', build.activeWeaponSet === 1);
+  db.setCondition('WeaponSet2', build.activeWeaponSet === 2);
 
-  if (activePower > 0) {
-    const perCharge = build.game === 'poe2' ? 40 : 50;
+  if (build.game === 'poe1' && activePower > 0) {
     db.addMod({
       name: 'CritChance',
       type: 'INC',
-      value: activePower * perCharge,
+      value: activePower * 50,
       flags: 0,
       keywordFlags: 0,
       source: `Power Charges (${activePower})`,
@@ -954,12 +2876,24 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
       });
     }
   }
-  if (activeFrenzy > 0) {
-    db.addMod({ name: 'Speed', type: 'INC', value: activeFrenzy * 4, flags: ModFlag.Attack, keywordFlags: 0, source: `Frenzy Charges (${activeFrenzy})` });
-    db.addMod({ name: 'Speed', type: 'INC', value: activeFrenzy * 4, flags: ModFlag.Spell, keywordFlags: 0, source: `Frenzy Charges (${activeFrenzy})` });
-    db.addMod({ name: 'Damage', type: 'MORE', value: activeFrenzy * 4, flags: 0, keywordFlags: 0, source: `Frenzy Charges (${activeFrenzy})` });
+  if (build.game === 'poe1' && activeFrenzy > 0) {
+    if (db.flag('AfflictionChargesInsteadOfFrenzy')) {
+      db.setMultiplier('AfflictionCharge', activeFrenzy);
+      db.addMod({
+        name: 'Damage',
+        type: 'MORE',
+        value: activeFrenzy * 8,
+        flags: ModFlag.Ailment | ModFlag.Dot,
+        keywordFlags: 0,
+        source: `Affliction Charges (${activeFrenzy})`,
+      });
+    } else {
+      db.addMod({ name: 'Speed', type: 'INC', value: activeFrenzy * 4, flags: ModFlag.Attack, keywordFlags: 0, source: `Frenzy Charges (${activeFrenzy})` });
+      db.addMod({ name: 'Speed', type: 'INC', value: activeFrenzy * 4, flags: ModFlag.Spell, keywordFlags: 0, source: `Frenzy Charges (${activeFrenzy})` });
+      db.addMod({ name: 'Damage', type: 'MORE', value: activeFrenzy * 4, flags: 0, keywordFlags: 0, source: `Frenzy Charges (${activeFrenzy})` });
+    }
   }
-  if (activeEndurance > 0) {
+  if (build.game === 'poe1' && activeEndurance > 0) {
     // Official PoE 1 3.25+ / 3.30 Endurance Charges: +4% Phys & Ele Damage Reduction per charge (no longer +4% Ele Res)
     db.addMod({ name: 'PhysDamageReduction', type: 'BASE', value: activeEndurance * 4, flags: 0, keywordFlags: 0, source: `Endurance Charges (${activeEndurance})` });
   }
@@ -1060,16 +2994,18 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
       });
     }
   }
-  // Crave the Slaughter: Every Rage also grants X% increased Attack Speed
+  // Crave the Slaughter: Every Rage also grants X% increased Attack Speed (scaled by RageEffect)
   if (cfg.rage && cfg.rage > 0) {
     const maxRage = Math.max(0, 30 + Math.round(db.sum('BASE', 'MaximumRage')));
     const rageStacks = Math.min(maxRage, Math.max(0, Math.round(cfg.rage)));
     const rageAsPerStack = db.sum('BASE', 'RageGrantsAttackSpeed');
-    if (rageStacks > 0 && rageAsPerStack > 0) {
+    const rageEffMult = Math.max(0, 1 + db.sum('INC', 'RageEffect') / 100);
+    const effRageAs = Math.floor(rageStacks * rageAsPerStack * rageEffMult + 1e-9);
+    if (effRageAs > 0) {
       db.addMod({
         name: 'Speed',
         type: 'INC',
-        value: rageStacks * rageAsPerStack,
+        value: effRageAs,
         flags: ModFlag.Attack,
         keywordFlags: 0,
         source: `Crave the Slaughter (${rageStacks} Rage)`,
@@ -1092,12 +3028,43 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
 
   injectAttributeScaling(db, str, dex, int);
 
-  if (ruleset.lifePerStrength > 0) {
-    db.addMod({ name: 'Life', type: 'BASE', value: Math.floor(str * ruleset.lifePerStrength), flags: 0, keywordFlags: 0, source: `Strength (${str})` });
+  const skipAllAttrInherent =
+    timelessEval.supremeOstentation || db.flag('NoAttributeBonuses') || db.flag('SupremeOstentation');
+
+  if (
+    ruleset.lifePerStrength > 0 &&
+    !skipAllAttrInherent &&
+    !timelessEval.noStrLifeBonus &&
+    !db.flag('NoStrLifeBonus')
+  ) {
+    const effLifePerStr = db.flag('StrLifeHalved')
+      ? ruleset.lifePerStrength * 0.5
+      : ruleset.lifePerStrength;
+    db.addMod({ name: 'Life', type: 'BASE', value: Math.floor(str * effLifePerStr), flags: 0, keywordFlags: 0, source: `Strength (${str})` });
   }
-  const strDmgBonus = ruleset.meleePhysPctPerStrength > 0 ? Math.floor(str * ruleset.meleePhysPctPerStrength) : 0;
+  const hasIronFortressEquipped = nonFlaskEquippedForUniques.some(
+    (e) => e.item.name.trim().toLowerCase() === 'the iron fortress',
+  );
+  const effectiveMeleePhysPerStr =
+    build.game === 'poe1' && hasIronFortressEquipped
+      ? 0.3
+      : ruleset.meleePhysPctPerStrength;
+  const strDmgBonus =
+    effectiveMeleePhysPerStr > 0 && !skipAllAttrInherent
+      ? Math.floor(str * effectiveMeleePhysPerStr)
+      : 0;
   if (strDmgBonus > 0) {
-    db.addMod({ name: 'PhysicalDamage', type: 'INC', value: strDmgBonus, flags: ModFlag.Melee, keywordFlags: 0, source: `Strength (${str})` });
+    db.addMod({
+      name: 'PhysicalDamage',
+      type: 'INC',
+      value: strDmgBonus,
+      flags: ModFlag.Melee,
+      keywordFlags: 0,
+      source: hasIronFortressEquipped ? `Strength (${str}, The Iron Fortress)` : `Strength (${str})`,
+    });
+    if (hasIronFortressEquipped) {
+      db.addMod({ name: 'StrDmgBonusRatioOverrideApplied', type: 'FLAG', value: true, flags: 0, keywordFlags: 0, source: 'The Iron Fortress' });
+    }
     if (db.flag('IronWill')) {
       db.addMod({ name: 'Damage', type: 'INC', value: strDmgBonus, flags: ModFlag.Spell, keywordFlags: 0, source: `Iron Will (Strength ${str})` });
     }
@@ -1112,17 +3079,39 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
       });
     }
   }
-  if (ruleset.accuracyPerDexterity > 0) {
+  if (
+    ruleset.accuracyPerDexterity > 0 &&
+    !skipAllAttrInherent &&
+    !timelessEval.noDexAccuracyBonus &&
+    !db.flag('NoDexAccuracyBonus')
+  ) {
     db.addMod({ name: 'Accuracy', type: 'BASE', value: Math.floor(dex * ruleset.accuracyPerDexterity), flags: 0, keywordFlags: 0, source: `Dexterity (${dex})` });
   }
   const ironReflexes = db.flag('IronReflexes');
-  if (ruleset.evasionPctPerDexterity > 0 && !ironReflexes) {
+  const noDexEvasionBonus =
+    db.flag('NoDexBonusToEvasion') || db.flag('NoDexEvasionBonus') || db.flag('Magebane');
+  if (
+    ruleset.evasionPctPerDexterity > 0 &&
+    !ironReflexes &&
+    !skipAllAttrInherent &&
+    !noDexEvasionBonus
+  ) {
     db.addMod({ name: 'Evasion', type: 'INC', value: Math.floor(dex * ruleset.evasionPctPerDexterity), flags: 0, keywordFlags: 0, source: `Dexterity (${dex})` });
   }
-  if (ruleset.manaPerIntelligence > 0) {
+  if (
+    ruleset.manaPerIntelligence > 0 &&
+    !skipAllAttrInherent &&
+    !timelessEval.noIntManaBonus &&
+    !db.flag('NoIntManaBonus')
+  ) {
     db.addMod({ name: 'Mana', type: 'BASE', value: Math.floor(int * ruleset.manaPerIntelligence), flags: 0, keywordFlags: 0, source: `Intelligence (${int})` });
   }
-  if (ruleset.esPctPerIntelligence > 0 && !db.flag('NoIntEsBonus') && !db.flag('NoIntBonusToES')) {
+  if (
+    ruleset.esPctPerIntelligence > 0 &&
+    !skipAllAttrInherent &&
+    !db.flag('NoIntEsBonus') &&
+    !db.flag('NoIntBonusToES')
+  ) {
     db.addMod({ name: 'EnergyShield', type: 'INC', value: Math.floor(int * ruleset.esPctPerIntelligence), flags: 0, keywordFlags: 0, source: `Intelligence (${int})` });
   }
   if (db.flag('CritChancePerLowerStrInt')) {
@@ -1139,22 +3128,64 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     }
   }
 
-  // 7. Compute Defence Output (including Iron Reflexes, Ward, PoE 2 EB, Slot-Specific Defence INC, Ascendancy Post-Life & Reservation)
+  // PoE 1 Champion Fortitude + Unstoppable Hero (3% MORE Armour & Evasion, 3% INC Attack Speed per Fortification > 20)
+  if (build.game === 'poe1' && (db.flag('AlwaysFortified') || cfg.fortified || db.flag('UnstoppableHero'))) {
+    const maxFort = Math.max(
+      0,
+      20 + Math.round(db.sum('BASE', 'MaxFortification') + db.sum('BASE', 'MaximumFortification')),
+    );
+    const effFort =
+      cfg.fortificationStacks !== undefined && cfg.fortificationStacks !== 20
+        ? Math.min(maxFort, Math.max(0, Math.round(cfg.fortificationStacks)))
+        : db.flag('AlwaysFortified') || cfg.fortified
+          ? maxFort
+          : 0;
+    db.setMultiplier('Fortification', effFort);
+    if (db.flag('UnstoppableHero') && effFort > 20) {
+      const above20 = effFort - 20;
+      db.addMod({
+        name: 'Armour',
+        type: 'MORE',
+        value: above20 * 3,
+        flags: 0,
+        keywordFlags: 0,
+        source: `Unstoppable Hero (${effFort} Fortification)`,
+      });
+      db.addMod({
+        name: 'Evasion',
+        type: 'MORE',
+        value: above20 * 3,
+        flags: 0,
+        keywordFlags: 0,
+        source: `Unstoppable Hero (${effFort} Fortification)`,
+      });
+      db.addMod({
+        name: 'Speed',
+        type: 'INC',
+        value: above20 * 3,
+        flags: ModFlag.Attack,
+        keywordFlags: 0,
+        source: `Unstoppable Hero (${effFort} Fortification)`,
+      });
+    }
+  }
+
+  // 7. Compute Defence Output (matching official PoB CalcDefence.lua resource conversion order: ES -> Mana BEFORE Life -> ES!)
+  const poe2Eb = build.game === 'poe2' && (db.flag('Poe2EldritchBattery') || db.flag('EldritchBattery'));
+  if (poe2Eb && !db.flag('Poe2EldritchBatteryApplied')) {
+    const preEbEsBase = Math.max(0, db.calcStat('EnergyShield').base);
+    if (preEbEsBase > 0) {
+      db.addMod({ name: 'Mana', type: 'BASE', value: preEbEsBase, flags: 0, keywordFlags: 0, source: 'Eldritch Battery (ES -> Mana)' });
+      db.addMod({ name: 'EnergyShield', type: 'BASE', value: -preEbEsBase, flags: 0, keywordFlags: 0, source: 'Eldritch Battery (ES -> Mana)' });
+    }
+    db.addMod({ name: 'Poe2EldritchBatteryApplied', type: 'FLAG', value: true, flags: 0, keywordFlags: 0, source: 'Eldritch Battery' });
+  }
+
   const rawLifeEval = db.calcStat('Life');
   const lifeConvToEsPct = Math.min(100, Math.max(0, db.sum('BASE', 'LifeConvertToES')));
   if (lifeConvToEsPct > 0 && rawLifeEval.total > 1) {
     const convertedBase = Math.round(rawLifeEval.base * (lifeConvToEsPct / 100));
     db.addMod({ name: 'EnergyShield', type: 'BASE', value: convertedBase, flags: 0, keywordFlags: 0, source: 'Life Converted to Energy Shield' });
-  }
-
-  // PoE 2 Eldritch Battery: Convert 100% of maximum Energy Shield to maximum Mana
-  const poe2Eb = build.game === 'poe2' && db.flag('Poe2EldritchBattery');
-  if (poe2Eb) {
-    const preEbEsBase = db.calcStat('EnergyShield').base;
-    if (preEbEsBase > 0) {
-      db.addMod({ name: 'Mana', type: 'BASE', value: preEbEsBase, flags: 0, keywordFlags: 0, source: 'Eldritch Battery (ES -> Mana)' });
-    }
-    db.addMod({ name: 'EnergyShield', type: 'OVERRIDE', value: 0, flags: 0, keywordFlags: 0, source: 'Eldritch Battery' });
   }
 
   const prelimLifeEval = db.calcStat('Life');
@@ -1165,8 +3196,11 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
   const prelimMana = Math.round(db.calcStat('Mana').total);
   const prelimEs = Math.round(db.calcStat('EnergyShield').total);
   const prelimAcc = Math.round(db.calcStat('Accuracy').total);
+  if (prelimEs > 0 && !db.flag('BlackScytheTraining')) {
+    db.setCondition('HaveEnergyShield', true);
+  }
 
-  // Post-Life Ascendancy Mechanics (Gore Spike, Beidat's Hand/Will/Gaze, Juggernaut Undeniable, Chieftain Valako/Tasalio, Slayer Masterful Form, Assassin Deadly Infusion)
+  // Post-Life Ascendancy Mechanics (Gore Spike, Beidat's Hand/Will/Gaze, Smith of Kitava, Juggernaut Undeniable, Chieftain Valako/Tasalio, Slayer Masterful Form, Assassin Deadly Infusion)
   applyPostLifeAscendancyMechanics({
     game: build.game,
     db,
@@ -1184,25 +3218,380 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     maxEnduranceCharges: maxEndurance,
     activePowerCharges: activePower,
   });
+  // Re-sync Juggernaut Undeniable Attack Speed after Undeniable itself adds +2 Accuracy per Strength!
+  if (
+    build.game === 'poe1' &&
+    allAllocatedNodeDefs.some((n) => n.name.en.trim().toLowerCase() === 'undeniable')
+  ) {
+    const postUndeniableAcc = Math.round(db.calcStat('Accuracy').total);
+    const deltaUndeniableAs = Math.floor(postUndeniableAcc / 150) - Math.floor(prelimAcc / 150);
+    if (deltaUndeniableAs > 0) {
+      db.addMod({
+        name: 'Speed',
+        type: 'INC',
+        value: deltaUndeniableAs,
+        flags: ModFlag.Attack,
+        keywordFlags: 0,
+        source: `Ascendancy: Undeniable (Post-Str Accuracy ${postUndeniableAcc})`,
+      });
+    }
+  }
 
+  // Evaluate Arcane Surge AFTER post-life ascendancies so Stormweaver `Force of Will` scales `ArcaneSurgeEffect`
+  // Also auto-activate on PoE 1 when Arcane Surge Support is linked in any enabled group or Arcane Blessing is allocated
+  const hasEnabledArcaneSurgeSupport =
+    build.game === 'poe1' &&
+    build.skills.some(
+      (grp) =>
+        grp.enabled &&
+        grp.gems.some((gm) => {
+          if (!gm.enabled) return false;
+          const gd = getGemById('poe1', gm.gemId);
+          return Boolean(gd && gd.name.en.trim().toLowerCase().replace(/\s+support$/i, '') === 'arcane surge');
+        }),
+    );
+  if (
+    cfg.buffArcaneSurge ||
+    hasEnabledArcaneSurgeSupport ||
+    db.getEvalContext().conditions.AffectedByArcaneSurge ||
+    db.flag('Condition:ArcaneSurge') ||
+    db.flag('Condition:AffectedByArcaneSurge')
+  ) {
+    db.setCondition('AffectedByArcaneSurge', true);
+    const asEff = Math.max(0, 1 + db.sum('INC', ['ArcaneSurgeEffect', 'BuffEffectOnSelf']) / 100);
+    const defaultAsCast = build.game === 'poe2' ? 15 : 20;
+    const defaultAsMana = build.game === 'poe2' ? 20 : 30;
+    const asCastSpd = (db.max('ArcaneSurgeCastSpeed') ?? defaultAsCast) * asEff;
+    const asManaRegen = (db.max('ArcaneSurgeManaRegen') ?? defaultAsMana) * asEff;
+    const asSpellMore =
+      Math.max(db.max('ArcaneSurgeDamage') ?? 0, db.sum('BASE', 'ArcaneSurgeDamage')) * asEff;
+    db.addMod({ name: 'Speed', type: 'INC', value: asCastSpd, flags: ModFlag.Spell, keywordFlags: 0, source: 'Arcane Surge' });
+    db.addMod({ name: 'ManaRegen', type: 'INC', value: asManaRegen, flags: 0, keywordFlags: 0, source: 'Arcane Surge' });
+    if (asSpellMore > 0) {
+      db.addMod({ name: 'Damage', type: 'MORE', value: asSpellMore, flags: ModFlag.Spell, keywordFlags: 0, source: 'Arcane Surge' });
+    }
+  }
+
+  // Pool-Conversion Keystones & Faithguard (CI, Faithguard ES->Ward INC redirection, Iron Reflexes hybrid-safe conversion)
+  const poolConvRes = applyPoolConversionsAndKeystones({
+    game: build.game,
+    db,
+    allocatedNodes: allAllocatedNodeDefs,
+    equippedItems: nonFlaskEquippedForUniques,
+    socketedJewels: allJewelItems,
+    dex,
+  });
+  // Power of Purpose (80% of Maximum Mana converted to twice that much Armour)
+  if (timelessEval.powerOfPurpose) {
+    const prePopMana = Math.round(db.calcStat('Mana').total);
+    const convertedMana = Math.round(
+      prePopMana * (timelessEval.powerOfPurpose.manaConvertedPct / 100),
+    );
+    if (convertedMana > 0) {
+      db.addMod({
+        name: 'Armour',
+        type: 'BASE',
+        value: convertedMana * timelessEval.powerOfPurpose.armourMultiplier,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Power of Purpose (Mana -> Armour)',
+      });
+      db.addMod({
+        name: 'Mana',
+        type: 'MORE',
+        value: -timelessEval.powerOfPurpose.manaConvertedPct,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Power of Purpose',
+      });
+    }
+  }
+  // PoE 1 Heroic Tragedy Vorana (Black Scythe Training: Removes all Energy Shield)
+  if (build.game === 'poe1' && db.flag('BlackScytheTraining')) {
+    db.addMod({
+      name: 'EnergyShield',
+      type: 'OVERRIDE',
+      value: 0,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Black Scythe Training',
+    });
+  }
+
+  // The Apostate (`ConvertArmourESToLife`, PoB1 CalcPerform.lua:1564): Gain Maximum Life instead of ES from equipped Armour items
+  if (build.game === 'poe1' && db.flag('ConvertArmourESToLife')) {
+    const armourEsToLife = bodyLocalEs + helmetLocalEs + glovesLocalEs + bootsLocalEs + shieldLocalEs;
+    if (armourEsToLife > 0) {
+      db.addMod({
+        name: 'Life',
+        type: 'BASE',
+        value: armourEsToLife,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'The Apostate (Armour ES -> Life)',
+      });
+      db.addMod({
+        name: 'EnergyShield',
+        type: 'BASE',
+        value: -armourEsToLife,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'The Apostate (Armour ES -> Life)',
+      });
+    }
+  }
+
+  // Evaluate Life & Mana FIRST and expose them in ModEvalContext BEFORE ES / Spirit / Armour / Evasion
+  // so PerStat:Life (PoE 2 Prism Guardian Spirit) and PerStat:Mana evaluate against real pool totals!
   const lifeEval = db.calcStat('Life');
+  const manaEval = db.calcStat('Mana');
+  const life =
+    lifeConvToEsPct > 0 && lifeEval.total > 1
+      ? Math.max(1, Math.round(lifeEval.total * (1 - lifeConvToEsPct / 100)))
+      : Math.round(lifeEval.total);
+  const mana = Math.round(manaEval.total);
+  db.setStat('Life', life);
+  db.setStat('Mana', mana);
+
+  // Compute Mana & Life Reservations before ES/Armour so Guardian Radiant Faith & The Ivory Tower apply cleanly!
+  const genericResEff = db.sum('INC', 'ReservationEfficiency');
+  const manaResEff = Math.max(-90, db.sum('INC', 'ManaReservationEfficiency') + genericResEff);
+  const lifeResEff = Math.max(-90, db.sum('INC', 'LifeReservationEfficiency') + genericResEff);
+  let totalLifeReservedFlat = 0;
+  if (life > 1) {
+    for (const res of auraEval.lifeReservations) {
+      if (res.zeroedByBlessing) continue;
+      const effDiv = 1 + Math.max(-90, lifeResEff + res.localEfficiencyPct) / 100;
+      if (res.basePct > 0) {
+        const basePercentVal = Math.trunc(res.basePct * 100 * res.multiplier + 1e-6);
+        const effPct = Math.max(0, Math.round(basePercentVal / effDiv) / 100);
+        totalLifeReservedFlat += Math.ceil(life * (effPct / 100) - 1e-9);
+      }
+      if (res.baseFlat > 0) {
+        const baseFlatVal = Math.trunc(res.baseFlat * res.multiplier + 1e-6);
+        const effFlat = Math.max(0, Math.round(baseFlatVal / effDiv));
+        totalLifeReservedFlat += effFlat;
+      }
+    }
+    const extraLifeResPct = Math.max(0, db.sum('BASE', 'ExtraLifeReserved'));
+    if (extraLifeResPct > 0) {
+      totalLifeReservedFlat += Math.ceil(life * (extraLifeResPct / 100) - 1e-9);
+    }
+  }
+  const lifeUnreserved = Math.max(0, life - totalLifeReservedFlat);
+  db.setStat('LifeReserved', totalLifeReservedFlat);
+  db.setStat('LifeUnreserved', lifeUnreserved);
+  // The Ivory Tower: "+30 to maximum Energy Shield per 100 Reserved Life" (applied BEFORE ES calc & Energy Blade!)
+  if (totalLifeReservedFlat > 0) {
+    for (const { item } of nonFlaskEquippedForUniques) {
+      for (const rawLine of [...item.implicits, ...item.explicits]) {
+        const clean = rawLine.replace(/^\{[^}]*\}/g, '').trim();
+        const mIvory = clean.match(/^\+(\d+) to maximum Energy Shield per (\d+) Reserved Life$/i);
+        if (mIvory) {
+          const perVal = Number(mIvory[1]);
+          const perDiv = Math.max(1, Number(mIvory[2]));
+          const bonusEs = Math.floor((totalLifeReservedFlat / perDiv) * perVal);
+          if (bonusEs > 0) {
+            db.addMod({
+              name: 'EnergyShield',
+              type: 'BASE',
+              value: bonusEs,
+              flags: 0,
+              keywordFlags: 0,
+              source: `${item.name} (Reserved Life)`,
+            });
+          }
+        }
+      }
+    }
+  }
+  let totalManaReservedFlat = 0;
+  let totalManaReservedPctExact = 0;
+  if (mana > 0) {
+    for (const res of auraEval.manaReservations) {
+      if (res.zeroedByBlessing) continue;
+      const effDiv = 1 + Math.max(-90, manaResEff + res.localEfficiencyPct) / 100;
+      if (res.basePct > 0) {
+        const basePercentVal = Math.trunc(res.basePct * 100 * res.multiplier + 1e-6);
+        const effPct = Math.max(0, Math.round(basePercentVal / effDiv) / 100);
+        totalManaReservedPctExact += effPct;
+        totalManaReservedFlat += Math.ceil(mana * (effPct / 100) - 1e-9);
+      }
+      if (res.baseFlat > 0) {
+        const baseFlatVal = Math.trunc(res.baseFlat * res.multiplier + 1e-6);
+        const effFlat = Math.max(0, Math.round(baseFlatVal / effDiv));
+        totalManaReservedFlat += effFlat;
+      }
+    }
+  }
+  const hasRadiantFaith =
+    build.game === 'poe1' &&
+    allAllocatedNodeDefs.some((n) => n.name.en.trim().toLowerCase() === 'radiant faith');
+  if (hasRadiantFaith && totalManaReservedFlat > 0) {
+    const rfArmour = Math.floor(totalManaReservedFlat * 0.25);
+    const rfEs = Math.floor(totalManaReservedFlat * 0.1);
+    if (rfArmour > 0) {
+      db.addMod({
+        name: 'Armour',
+        type: 'BASE',
+        value: rfArmour,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Ascendancy: Radiant Faith',
+      });
+    }
+    if (rfEs > 0) {
+      db.addMod({
+        name: 'EnergyShield',
+        type: 'BASE',
+        value: rfEs,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Ascendancy: Radiant Faith',
+      });
+    }
+  }
+
+  // Pre-evaluate raw & max resistances before Armour/Evasion so Breach/Grasping Mail Overcapped/Uncapped Resist scaling works!
+  let fireMaxResist = Math.min(90, Math.round(db.sum('BASE', 'FireResistMax')));
+  let coldMaxResist = Math.min(90, Math.round(db.sum('BASE', 'ColdResistMax')));
+  let lightningMaxResist = Math.min(90, Math.round(db.sum('BASE', 'LightningResistMax')));
+  if (uniqueGearResult.meldingOfTheFleshActive) {
+    const highestEleMax = Math.max(fireMaxResist, coldMaxResist, lightningMaxResist);
+    fireMaxResist = highestEleMax;
+    coldMaxResist = highestEleMax;
+    lightningMaxResist = highestEleMax;
+  }
+  const chaosMaxResist = Math.min(90, Math.round(db.sum('BASE', 'ChaosResistMax')));
+
+  const evalSignedResist = (stat: string): number => {
+    const ov = db.override(stat);
+    if (ov !== null) return Math.round(ov);
+    return Math.round(db.sum('BASE', stat) * Math.max(0, 1 + db.sum('INC', stat) / 100) * db.more(stat));
+  };
+  const fireRaw = evalSignedResist('FireResist');
+  const coldRaw = evalSignedResist('ColdResist');
+  const lightningRaw = evalSignedResist('LightningResist');
+  const chaosImmune = db.flag('ChaosImmune') || poolConvRes.chaosInoculation;
+  const chaosRaw = chaosImmune ? 100 : evalSignedResist('ChaosResist');
+  db.setStat('UncappedFireResist', fireRaw);
+  db.setStat('UncappedColdResist', coldRaw);
+  db.setStat('UncappedLightningResist', lightningRaw);
+  db.setStat('UncappedChaosResist', chaosRaw);
+  const fireOvercap = Math.max(0, fireRaw - fireMaxResist);
+  const coldOvercap = Math.max(0, coldRaw - coldMaxResist);
+  const lightOvercap = Math.max(0, lightningRaw - lightningMaxResist);
+  db.setStat('OvercappedFireResist', fireOvercap);
+  db.setStat('OvercappedColdResist', coldOvercap);
+  db.setStat('OvercappedLightningResist', lightOvercap);
+  db.setStat('FireResistOverCap', fireOvercap);
+  db.setStat('ColdResistOverCap', coldOvercap);
+  db.setStat('LightningResistOverCap', lightOvercap);
+
+  if (db.flag('ArmourIncPerOvercappedFireRes') && fireRaw > fireMaxResist) {
+    db.addMod({
+      name: 'Armour',
+      type: 'INC',
+      value: fireRaw - fireMaxResist,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Overcapped Fire Resistance',
+    });
+  }
+  if (db.flag('ArmourIncPerUncappedFireRes') && fireRaw > 0) {
+    db.addMod({
+      name: 'Armour',
+      type: 'INC',
+      value: fireRaw,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Uncapped Fire Resistance',
+    });
+  }
+  if (db.flag('EvasionIncPerOvercappedColdRes') && coldRaw > coldMaxResist) {
+    db.addMod({
+      name: 'Evasion',
+      type: 'INC',
+      value: coldRaw - coldMaxResist,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Overcapped Cold Resistance',
+    });
+  }
+  if (db.flag('EvasionIncPerUncappedColdRes') && coldRaw > 0) {
+    db.addMod({
+      name: 'Evasion',
+      type: 'INC',
+      value: coldRaw,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Uncapped Cold Resistance',
+    });
+  }
+  if (db.flag('CritIncPerOvercappedLightRes') && lightningRaw > lightningMaxResist) {
+    db.addMod({
+      name: 'CritChance',
+      type: 'INC',
+      value: lightningRaw - lightningMaxResist,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Overcapped Lightning Resistance',
+    });
+  }
+  if (db.flag('CritIncPerUncappedLightRes') && lightningRaw > 0) {
+    db.addMod({
+      name: 'CritChance',
+      type: 'INC',
+      value: lightningRaw,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Uncapped Lightning Resistance',
+    });
+  }
+
+  // Re-run Iron Reflexes pool conversion if Radiant Faith or Overcap Resist added Base/INC Armour or Evasion
+  const finalPoolConvRes =
+    ironReflexes &&
+    (hasRadiantFaith ||
+      db.flag('ArmourIncPerOvercappedFireRes') ||
+      db.flag('ArmourIncPerUncappedFireRes') ||
+      db.flag('EvasionIncPerOvercappedColdRes') ||
+      db.flag('EvasionIncPerUncappedColdRes'))
+      ? applyPoolConversionsAndKeystones({
+          game: build.game,
+          db,
+          allocatedNodes: allAllocatedNodeDefs,
+          equippedItems: nonFlaskEquippedForUniques,
+          socketedJewels: allJewelItems,
+          dex,
+        })
+      : poolConvRes;
+
+  if (db.flag('EsIncAppliesToWardInstead')) {
+    const esIncVal = db.calcStat('EnergyShield').incPct;
+    if (esIncVal !== 0) {
+      db.addMod({
+        name: 'Ward',
+        type: 'INC',
+        value: esIncVal,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Faithguard (ES -> Ward)',
+      });
+    }
+  }
   const esEval = db.calcStat('EnergyShield');
   const wardEval = db.calcStat('Ward');
-  const manaEval = db.calcStat('Mana');
   const spiritEval = db.calcStat('Spirit');
   const armourEval = db.calcStat('Armour');
   const evasionEval = db.calcStat('Evasion');
   const moveSpeedEval = db.calcStat('MovementSpeed');
 
-  const life =
-    lifeConvToEsPct > 0 && lifeEval.total > 1
-      ? Math.max(1, Math.round(lifeEval.total * (1 - lifeConvToEsPct / 100)))
-      : Math.round(lifeEval.total);
-  db.setStat('Life', life);
-  db.setStat('Mana', Math.round(manaEval.total));
-
-  // Slot-specific "% increased Armour / Evasion / Energy Shield from Equipped Body Armour / Shield / Helmet"
-  const sumSlotInc = (slot: 'BodyArmour' | 'Shield' | 'Helmet', stat: 'EnergyShield' | 'Armour' | 'Evasion') => {
+  // Slot-specific "% increased / more Armour / Evasion / Energy Shield from Equipped Body Armour / Shield / Helmet / Focus / Boots / Gloves"
+  const sumSlotInc = (
+    slot: 'BodyArmour' | 'Shield' | 'Helmet' | 'Focus' | 'Boots' | 'Gloves',
+    stat: 'EnergyShield' | 'Armour' | 'Evasion',
+  ) => {
     const base =
       db.sum('INC', `${stat}From${slot}`) +
       db.sum('INC', `${slot}${stat}Inc`) +
@@ -1220,23 +3609,45 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
       db.sum('INC', `${slot}ArmourandEvasionInc`)
     );
   };
+  const computeSlotExtra = (
+    localBase: number,
+    slot: 'BodyArmour' | 'Shield' | 'Helmet' | 'Focus' | 'Boots' | 'Gloves',
+    stat: 'EnergyShield' | 'Armour' | 'Evasion',
+    globalIncPct: number,
+    globalMoreMult: number,
+  ): number => {
+    if (localBase <= 0) return 0;
+    const slotInc = sumSlotInc(slot, stat);
+    const slotMore = db.more(`${stat}From${slot}`);
+    if (slotInc === 0 && slotMore === 1) return 0;
+    const baseFactor = Math.max(0, 1 + globalIncPct / 100);
+    const fullFactor = Math.max(0, 1 + (globalIncPct + slotInc) / 100) * slotMore;
+    return localBase * (fullFactor - baseFactor) * globalMoreMult;
+  };
   const extraSlotEs =
-    poe2Eb || esEval.sources.some((s) => s.type === 'OVERRIDE' && s.value === 0)
+    poe2Eb ||
+    db.flag('ConvertArmourESToLife') ||
+    esEval.sources.some((s) => s.type === 'OVERRIDE' && s.value === 0)
       ? 0
-      : (bodyLocalEs * (sumSlotInc('BodyArmour', 'EnergyShield') / 100) +
-          shieldLocalEs * (sumSlotInc('Shield', 'EnergyShield') / 100) +
-          helmetLocalEs * (sumSlotInc('Helmet', 'EnergyShield') / 100)) *
-        esEval.moreMultiplier;
+      : computeSlotExtra(bodyLocalEs, 'BodyArmour', 'EnergyShield', esEval.incPct, esEval.moreMultiplier) +
+        computeSlotExtra(shieldLocalEs, 'Shield', 'EnergyShield', esEval.incPct, esEval.moreMultiplier) +
+        computeSlotExtra(helmetLocalEs, 'Helmet', 'EnergyShield', esEval.incPct, esEval.moreMultiplier) +
+        computeSlotExtra(focusLocalEs, 'Focus', 'EnergyShield', esEval.incPct, esEval.moreMultiplier) +
+        computeSlotExtra(bootsLocalEs, 'Boots', 'EnergyShield', esEval.incPct, esEval.moreMultiplier) +
+        computeSlotExtra(glovesLocalEs, 'Gloves', 'EnergyShield', esEval.incPct, esEval.moreMultiplier);
+  const bodyArmourSlotFactor = db.flag('BodyArmourDoubled') ? 2 : 1;
   const extraSlotArmour =
-    (bodyLocalArmour * (sumSlotInc('BodyArmour', 'Armour') / 100) +
-      shieldLocalArmour * (sumSlotInc('Shield', 'Armour') / 100) +
-      helmetLocalArmour * (sumSlotInc('Helmet', 'Armour') / 100)) *
-    armourEval.moreMultiplier;
+    computeSlotExtra(bodyArmourSlotFactor * bodyLocalArmour, 'BodyArmour', 'Armour', armourEval.incPct, armourEval.moreMultiplier) +
+    computeSlotExtra(shieldLocalArmour, 'Shield', 'Armour', armourEval.incPct, armourEval.moreMultiplier) +
+    computeSlotExtra(helmetLocalArmour, 'Helmet', 'Armour', armourEval.incPct, armourEval.moreMultiplier) +
+    computeSlotExtra(bootsLocalArmour, 'Boots', 'Armour', armourEval.incPct, armourEval.moreMultiplier) +
+    computeSlotExtra(glovesLocalArmour, 'Gloves', 'Armour', armourEval.incPct, armourEval.moreMultiplier);
   const extraSlotEvasion =
-    (bodyLocalEvasion * (sumSlotInc('BodyArmour', 'Evasion') / 100) +
-      shieldLocalEvasion * (sumSlotInc('Shield', 'Evasion') / 100) +
-      helmetLocalEvasion * (sumSlotInc('Helmet', 'Evasion') / 100)) *
-    evasionEval.moreMultiplier;
+    computeSlotExtra(bodyLocalEvasion, 'BodyArmour', 'Evasion', evasionEval.incPct, evasionEval.moreMultiplier) +
+    computeSlotExtra(shieldLocalEvasion, 'Shield', 'Evasion', evasionEval.incPct, evasionEval.moreMultiplier) +
+    computeSlotExtra(helmetLocalEvasion, 'Helmet', 'Evasion', evasionEval.incPct, evasionEval.moreMultiplier) +
+    computeSlotExtra(bootsLocalEvasion, 'Boots', 'Evasion', evasionEval.incPct, evasionEval.moreMultiplier) +
+    computeSlotExtra(glovesLocalEvasion, 'Gloves', 'Evasion', evasionEval.incPct, evasionEval.moreMultiplier);
 
   // Corrupted Soul / Replica Soul Tether: Gain X% of Maximum Life as Extra Maximum Energy Shield
   const lifeAsExtraEsPct = Math.max(0, db.sum('BASE', 'LifeAsExtraES'));
@@ -1267,7 +3678,7 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
         esEval.moreMultiplier;
     }
   }
-  // Hierophant Divine Guidance: Transfiguration of Mind (30% of Mana INC applies to Damage)
+  // Transfiguration of Mind / Soul / Body (Crown of the Inward Eye, Hierophant Divine Guidance — CalcOffence.lua:548-556)
   if (db.flag('TransfigurationOfMind') && manaEval.incPct !== 0) {
     db.addMod({
       name: 'Damage',
@@ -1278,76 +3689,64 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
       source: 'Transfiguration of Mind',
     });
   }
+  if (db.flag('TransfigurationOfSoul') && esEval.incPct !== 0) {
+    db.addMod({
+      name: 'Damage',
+      type: 'INC',
+      value: Math.floor(esEval.incPct * 0.3),
+      flags: ModFlag.Spell,
+      keywordFlags: 0,
+      source: 'Transfiguration of Soul',
+    });
+  }
+  if (db.flag('TransfigurationOfBody') && rawLifeEval.incPct !== 0) {
+    db.addMod({
+      name: 'Damage',
+      type: 'INC',
+      value: Math.floor(rawLifeEval.incPct * 0.3),
+      flags: ModFlag.Attack,
+      keywordFlags: 0,
+      source: 'Transfiguration of Body',
+    });
+  }
   const energyShield = Math.round(esEval.total + extraEsFromLife + extraEsFromMana + extraSlotEs);
   const ward = Math.round(wardEval.total);
-  const mana = Math.round(manaEval.total);
   const spirit = ruleset.supportsSpirit && !db.flag('ZeroSpirit') ? Math.round(spiritEval.total) : 0;
 
-  let armour = Math.round(armourEval.total + extraSlotArmour);
+  const evasionAsExtraArmourPct = Math.max(0, db.sum('BASE', 'EvasionAsExtraArmour'));
+  const extraArmourFromEvasion =
+    evasionAsExtraArmourPct > 0 && !ironReflexes && evasionEval.base > 0
+      ? evasionEval.base *
+        (evasionAsExtraArmourPct / 100) *
+        Math.max(0, 1 + armourEval.incPct / 100) *
+        armourEval.moreMultiplier
+      : 0;
+  let armour = Math.round(armourEval.total + extraSlotArmour + extraArmourFromEvasion);
   let evasion = Math.round(evasionEval.total + extraSlotEvasion);
   if (ironReflexes) {
-    // Official PoB Iron Reflexes: Base Evasion converts to Armour and scales with BOTH Armour & Evasion inc/more
-    const convertedArmour =
-      evasionEval.base *
-      (1 + (armourEval.incPct + evasionEval.incPct) / 100) *
-      armourEval.moreMultiplier *
-      evasionEval.moreMultiplier;
-    armour = Math.round(armourEval.total + extraSlotArmour + convertedArmour);
+    armour = Math.round(finalPoolConvRes.resolvedPools.armour + extraSlotArmour + extraSlotEvasion);
     evasion = 0;
   }
   db.setStat('EnergyShield', energyShield);
   db.setStat('Armour', armour);
   db.setStat('Evasion', evasion);
-  db.setStat('Accuracy', Math.round(db.calcStat('Accuracy').total));
+  db.setStat('ShieldArmour', shieldLocalArmour);
+  db.setStat('ShieldEvasion', shieldLocalEvasion);
+  db.setStat('ShieldES', shieldLocalEs);
+  db.setStat('ArmourOnWeapon 2', shieldLocalArmour);
+  db.setStat('EvasionOnWeapon 2', shieldLocalEvasion);
+  db.setStat('EnergyShieldOnWeapon 2', shieldLocalEs);
+  db.setStat('LowestOfArmourAndEvasion', Math.min(armour, evasion));
+  const accuracyTotal = Math.round(db.calcStat('Accuracy').total);
+  db.setStat('Accuracy', accuracyTotal);
 
-  const genericResEff = db.sum('INC', 'ReservationEfficiency');
-  const manaResEff = Math.max(-90, db.sum('INC', 'ManaReservationEfficiency') + genericResEff);
-  const lifeResEff = Math.max(-90, db.sum('INC', 'LifeReservationEfficiency') + genericResEff);
-  let totalManaReservedFlat = 0;
-  let totalManaReservedPctExact = 0;
-  if (mana > 0) {
-    for (const res of auraEval.manaReservations) {
-      if (res.zeroedByBlessing) continue;
-      const effDiv = 1 + Math.max(-90, manaResEff + res.localEfficiencyPct) / 100;
-      if (res.basePct > 0) {
-        const basePercentVal = Math.trunc(res.basePct * 100 * res.multiplier + 1e-6);
-        const effPct = Math.max(0, Math.round(basePercentVal / effDiv) / 100);
-        totalManaReservedPctExact += effPct;
-        totalManaReservedFlat += Math.ceil(mana * (effPct / 100) - 1e-9);
-      }
-      if (res.baseFlat > 0) {
-        const baseFlatVal = Math.trunc(res.baseFlat * res.multiplier + 1e-6);
-        const effFlat = Math.max(0, Math.round(baseFlatVal / effDiv));
-        totalManaReservedFlat += effFlat;
-      }
-    }
-  }
-  let totalLifeReservedFlat = 0;
-  if (life > 1) {
-    for (const res of auraEval.lifeReservations) {
-      if (res.zeroedByBlessing) continue;
-      const effDiv = 1 + Math.max(-90, lifeResEff + res.localEfficiencyPct) / 100;
-      if (res.basePct > 0) {
-        const basePercentVal = Math.trunc(res.basePct * 100 * res.multiplier + 1e-6);
-        const effPct = Math.max(0, Math.round(basePercentVal / effDiv) / 100);
-        totalLifeReservedFlat += Math.ceil(life * (effPct / 100) - 1e-9);
-      }
-      if (res.baseFlat > 0) {
-        const baseFlatVal = Math.trunc(res.baseFlat * res.multiplier + 1e-6);
-        const effFlat = Math.max(0, Math.round(baseFlatVal / effDiv));
-        totalLifeReservedFlat += effFlat;
-      }
-    }
-  }
-  const lifeUnreserved = Math.max(0, life - totalLifeReservedFlat);
-  db.setStat('LifeUnreserved', lifeUnreserved);
-  const lowLifeThresholdPct = db.override('LowLifeThreshold') ?? 50;
+  const lowLifeThresholdPct = db.override('LowLifeThreshold') ?? (build.game === 'poe2' ? 35 : 50);
   const autoLowLife =
     life > 1 && totalLifeReservedFlat > 0 && lifeUnreserved <= life * (lowLifeThresholdPct / 100);
   if (autoLowLife && !cfg.conditionLowLife) {
     db.setCondition('LowLife', true);
     db.setCondition('FullLife', false);
-    if (db.flag('PainAttunement')) {
+    if (build.game === 'poe1' && db.flag('PainAttunement')) {
       db.addMod({
         name: 'Damage',
         type: 'MORE',
@@ -1363,6 +3762,7 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
       ? Math.round((totalManaReservedFlat / mana) * 1000) / 10
       : 0;
   const manaUnreserved = Math.max(0, mana - totalManaReservedFlat);
+  db.setStat('ManaUnreserved', manaUnreserved);
   const spiritUnreserved = spirit - totalSpiritReserved;
 
   // Guard skills (Molten Shell / Steelskin / Arcane Cloak) add a temporary hit-absorption pool.
@@ -1415,23 +3815,6 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     });
   }
 
-  let fireMaxResist = Math.min(90, Math.round(db.sum('BASE', 'FireResistMax')));
-  let coldMaxResist = Math.min(90, Math.round(db.sum('BASE', 'ColdResistMax')));
-  let lightningMaxResist = Math.min(90, Math.round(db.sum('BASE', 'LightningResistMax')));
-  if (uniqueGearResult.meldingOfTheFleshActive) {
-    const highestEleMax = Math.max(fireMaxResist, coldMaxResist, lightningMaxResist);
-    fireMaxResist = highestEleMax;
-    coldMaxResist = highestEleMax;
-    lightningMaxResist = highestEleMax;
-  }
-  const chaosMaxResist = Math.min(90, Math.round(db.sum('BASE', 'ChaosResistMax')));
-
-  const fireRaw = Math.round(db.sum('BASE', 'FireResist'));
-  const coldRaw = Math.round(db.sum('BASE', 'ColdResist'));
-  const lightningRaw = Math.round(db.sum('BASE', 'LightningResist'));
-  const chaosImmune = db.flag('ChaosImmune');
-  const chaosRaw = chaosImmune ? 100 : Math.round(db.sum('BASE', 'ChaosResist'));
-
   const fireResist = Math.min(fireMaxResist, fireRaw);
   const coldResist = Math.min(coldMaxResist, coldRaw);
   const lightningResist = Math.min(lightningMaxResist, lightningRaw);
@@ -1457,7 +3840,7 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
   const rawEnemyAcc = 200 + cfg.enemyLevel * 12;
   const enemyAcc = cfg.enemyBlinded ? rawEnemyAcc * 0.8 : rawEnemyAcc;
   const evadeChance =
-    evasion > 0
+    evasion > 0 && !db.flag('CannotEvade')
       ? Math.min(95, Math.max(0, Math.round((1 - (1.25 * enemyAcc) / (enemyAcc + Math.pow(evasion / 5, 0.9))) * 100)))
       : 0;
 
@@ -1474,6 +3857,8 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     }
   }
   const spellBlockChance = Math.min(maxSpellBlock, Math.max(0, Math.round(rawSpellBlock)));
+  db.setStat('BlockChance', blockChance);
+  db.setStat('SpellBlockChance', spellBlockChance);
   const spellSuppressionChance = ruleset.supportsSpellSuppression
     ? Math.min(100, Math.round(db.sum('BASE', 'SpellSuppressionChance')))
     : 0;
@@ -1566,6 +3951,152 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     maxEleHitTaken,
   };
 
+  // Automatic LowLife (<= 50% PoE 1 / <= 35% PoE 2) & FullLife derived from unreserved Life
+  const isCiFinal = keystonePoolResult.chaosInoculation || db.flag('ChaosInoculation');
+  const lowLifeFrac = build.game === 'poe2' ? 0.35 : 0.5;
+  const derivedLowLife =
+    Boolean(cfg.conditionLowLife) ||
+    db.flag('Condition:LowLife') ||
+    (!isCiFinal && defence.life > 0 && defence.lifeUnreserved <= defence.life * lowLifeFrac + 1e-6);
+  const derivedFullLife =
+    Boolean(cfg.conditionFullLife) ||
+    Boolean(cfg.rawInputs?.conditionFullLife) ||
+    (build.game === 'poe2'
+      ? isCiFinal
+      : !derivedLowLife && (isCiFinal || (defence.life > 0 && defence.lifeUnreserved >= defence.life)));
+  db.setCondition('LowLife', derivedLowLife);
+  db.setCondition('FullLife', derivedFullLife);
+  if (
+    build.game === 'poe1' &&
+    derivedLowLife &&
+    !cfg.conditionLowLife &&
+    db.flag('PainAttunement')
+  ) {
+    const alreadyHasPa = db
+      .calcStat('Damage', ModFlag.Spell)
+      .sources.some((s) => s.type === 'MORE' && s.source.toLowerCase().includes('pain attunement'));
+    if (!alreadyHasPa) {
+      db.addMod({
+        name: 'Damage',
+        type: 'MORE',
+        value: 30,
+        flags: ModFlag.Spell,
+        keywordFlags: 0,
+        source: 'Keystone: Pain Attunement (Low Life)',
+      });
+    }
+  }
+  const derivedLowMana =
+    Boolean(cfg.rawInputs?.conditionLowMana) ||
+    (defence.mana > 0 && defence.manaUnreserved <= defence.mana * lowLifeFrac + 1e-6);
+  const derivedFullMana =
+    Boolean(cfg.rawInputs?.conditionFullMana) ||
+    db.flag('Condition:FullMana');
+  db.setCondition('LowMana', derivedLowMana);
+  db.setCondition('FullMana', derivedFullMana);
+  if (
+    build.game === 'poe2' &&
+    !cfg.rawInputs?.buffUnholyMight &&
+    (db.flag('Poe2UnholyMight') || db.flag('Condition:UnholyMight')) &&
+    !(db.flag('Poe2UnholyMight') && derivedLowMana)
+  ) {
+    db.addMod({
+      name: 'DamageGainAsChaos',
+      type: 'BASE',
+      value: 30,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Unholy Might',
+    });
+  }
+  if (build.game === 'poe2' && db.flag('ExposureInPresence')) {
+    auraEnemyDb.addMod({ name: 'FireExposure', type: 'BASE', value: 20, flags: 0, keywordFlags: 0, source: 'Exposure (Presence)' });
+    auraEnemyDb.addMod({ name: 'ColdExposure', type: 'BASE', value: 20, flags: 0, keywordFlags: 0, source: 'Exposure (Presence)' });
+    auraEnemyDb.addMod({ name: 'LightningExposure', type: 'BASE', value: 20, flags: 0, keywordFlags: 0, source: 'Exposure (Presence)' });
+  }
+  if (build.game === 'poe2') {
+    if ((auraEnemyDb.max('FireExposure') ?? 0) > 0 || auraEnemyDb.sum('BASE', 'FireExposure') > 0) {
+      db.setCondition('EnemyFireExposure', true);
+      db.setCondition('EnemyExposure', true);
+      auraEnemyDb.setCondition('FireExposure', true);
+      auraEnemyDb.setCondition('Exposure', true);
+    }
+    if ((auraEnemyDb.max('ColdExposure') ?? 0) > 0 || auraEnemyDb.sum('BASE', 'ColdExposure') > 0) {
+      db.setCondition('EnemyColdExposure', true);
+      db.setCondition('EnemyExposure', true);
+      auraEnemyDb.setCondition('ColdExposure', true);
+      auraEnemyDb.setCondition('Exposure', true);
+    }
+    if ((auraEnemyDb.max('LightningExposure') ?? 0) > 0 || auraEnemyDb.sum('BASE', 'LightningExposure') > 0) {
+      db.setCondition('EnemyLightningExposure', true);
+      db.setCondition('EnemyExposure', true);
+      auraEnemyDb.setCondition('LightningExposure', true);
+      auraEnemyDb.setCondition('Exposure', true);
+    }
+  }
+
+  // Post-Pool Build-Enabling Uniques (Crown of Eyes, Iron Fortress, Replica Alberon, HoWA, Brutus, Pillar, Rathpith, Perseverance, Ephemeral Edge, Energy Blade, Doryani's Prototype) & Nightgrip Ward->Chaos
+  const activeSkillsListForUniques = build.skills
+    .filter((g) => g.enabled)
+    .flatMap((g) =>
+      g.gems
+        .filter((gm) => gm.enabled)
+        .map((gm) => {
+          const gd = getGemById(build.game, gm.gemId);
+          return gd ? { name: gd.name.en, level: gm.level, quality: gm.quality, enabled: true } : null;
+        })
+        .filter((x): x is NonNullable<typeof x> => x !== null),
+    );
+  const postUniqueRes: PostPoolUniqueResult = evaluatePostPoolBuildEnablingUniques({
+    db,
+    equippedItems: nonFlaskEquippedForUniques,
+    socketedJewels: allJewelItems,
+    str,
+    dex,
+    int,
+    life,
+    mana,
+    energyShield,
+    armour,
+    evasion,
+    fortified: Boolean(cfg.fortified || db.flag('AlwaysFortified')),
+    playerLightningResist: lightningResist,
+    activeSkills: activeSkillsListForUniques,
+    isTwoHanded: usingTwoHanded,
+  });
+  if (postUniqueRes.ironFortressBlockBonus > 0) {
+    defence.blockChance = Math.min(
+      maxAttackBlock,
+      Math.max(0, Math.floor(db.calcStat('BlockChance').total + 1e-6)),
+    );
+  }
+  if (postUniqueRes.energyBlade?.active) {
+    defence.energyShield = postUniqueRes.energyBlade.postBladeEs;
+    db.setStat('EnergyShield', postUniqueRes.energyBlade.postBladeEs);
+  }
+  const totalWardChaosPct = Math.max(nightgripWardChaosPct, db.sum('BASE', 'WardAsChaosPct'));
+  if (totalWardChaosPct > 0 && ward > 0) {
+    const wardChaos = Math.floor((ward * totalWardChaosPct) / 100);
+    if (wardChaos > 0) {
+      db.addMod({
+        name: 'ChaosMin',
+        type: 'BASE',
+        value: wardChaos,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Unique: Nightgrip',
+      });
+      db.addMod({
+        name: 'ChaosMax',
+        type: 'BASE',
+        value: wardChaos,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Unique: Nightgrip',
+      });
+    }
+  }
+
   // 8. Compute Offence Output for Main Skill Group
   const offence = computeOffence(
     build,
@@ -1575,6 +4106,9 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     activePower,
     auraMinionDb,
     auraEnemyDb,
+    preUniqueRes,
+    postUniqueRes,
+    expandPoe2LocalRunes,
   );
 
   // Leech rates are capped by the standard PoE maximum recovery per second.
@@ -1624,7 +4158,8 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
   const allocatedPoints = build.tree.allocatedNodeIds.filter((id) => {
     if (id === startNodeId) return false;
     const node = tree.nodes[id];
-    return !node?.ascendancyId;
+    if (!node) return false;
+    return !node.ascendancyId;
   }).length;
   const ascendancyPoints = build.tree.allocatedNodeIds.filter((id) => {
     if (id === ascStartNodeId) return false;
@@ -1663,6 +4198,9 @@ function weaponTypeToModFlags(weaponType: string | undefined, twoHanded?: boolea
       break;
     case 'Quarterstaff':
       wf |= ModFlag.Quarterstaff | ModFlag.Melee;
+      break;
+    case 'Talisman':
+      wf |= ModFlag.Talisman | ModFlag.Melee;
       break;
     case 'Dagger':
       wf |= ModFlag.Dagger | ModFlag.Melee;
@@ -1756,6 +4294,21 @@ function mergeModDbInto(target: ModDB, source: ModDB): void {
   for (const [, list] of source.entriesByPrefix('')) {
     target.addMods(list);
   }
+  const srcCtx = source.getEvalContext();
+  const dstCtx = target.getEvalContext();
+  target.setEvalContext({
+    conditions: { ...dstCtx.conditions, ...srcCtx.conditions },
+    multipliers: { ...dstCtx.multipliers, ...srcCtx.multipliers },
+    stats: { ...dstCtx.stats, ...srcCtx.stats },
+    ...(dstCtx.skillTypes || srcCtx.skillTypes
+      ? { skillTypes: { ...(dstCtx.skillTypes ?? {}), ...(srcCtx.skillTypes ?? {}) } }
+      : {}),
+    ...(srcCtx.socketedIn !== undefined
+      ? { socketedIn: srcCtx.socketedIn }
+      : dstCtx.socketedIn !== undefined
+        ? { socketedIn: dstCtx.socketedIn }
+        : {}),
+  });
 }
 
 function computeOffence(
@@ -1766,23 +4319,74 @@ function computeOffence(
   activePowerCharges = 0,
   auraMinionDb?: ModDB,
   auraEnemyDb?: ModDB,
+  preUniqueRes?: PreStatUniqueResult,
+  postUniqueRes?: PostPoolUniqueResult,
+  expandPoe2LocalRunes?: (slot: string, item: Item) => Item,
 ): CalcOffenceOutput {
   const baseBuses = splitModDBIntoActorBuses(globalDb, { game: build.game });
   if (auraMinionDb) mergeModDbInto(baseBuses.minionDb, auraMinionDb);
   if (auraEnemyDb) mergeModDbInto(baseBuses.enemyDb, auraEnemyDb);
-  if (build.config.enemyShocked && build.config.shockValue > 0) {
-    baseBuses.enemyDb.addMod({
-      name: 'DamageTaken',
-      type: 'INC',
-      value: Math.max(0, Math.min(100, build.config.shockValue)),
-      flags: 0,
-      keywordFlags: 0,
-      source: 'Shock',
-    });
+  const skitterOrBaseShockOverride = Math.max(
+    0,
+    globalDb.sum('BASE', 'ShockOverride'),
+    globalDb.sum('BASE', 'ShockMinimum'),
+  );
+  if (build.config.enemyShocked || skitterOrBaseShockOverride > 0) {
+    const defaultShock = build.game === 'poe2' ? 20 : 15;
+    const shockEffMult =
+      Math.max(
+        0,
+        1 +
+          globalDb.sum(
+            'INC',
+            build.game === 'poe2'
+              ? ['ShockEffect', 'EnemyShockEffect', 'EnemyShockMagnitude', 'AilmentMagnitude', 'ShockMagnitude']
+              : ['ShockEffect', 'EnemyShockEffect'],
+          ) /
+            100,
+      ) *
+      globalDb.more(
+        build.game === 'poe2'
+          ? ['ShockEffect', 'EnemyShockEffect', 'EnemyShockMagnitude', 'AilmentMagnitude', 'ShockMagnitude']
+          : ['ShockEffect', 'EnemyShockEffect'],
+      );
+    const scaledDefaultShock = build.config.enemyShocked
+      ? build.game === 'poe2'
+        ? Math.max(build.config.shockValue, Math.floor(defaultShock * shockEffMult + 1e-9))
+        : build.config.shockValue > 0
+          ? build.config.shockValue
+          : Math.floor(defaultShock * shockEffMult + 1e-9)
+      : 0;
+    const rawShockVal = Math.max(scaledDefaultShock, skitterOrBaseShockOverride);
+    const shockStacks = Math.max(1, Number(build.config.rawInputs?.ShockStacks ?? 1));
+    const maxShock =
+      build.game === 'poe2'
+        ? 100
+        : Math.min(100, 50 + Math.max(0, globalDb.sum('BASE', ['ShockMax', 'MaximumShock'])));
+    if (rawShockVal > 0) {
+      baseBuses.playerDb.setCondition('EnemyShocked', true);
+      baseBuses.enemyDb.setCondition('Shocked', true);
+      baseBuses.enemyDb.addMod({
+        name: 'DamageTaken',
+        type: 'INC',
+        value: Math.max(0, Math.min(maxShock, rawShockVal * shockStacks)),
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Shock',
+      });
+    }
   }
 
+  const squireEquippedList = getActiveEquippedItems(build);
+  const squireBridge = collectSquireSupportsForMainHand(
+    build.skills,
+    squireEquippedList,
+    (id) => getGemById(build.game, id),
+  );
+
+  // PoB always evaluates the selected mainSocketGroup for main skill offence even if its group enabled toggle is false
   let mainGroup =
-    build.skills.find((g) => g.id === build.mainSkillGroupId && g.enabled) ??
+    build.skills.find((g) => g.id === build.mainSkillGroupId) ??
     build.skills.find((g) => g.enabled);
 
   let mainResult = computeGroupOffence(
@@ -1792,6 +4396,10 @@ function computeOffence(
     mainGroup,
     uniqueGearResult,
     activePowerCharges,
+    squireBridge.bridgedSupports,
+    preUniqueRes,
+    postUniqueRes,
+    expandPoe2LocalRunes,
   );
 
   if (mainResult.offence.skillType === 'None') {
@@ -1811,6 +4419,10 @@ function computeOffence(
         candidateGrp,
         uniqueGearResult,
         activePowerCharges,
+        squireBridge.bridgedSupports,
+        preUniqueRes,
+        postUniqueRes,
+        expandPoe2LocalRunes,
       );
       if (candidateRes.offence.skillType !== 'None') {
         mainGroup = candidateGrp;
@@ -1836,7 +4448,18 @@ function computeOffence(
       const res =
         grp === mainGroup
           ? mainResult
-          : computeGroupOffence(build, baseBuses, defence, grp, uniqueGearResult, activePowerCharges);
+          : computeGroupOffence(
+              build,
+              baseBuses,
+              defence,
+              grp,
+              uniqueGearResult,
+              activePowerCharges,
+              squireBridge.bridgedSupports,
+              preUniqueRes,
+              postUniqueRes,
+              expandPoe2LocalRunes,
+            );
       if (res.offence.skillType === 'None') continue;
       const count = Math.max(1, res.activeCount);
       const groupHit =
@@ -1873,6 +4496,10 @@ function computeGroupOffence(
   mainGroup: Build['skills'][number] | undefined,
   uniqueGearResult?: SpecialUniqueGearResult,
   activePowerCharges = 0,
+  squireBridgedSupports: GemInstance[] = [],
+  preUniqueRes?: PreStatUniqueResult,
+  postUniqueRes?: PostPoolUniqueResult,
+  expandPoe2LocalRunes?: (slot: string, item: Item) => Item,
 ): { offence: CalcOffenceOutput; activeCount: number; groupStackingDps?: number } {
   const emptyRanges: Record<DamageType, DamageRange> = {
     Physical: { min: 0, max: 0, average: 0 },
@@ -1915,8 +4542,8 @@ function computeGroupOffence(
   const groupEnemyDb = baseBuses.enemyDb.clone();
   const groupMinionDb = baseBuses.minionDb.clone();
 
-  // Resolve slot item for PoE 1 matching socket quality bonus AND `+N to Level/Quality of Socketed Gems`
-  let slotDefaultSocketColor: 'red' | 'green' | 'blue' | undefined;
+  // Resolve slot item for PoE 1 matching socket quality bonus (`CalcSetup.lua:19-31`), Dialla's Malefaction,
+  // `+N to Level/Quality of Socketed Gems`, and item-granted `Socketed Gems are Supported by Level X ...` pseudo-links
   const slotItem =
     mainGroup.slot && build.equipped[mainGroup.slot]
       ? build.items[build.equipped[mainGroup.slot]!]
@@ -1924,26 +4551,89 @@ function computeGroupOffence(
   const socketedRules = slotItem
     ? parseSocketedGemBonuses([...slotItem.implicits, ...slotItem.explicits])
     : [];
+  const slotSocketColors: string[] = [];
+  let slotAlwaysMatchesSocketColor = false;
+  let isDiallasMalefaction = false;
   if (build.game === 'poe1' && slotItem) {
-    if (slotItem.armourStats) {
-      const a = slotItem.armourStats.armour ?? 0;
-      const e = slotItem.armourStats.evasion ?? 0;
-      const es = slotItem.armourStats.energyShield ?? 0;
-      if (es > 0 && a === 0 && e === 0) slotDefaultSocketColor = 'blue';
-      else if (a > 0 && e === 0 && es === 0) slotDefaultSocketColor = 'red';
-      else if (e > 0 && a === 0 && es === 0) slotDefaultSocketColor = 'green';
-    } else if (slotItem.weaponStats) {
-      const wt = slotItem.weaponStats.weaponType;
-      if (wt === 'Wand' || wt === 'Staff') slotDefaultSocketColor = 'blue';
-      else if (wt === 'Bow' || wt === 'Claw' || wt === 'Dagger') slotDefaultSocketColor = 'green';
-      else if (wt === 'Axe' || wt === 'Mace') slotDefaultSocketColor = 'red';
+    isDiallasMalefaction = slotItem.name.trim().toLowerCase() === "dialla's malefaction";
+    if (
+      isDiallasMalefaction ||
+      [...slotItem.implicits, ...slotItem.explicits].some((l) =>
+        /Gems can be Socketed in this Item ignoring Socket Colour/i.test(l),
+      )
+    ) {
+      slotAlwaysMatchesSocketColor = true;
+    }
+    if (slotItem.sockets) {
+      for (const ch of slotItem.sockets.toUpperCase()) {
+        if (ch === 'R' || ch === 'G' || ch === 'B' || ch === 'W' || ch === 'A') {
+          slotSocketColors.push(ch);
+        }
+      }
+    } else {
+      // Official PoB1 Item.lua:1533: items without explicit Sockets default to `socketLimit` sockets of dominant base colour
+      let defaultCol: string | null = null;
+      if (slotItem.armourStats) {
+        const a = slotItem.armourStats.armour ?? 0;
+        const e = slotItem.armourStats.evasion ?? 0;
+        const es = slotItem.armourStats.energyShield ?? 0;
+        if (a >= e && a >= es && a > 0) defaultCol = 'R';
+        else if (e >= a && e >= es && e > 0) defaultCol = 'G';
+        else if (es > 0) defaultCol = 'B';
+      } else if (slotItem.weaponStats) {
+        const wt = slotItem.weaponStats.weaponType;
+        if (wt === 'Wand' || wt === 'Staff') defaultCol = 'B';
+        else if (wt === 'Bow' || wt === 'Claw' || wt === 'Dagger') defaultCol = 'G';
+        else defaultCol = 'R';
+      }
+      if (defaultCol) {
+        for (let i = 0; i < 6; i++) slotSocketColors.push(defaultCol);
+      }
     }
   }
+  const gemSocketColorByInstance = new Map<string, string>();
+  if (build.game === 'poe1' && slotSocketColors.length > 0) {
+    let sockCursor = 0;
+    for (const gm of mainGroup.gems) {
+      if (gm.fromItem) continue;
+      const col = slotSocketColors[sockCursor];
+      if (col) gemSocketColorByInstance.set(gm.instanceId, col);
+      sockCursor++;
+    }
+  }
+  const consumeMatchingSocketBonus = (
+    def: GemDefinition,
+    gemInstanceId?: string,
+  ): { qualBonus: number; diallaLevelBonus: number; diallaQualBonus: number } => {
+    if (build.game !== 'poe1' || !slotItem || slotSocketColors.length === 0) {
+      return { qualBonus: 0, diallaLevelBonus: 0, diallaQualBonus: 0 };
+    }
+    const colorKey = def.color === 'red' ? 'R' : def.color === 'green' ? 'G' : def.color === 'blue' ? 'B' : null;
+    const sockCol = gemInstanceId ? gemSocketColorByInstance.get(gemInstanceId) : undefined;
+    // Official PoB1 CalcSetup.lua:19-31: matching socket quality ONLY on explicit R/G/B match (NEVER White unless colourAlwaysMatches)
+    let qualBonus = 0;
+    if (slotAlwaysMatchesSocketColor || (colorKey && sockCol === colorKey)) {
+      qualBonus = 10;
+    }
+    let diallaLevelBonus = 0;
+    let diallaQualBonus = 0;
+    if (isDiallasMalefaction) {
+      if (sockCol === 'R' || (!sockCol && colorKey === 'R')) {
+        diallaLevelBonus = 2;
+      } else if (sockCol === 'G' || (!sockCol && colorKey === 'G')) {
+        diallaQualBonus = 30;
+      }
+    }
+    return { qualBonus, diallaLevelBonus, diallaQualBonus };
+  };
 
-  const applyGemQualityStats = (def: GemDefinition, rawQuality: number, sourcePrefix: string) => {
-    const socketBonus =
-      build.game === 'poe1' && slotDefaultSocketColor && def.color === slotDefaultSocketColor ? 10 : 0;
-    const effectiveQuality = rawQuality + socketBonus;
+  const applyGemQualityStats = (
+    def: GemDefinition,
+    rawQuality: number,
+    sourcePrefix: string,
+    extraSocketBonus = 0,
+  ) => {
+    const effectiveQuality = rawQuality + extraSocketBonus;
     if (effectiveQuality <= 0) return effectiveQuality;
     if (def.qualityCompiledMods && def.qualityCompiledMods.length > 0) {
       const scaledQMods = def.qualityCompiledMods
@@ -1978,8 +4668,8 @@ function computeGroupOffence(
           );
         }
       }
-    } else if (def.category === 'active' && rawQuality > 0) {
-      // Fallback for uncurated active gems without explicit qualityStats
+    } else if (build.game === 'poe1' && def.category === 'active' && rawQuality > 0 && !(def.compiledMods && def.compiledMods.length > 0)) {
+      // Fallback for uncurated PoE 1 active gems without explicit qualityStats
       const val = Math.trunc(rawQuality * 0.5);
       if (val > 0) {
         skillDb.addMod({
@@ -1995,31 +4685,108 @@ function computeGroupOffence(
     return effectiveQuality;
   };
 
-  const activeCandidates: Array<{ inst: GemInstance; def: GemDefinition }> = [];
-  const supportCandidates: Array<{ gem: GemDefinition; instance: GemInstance; enabled: boolean }> = [];
+  const activeCandidates: Array<{ inst: GemInstance; def: GemDefinition; fromVaalGem?: boolean }> = [];
+  const supportCandidates: Array<{ gem: GemDefinition; instance: GemInstance; enabled: boolean; preScaledBySquire?: boolean }> = [];
 
   for (const gemInst of mainGroup.gems) {
     if (!gemInst.enabled) continue;
     const def = getGemById(build.game, gemInst.gemId);
     if (!def) continue;
     if (def.category === 'active' && !def.isAuraOrBuff) {
+      if (build.game === 'poe1' && /^Vaal\s+/i.test(def.name.en)) {
+        // In PoB 1 Data/Gems.lua, Vaal gems expose [1] Vaal <Skill> (enableGlobal1) and [2] Base <Skill> (enableGlobal2)
+        // Keep `baseDef` free of `'vaal'` so Multistrike / Spell Echo / Warcry Exertion are NOT falsely excluded!
+        const baseName = def.name.en
+          .replace(/^Vaal\s+Domination(?=\s+of\b|$)/i, 'Dominating Blow')
+          .replace(/^Vaal\s+/i, '')
+          .trim();
+        const slug = `poe1_${baseName.toLowerCase().replace(/[^a-z0-9]+/g, '')}`;
+        const baseDef =
+          getGemById('poe1', slug) ?? resolveGemFromPobRef('poe1', { nameSpec: baseName });
+        if (baseDef && baseDef.id !== def.id) {
+          if (gemInst.enableGlobal1 !== false) {
+            activeCandidates.push({ inst: gemInst, def, fromVaalGem: true });
+          }
+          if (gemInst.enableGlobal2 !== false) {
+            activeCandidates.push({ inst: gemInst, def: baseDef, fromVaalGem: true });
+          }
+          if (gemInst.enableGlobal1 === false && gemInst.enableGlobal2 === false) {
+            activeCandidates.push({ inst: gemInst, def: baseDef, fromVaalGem: true });
+          }
+          continue;
+        }
+      }
       activeCandidates.push({ inst: gemInst, def });
     } else if (def.category === 'support') {
       supportCandidates.push({ gem: def, instance: gemInst, enabled: true });
     }
   }
+  // Merge The Squire off-hand supports into Weapon 1 skill groups
+  if (mainGroup.slot === 'Weapon 1' && squireBridgedSupports.length > 0) {
+    for (const bridgedInst of squireBridgedSupports) {
+      const def = getGemById(build.game, bridgedInst.gemId);
+      if (def && def.category === 'support') {
+        supportCandidates.push({
+          gem: def,
+          instance: bridgedInst,
+          enabled: true,
+          preScaledBySquire: true,
+        });
+      }
+    }
+  }
+  // Instantiate PoE 1 item-granted pseudo-link supports (`Socketed Gems are Supported by Level X <Support>`)
+  if (build.game === 'poe1' && slotItem) {
+    const existingSupIds = new Set(supportCandidates.map((s) => s.gem.id));
+    for (const rawLine of [...slotItem.implicits, ...slotItem.explicits]) {
+      const clean = rawLine.replace(/\{[^}]*\}/g, '').trim();
+      const mSup = clean.match(/^Socketed Gems are Supported by Level (\d+) (.+)$/i);
+      if (!mSup) continue;
+      const supLevel = Math.max(1, Math.min(40, Number(mSup[1])));
+      const supName = mSup[2]!.trim().replace(/\s+Support$/i, '');
+      const supDef = resolveGemFromPobRef('poe1', { nameSpec: supName });
+      if (supDef && supDef.category === 'support' && !existingSupIds.has(supDef.id)) {
+        existingSupIds.add(supDef.id);
+        supportCandidates.push({
+          gem: supDef,
+          instance: {
+            instanceId: `item_sup_${slotItem.id}_${supDef.id}`,
+            gemId: supDef.id,
+            level: supLevel,
+            quality: 0,
+            enabled: true,
+            fromItem: true,
+          },
+          enabled: true,
+          preScaledBySquire: true,
+        });
+      }
+    }
+  }
+
+  // Detect PoE 2 Meta Gem wrapper groups (`Cast on Critical`, `Cast on Shock`, `Cast on Freeze`, `Elemental Invocation`, etc.)
+  const poe2MetaResolution =
+    build.game === 'poe2'
+      ? resolvePoe2MetaGemGroup(mainGroup, (id) => getGemById(build.game, id))
+      : null;
 
   let triggerAttackDef: GemDefinition | undefined;
   let chosenActiveInst: GemInstance | undefined;
+  let resolvedPartStats: ReturnType<typeof resolveActiveSkillPartAndStats> | undefined;
   const compatibleSupportNames = new Set<string>();
   let effectiveSkillTypeSet = new Set<string>();
 
-  if (activeCandidates.length > 0) {
+  const effectiveActiveCandidates =
+    poe2MetaResolution?.isMetaGroup && poe2MetaResolution.payloadActives.length > 0
+      ? poe2MetaResolution.payloadActives
+      : activeCandidates;
+
+  if (effectiveActiveCandidates.length > 0) {
     const pickIdx = Math.max(
       0,
-      Math.min(activeCandidates.length - 1, (mainGroup.mainActiveSkillIndex ?? 1) - 1),
+      Math.min(effectiveActiveCandidates.length - 1, (mainGroup.mainActiveSkillIndex ?? 1) - 1),
     );
-    const chosen = activeCandidates[pickIdx]!;
+    const chosen = effectiveActiveCandidates[pickIdx]!;
     activeDef = chosen.def;
     chosenActiveInst = chosen.inst;
     activeBaseLevel = chosen.inst.level;
@@ -2027,6 +4794,14 @@ function computeGroupOffence(
     // Two-pass PoB RPN SkillType compatibility filtering across linked supports
     const supportResolution = resolveCompatibleSupports(activeDef, supportCandidates);
     effectiveSkillTypeSet = supportResolution.effectiveSkillTypes;
+    if (poe2MetaResolution?.addedSkillTypes) {
+      for (const st of poe2MetaResolution.addedSkillTypes) {
+        effectiveSkillTypeSet.add(st.toLowerCase());
+      }
+    }
+    if (poe2MetaResolution?.metaSupportMods && poe2MetaResolution.metaSupportMods.length > 0) {
+      skillDb.addMods(poe2MetaResolution.metaSupportMods);
+    }
 
     // Populate SkillType context on skillDb & groupMinionDb so SkillType-tagged cmods evaluate accurately
     const skillTypeMap: Record<string, boolean> = {};
@@ -2035,6 +4810,92 @@ function computeGroupOffence(
     }
     for (const st of activeDef.skillTypes ?? []) {
       skillTypeMap[st] = true;
+    }
+    for (const st of poe2MetaResolution?.addedSkillTypes ?? []) {
+      skillTypeMap[st] = true;
+    }
+
+    // PoE 1 slot-scoped `Socketed Gems / Socketed Skills / Socketed Vaal Skills` modifiers
+    // (Elder/Shaper/Essence pseudo-links, Triumvirate Authority, etc.)
+    if (build.game === 'poe1' && slotItem && !chosen.inst.fromItem) {
+      const isVaalActive =
+        Boolean((chosen as { fromVaalGem?: boolean }).fromVaalGem && /^Vaal\s+/i.test(activeDef.name.en)) ||
+        effectiveSkillTypeSet.has('vaal');
+      const slotModSrc = `Item (${mainGroup.slot ?? 'Socketed'}): ${slotItem.name}`;
+      for (const rawLine of [...slotItem.implicits, ...slotItem.explicits]) {
+        const line = rawLine.replace(/^\{[^}]*\}/g, '').trim();
+        let m = line.match(
+          /^Socketed (?:(Vaal) )?(?:Gems|Skills) deal (\d+)% (more|less) (Attack |Spell |Elemental |Physical |Chaos |Fire |Cold |Lightning |Area |Projectile )?Damage( over Time)?$/i,
+        );
+        if (m) {
+          if (m[1] && !isVaalActive) continue;
+          const val = (m[3]!.toLowerCase() === 'less' ? -1 : 1) * Number(m[2]);
+          const qual = (m[4] ?? '').trim().toLowerCase();
+          const isDot = Boolean(m[5]);
+          let statName = 'Damage';
+          let mFlags = isDot ? ModFlag.Dot : 0;
+          if (qual === 'attack') mFlags |= ModFlag.Attack;
+          else if (qual === 'spell') mFlags |= ModFlag.Spell;
+          else if (qual === 'area') mFlags |= ModFlag.Area;
+          else if (qual === 'projectile') mFlags |= ModFlag.Projectile;
+          else if (qual === 'elemental') statName = 'ElementalDamage';
+          else if (qual === 'physical') statName = 'PhysicalDamage';
+          else if (qual === 'chaos') statName = 'ChaosDamage';
+          else if (qual === 'fire') statName = 'FireDamage';
+          else if (qual === 'cold') statName = 'ColdDamage';
+          else if (qual === 'lightning') statName = 'LightningDamage';
+          skillDb.addMod({ name: statName, type: 'MORE', value: val, flags: mFlags, keywordFlags: 0, source: slotModSrc });
+          continue;
+        }
+        m = line.match(/^Socketed (?:Gems|Skills) have (\d+)% (more|less) (Attack and Cast|Attack|Cast) Speed$/i);
+        if (m) {
+          const val = (m[2]!.toLowerCase() === 'less' ? -1 : 1) * Number(m[1]);
+          const kind = m[3]!.toLowerCase();
+          if (kind === 'attack and cast' || kind === 'attack') {
+            skillDb.addMod({ name: 'Speed', type: 'MORE', value: val, flags: ModFlag.Attack, keywordFlags: 0, source: slotModSrc });
+          }
+          if (kind === 'attack and cast' || kind === 'cast') {
+            skillDb.addMod({ name: 'Speed', type: 'MORE', value: val, flags: ModFlag.Spell, keywordFlags: 0, source: slotModSrc });
+          }
+          continue;
+        }
+        m = line.match(/^Socketed (?:Gems|Skills) have \+(\d+(?:\.\d+)?)% to Critical Strike Chance$/i);
+        if (m) {
+          skillDb.addMod({ name: 'BaseCritChance', type: 'BASE', value: Number(m[1]), flags: 0, keywordFlags: 0, source: slotModSrc });
+          continue;
+        }
+        m = line.match(/^Socketed (?:Gems|Skills) have \+(\d+)% to Critical Strike Multiplier$/i);
+        if (m) {
+          skillDb.addMod({ name: 'CritMultiplier', type: 'BASE', value: Number(m[1]), flags: 0, keywordFlags: 0, source: slotModSrc });
+          continue;
+        }
+        m = line.match(/^Socketed (?:Attack |Spell )?(?:Gems|Skills) have (\d+)% increased (Attack Speed|Cast Speed|Critical Strike Chance|Area of Effect|Damage)$/i);
+        if (m) {
+          const val = Number(m[1]);
+          const target = m[2]!.toLowerCase();
+          if (target === 'attack speed') {
+            skillDb.addMod({ name: 'Speed', type: 'INC', value: val, flags: ModFlag.Attack, keywordFlags: 0, source: slotModSrc });
+          } else if (target === 'cast speed') {
+            skillDb.addMod({ name: 'Speed', type: 'INC', value: val, flags: ModFlag.Spell, keywordFlags: 0, source: slotModSrc });
+          } else if (target === 'critical strike chance') {
+            skillDb.addMod({ name: 'CritChance', type: 'INC', value: val, flags: 0, keywordFlags: 0, source: slotModSrc });
+          } else if (target === 'area of effect') {
+            skillDb.addMod({ name: 'AreaOfEffect', type: 'INC', value: val, flags: 0, keywordFlags: 0, source: slotModSrc });
+          } else {
+            skillDb.addMod({ name: 'Damage', type: 'INC', value: val, flags: 0, keywordFlags: 0, source: slotModSrc });
+          }
+          continue;
+        }
+        m = line.match(/^Socketed (?:Vaal )?(?:Gems|Skills) (?:gain|have) (\d+)% increased Damage$/i);
+        if (m) {
+          if (/^Socketed Vaal/i.test(line) && !isVaalActive) continue;
+          skillDb.addMod({ name: 'Damage', type: 'INC', value: Number(m[1]), flags: 0, keywordFlags: 0, source: slotModSrc });
+          continue;
+        }
+        if (/^Socketed (?:Gems|Skills) deal Double Damage$/i.test(line)) {
+          skillDb.addMod({ name: 'DoubleDamageChance', type: 'BASE', value: 100, flags: 0, keywordFlags: 0, source: slotModSrc });
+        }
+      }
     }
     const existingCtx = skillDb.getEvalContext();
     const enrichedCtx = {
@@ -2047,15 +4908,109 @@ function computeGroupOffence(
 
     let empowerLevelBonus = 0;
     let enhanceQualityBonus = 0;
+    let awakenedSupActiveLevelBonus = 0;
+    let spellTotemEffLevel: number | undefined;
+    const gemcraftNonExceptionalBonus = Math.round(
+      baseBuses.playerDb.sum('BASE', 'GemLevelSup:non-exceptional'),
+    );
 
     for (const supEntry of supportResolution.compatible) {
       const def = supEntry.gem as GemDefinition;
       const gemInst = supEntry.instance;
-      const supBonus = resolveGemBonuses(def, baseBuses.playerDb, socketedRules);
-      const effSupLevel = Math.min(40, Math.max(1, gemInst.level + supBonus.levelBonus));
-      const effSupQuality = gemInst.quality + supBonus.qualityBonus;
+      const isSquireBridged = Boolean(
+        (supEntry as { preScaledBySquire?: boolean }).preScaledBySquire,
+      );
+      const supSock = isSquireBridged || gemInst.fromItem
+        ? { qualBonus: 0, diallaLevelBonus: 0, diallaQualBonus: 0 }
+        : consumeMatchingSocketBonus(def, gemInst.instanceId);
+      const supIsCorrupted = Boolean(
+        gemInst.level >= 21 ||
+          gemInst.quality >= 21 ||
+          def.tags.some((t) => t.toLowerCase() === 'vaal') ||
+          (/^awakened\s+/i.test(def.name.en) && gemInst.level >= 6),
+      );
+      const supBonus = isSquireBridged
+        ? resolveGemBonuses(def, baseBuses.playerDb, [], { isCorrupted: supIsCorrupted })
+        : resolveGemBonuses(def, baseBuses.playerDb, socketedRules, { isCorrupted: supIsCorrupted });
       const lower = def.name.en.trim().toLowerCase().replace(/\s+support$/i, '');
+      const isExceptionalSupport =
+        lower === 'empower' ||
+        lower === 'awakened empower' ||
+        lower === 'enhance' ||
+        lower === 'awakened enhance' ||
+        lower === 'enlighten' ||
+        lower === 'awakened enlighten';
+      const extraNonExc = !isExceptionalSupport ? gemcraftNonExceptionalBonus : 0;
+      const effSupLevel = Math.min(
+        40,
+        Math.max(1, gemInst.level + supBonus.levelBonus + extraNonExc + supSock.diallaLevelBonus),
+      );
+      const effSupQuality = gemInst.quality + supBonus.qualityBonus + supSock.diallaQualBonus;
       compatibleSupportNames.add(lower);
+      if (lower === 'spell totem' || lower === 'ballista totem') {
+        spellTotemEffLevel = effSupLevel;
+      }
+
+      if (build.game === 'poe2' && lower === "dialla's desire") {
+        awakenedSupActiveLevelBonus += 1;
+        enhanceQualityBonus += 5;
+      }
+      // PoE 2 Support Gem Level grants (Cold/Lightning/Fire/Chaos/Physical Mastery +1, Uhtred's Omen +2, etc.)
+      if (build.game === 'poe2') {
+        const supLvCmods = resolveGemLevelEntry(def, effSupLevel)?.compiledMods ?? def.compiledMods ?? [];
+        const activeTagsLowerForSup = new Set(chosen.def.tags.map((t) => t.toLowerCase()));
+        for (const cm of supLvCmods) {
+          if (cm.type !== 'BASE' || typeof cm.value !== 'number' || cm.value === 0) continue;
+          if (cm.name === 'SupportedGemLevel') {
+            awakenedSupActiveLevelBonus += cm.value;
+          } else if (cm.name.startsWith('SupportedGemLevel:')) {
+            const reqTag = cm.name.slice('SupportedGemLevel:'.length).toLowerCase();
+            if (
+              activeTagsLowerForSup.has(reqTag) ||
+              (reqTag === 'cold' && (chosen.def.keywordFlags & KeywordFlag.Cold) !== 0) ||
+              (reqTag === 'fire' && (chosen.def.keywordFlags & KeywordFlag.Fire) !== 0) ||
+              (reqTag === 'lightning' && (chosen.def.keywordFlags & KeywordFlag.Lightning) !== 0) ||
+              (reqTag === 'chaos' && (chosen.def.keywordFlags & KeywordFlag.Chaos) !== 0) ||
+              (reqTag === 'physical' && (chosen.def.keywordFlags & KeywordFlag.Physical) !== 0)
+            ) {
+              awakenedSupActiveLevelBonus += cm.value;
+            }
+          }
+        }
+      }
+      if (build.game === 'poe1' && effSupLevel >= 5) {
+        const activeTagsLower = new Set(chosen.def.tags.map((t) => t.toLowerCase()));
+        const awkBonus = effSupLevel >= 10 ? 2 : 1;
+        if (lower === 'awakened added fire damage' && (activeTagsLower.has('fire') || (chosen.def.keywordFlags & KeywordFlag.Fire) !== 0)) {
+          awakenedSupActiveLevelBonus += awkBonus;
+        } else if (lower === 'awakened added cold damage' && (activeTagsLower.has('cold') || (chosen.def.keywordFlags & KeywordFlag.Cold) !== 0)) {
+          awakenedSupActiveLevelBonus += awkBonus;
+        } else if (lower === 'awakened added lightning damage' && (activeTagsLower.has('lightning') || (chosen.def.keywordFlags & KeywordFlag.Lightning) !== 0)) {
+          awakenedSupActiveLevelBonus += awkBonus;
+        } else if (
+          (lower === 'awakened added chaos damage' || lower === 'awakened void manipulation') &&
+          (activeTagsLower.has('chaos') || (chosen.def.keywordFlags & KeywordFlag.Chaos) !== 0)
+        ) {
+          awakenedSupActiveLevelBonus += awkBonus;
+        }
+      }
+      if (build.game === 'poe1' && lower === 'arcane surge') {
+        skillDb.setCondition('AffectedByArcaneSurge', true);
+      }
+      if (build.game === 'poe1' && lower === 'invert the rules') {
+        const INVERT_RULES_TABLE = [35, 38, 41, 44, 45, 47, 48, 50, 51, 53, 54, 56, 57, 59, 60];
+        const invChance = INVERT_RULES_TABLE[Math.min(INVERT_RULES_TABLE.length - 1, Math.max(0, effSupLevel - 1))] ?? 35;
+        skillDb.addMod({
+          name: 'InvertEleResChance',
+          type: 'BASE',
+          value: invChance,
+          flags: 0,
+          keywordFlags: 0,
+          source: `Support: Invert the Rules (Lv.${effSupLevel})`,
+        });
+        applyGemQualityStats(def, effSupQuality, 'Support', supSock.qualBonus);
+        continue;
+      }
 
       if (lower === 'empower' || lower === 'awakened empower') {
         empowerLevelBonus += Math.max(0, effSupLevel - 1);
@@ -2079,7 +5034,7 @@ function computeGroupOffence(
             source: `Support: Rage (Lv.${effSupLevel}, >=10 Rage)`,
           });
         }
-        applyGemQualityStats(def, effSupQuality, 'Support');
+        applyGemQualityStats(def, effSupQuality, 'Support', supSock.qualBonus);
         continue;
       }
 
@@ -2109,6 +5064,37 @@ function computeGroupOffence(
         injectCompiledGemMods(skillDb, groupEnemyDb, groupMinionDb, supCmods, supSrc, {
           game: build.game,
         });
+      } else if (cocOnlyHasTriggerPart && (chosen.def.modFlags & ModFlag.Attack) === 0) {
+        const isAwakenedCoc = lower === 'awakened cast on critical strike';
+        const cocSpellMore = isAwakenedCoc
+          ? effSupLevel <= 10
+            ? -(9 - Math.floor((effSupLevel - 1) / 2))
+            : -Math.max(0, 5 - Math.floor((effSupLevel - 9) / 3))
+          : -Math.max(0, 19 - Math.floor((effSupLevel - 1) / 2));
+        if (cocSpellMore !== 0) {
+          skillDb.addMod({
+            name: 'Damage',
+            type: 'MORE',
+            value: cocSpellMore,
+            flags: ModFlag.Spell,
+            keywordFlags: 0,
+            source: supSrc,
+          });
+        }
+        if (isAwakenedCoc) {
+          const cocCdrInc =
+            effSupLevel <= 10
+              ? 10 + (effSupLevel - 1) * 3
+              : 37 + Math.floor((effSupLevel - 10) * 1.5);
+          skillDb.addMod({
+            name: 'CooldownRecovery',
+            type: 'INC',
+            value: cocCdrInc,
+            flags: 0,
+            keywordFlags: 0,
+            source: supSrc,
+          });
+        }
       } else {
         routeModsToActorBuses(
           { playerDb: skillDb, enemyDb: groupEnemyDb, minionDb: groupMinionDb },
@@ -2116,24 +5102,73 @@ function computeGroupOffence(
           { game: build.game },
         );
       }
-      applyGemQualityStats(def, effSupQuality, 'Support');
+      applyGemQualityStats(def, effSupQuality, 'Support', supSock.qualBonus);
     }
 
-    const activeBonus = resolveGemBonuses(chosen.def, baseBuses.playerDb, socketedRules);
+    const activeSock = chosen.inst.fromItem
+      ? { qualBonus: 0, diallaLevelBonus: 0, diallaQualBonus: 0 }
+      : consumeMatchingSocketBonus(chosen.def, chosen.inst.instanceId);
+    const defForBonus =
+      (chosen as { fromVaalGem?: boolean }).fromVaalGem &&
+      !chosen.def.tags.some((t) => t.toLowerCase() === 'vaal')
+        ? { ...chosen.def, tags: [...chosen.def.tags, 'vaal'] }
+        : chosen.def;
+    const activeIsCorrupted = Boolean(
+      (chosen as { fromVaalGem?: boolean }).fromVaalGem ||
+        chosen.inst.level >= 21 ||
+        chosen.inst.quality >= 21 ||
+        defForBonus.tags.some((t) => t.toLowerCase() === 'vaal') ||
+        (build.game === 'poe1' &&
+          socketedRules.some((r) => r.filterKey.split('+').includes('corrupted'))),
+    );
+    const activeBonus = resolveGemBonuses(defForBonus, baseBuses.playerDb, socketedRules, {
+      isCorrupted: activeIsCorrupted,
+    });
     const prismBonus =
       uniqueGearResult?.skillSpecificGemLevels[chosen.def.name.en.trim().toLowerCase()] ?? 0;
+    const effGemLevelBonus =
+      build.game === 'poe1' && chosen.inst.fromItem ? 0 : activeBonus.levelBonus + activeSock.diallaLevelBonus;
     activeLevel = Math.min(
       40,
-      Math.max(1, chosen.inst.level + activeBonus.levelBonus + empowerLevelBonus + prismBonus),
+      Math.max(1, chosen.inst.level + effGemLevelBonus + empowerLevelBonus + awakenedSupActiveLevelBonus + prismBonus),
     );
-    activeCount = Math.max(1, chosen.inst.count ?? 1);
+    const prePartQuality =
+      chosen.inst.quality + activeBonus.qualityBonus + enhanceQualityBonus + activeSock.diallaQualBonus + activeSock.qualBonus;
+    const prePartIsTotem =
+      effectiveSkillTypeSet.has('totem') || effectiveSkillTypeSet.has('summonsattacktotem');
+    resolvedPartStats = resolveActiveSkillPartAndStats(chosen.def, chosen.inst, mainGroup, activeLevel, {
+      enemyLevel: build.config.enemyLevel,
+      game: build.game,
+      playerMaxLife: _defence.life,
+      isTotem: prePartIsTotem,
+      ...(prePartIsTotem && build.game === 'poe1'
+        ? {
+            totemSkillLevel: spellTotemEffLevel ?? activeLevel,
+            totemLifeIncPct: skillDb.sum('INC', 'TotemLife'),
+            totemLifeMoreMult: skillDb.more('TotemLife'),
+          }
+        : {}),
+      effectiveQuality: prePartQuality,
+    });
+    activeCount = computeSkillInstanceCountMultiplier(
+      chosen.inst,
+      mainGroup,
+      resolvedPartStats.skillData,
+    );
     const chosenLevelEntry = resolveGemLevelEntry(chosen.def, activeLevel);
-    const activeCmods = chosenLevelEntry?.compiledMods ?? chosen.def.compiledMods;
+    const hasPartOverride = Boolean(
+      resolvedPartStats.selectedPart || resolvedPartStats.corpseExplosionDamageType,
+    );
+    const activeCmods =
+      hasPartOverride && resolvedPartStats.compiledMods.length > 0
+        ? resolvedPartStats.compiledMods
+        : (chosenLevelEntry?.compiledMods ?? chosen.def.compiledMods);
     const chosenEffectiveStats = chosenLevelEntry?.stats ?? chosen.def.stats;
     activeQuality = applyGemQualityStats(
       chosen.def,
-      chosen.inst.quality + activeBonus.qualityBonus + enhanceQualityBonus,
+      chosen.inst.quality + activeBonus.qualityBonus + enhanceQualityBonus + activeSock.diallaQualBonus,
       'Skill',
+      activeSock.qualBonus,
     );
     const skillSrc = `Skill: ${chosen.def.name.en}`;
     if (activeCmods && activeCmods.length > 0) {
@@ -2160,9 +5195,24 @@ function computeGroupOffence(
         });
       }
     }
+    const partHasOwnCmods = Boolean(
+      resolvedPartStats.selectedPart?.compiledMods?.length ||
+        resolvedPartStats.selectedPart?.levels ||
+        resolvedPartStats.selectedPart?.attackDamageMultiplierPct !== undefined,
+    );
+    if (!partHasOwnCmods && resolvedPartStats.sequenceDamageMultiplier !== 1) {
+      skillDb.addMod({
+        name: 'Damage',
+        type: 'MORE',
+        value: (resolvedPartStats.sequenceDamageMultiplier - 1) * 100,
+        flags: ModFlag.Hit,
+        keywordFlags: 0,
+        source: `${chosen.def.name.en} (${resolvedPartStats.partName})`,
+      });
+    }
 
     const companionAtk = activeCandidates.find(
-      (c, i) => i !== pickIdx && (c.def.modFlags & ModFlag.Attack) !== 0,
+      (c) => c.inst !== chosen.inst && (c.def.modFlags & ModFlag.Attack) !== 0,
     );
     triggerAttackDef = companionAtk?.def;
   }
@@ -2192,7 +5242,16 @@ function computeGroupOffence(
   }
 
   const activeLevelEntry = resolveGemLevelEntry(activeDef, activeLevel);
-  const activeSkillData = activeLevelEntry?.skillData ?? activeDef.skillData;
+  const usePartOverride = Boolean(
+    resolvedPartStats?.selectedPart || resolvedPartStats?.corpseExplosionDamageType,
+  );
+  const mergedActiveSkillData: Record<string, number | boolean | string> = {
+    ...(activeDef.skillData ?? {}),
+    ...(activeLevelEntry?.skillData ?? {}),
+    ...(usePartOverride && resolvedPartStats ? resolvedPartStats.skillData : {}),
+  };
+  const activeSkillData: Record<string, number | boolean | string> | undefined =
+    Object.keys(mergedActiveSkillData).length > 0 ? mergedActiveSkillData : undefined;
   const isMinion = Boolean(activeDef.minionBase);
 
   // Full PoE 1 & PoE 2 Minion Offence Delegation (`minionDb` + `enemyDb` + `Data/Minions.lua`)
@@ -2266,82 +5325,1133 @@ function computeGroupOffence(
   }
 
   const activeWeapons = getActiveWeapons(build);
-  const mainWeaponStats = activeWeapons.main
-    ? resolveItemEffectiveStats(activeWeapons.main, build.game).weaponStats
+  const mainSlotLabel =
+    build.game === 'poe2' &&
+    build.activeWeaponSet === 2 &&
+    (build.equipped['Weapon 1 Swap'] || build.equipped['Weapon 2 Swap'])
+      ? 'Weapon 1 Swap'
+      : 'Weapon 1';
+  const offSlotLabel =
+    build.game === 'poe2' &&
+    build.activeWeaponSet === 2 &&
+    (build.equipped['Weapon 1 Swap'] || build.equipped['Weapon 2 Swap'])
+      ? 'Weapon 2 Swap'
+      : 'Weapon 2';
+  const energyBladeWeaponStats = postUniqueRes?.energyBlade?.active
+    ? postUniqueRes.energyBlade.weaponStats
     : undefined;
-  const offWeaponStats = activeWeapons.off
-    ? resolveItemEffectiveStats(activeWeapons.off, build.game).weaponStats
-    : undefined;
+  const mainWeaponStats = energyBladeWeaponStats
+    ? energyBladeWeaponStats
+    : activeWeapons.main
+      ? resolveItemEffectiveStats(
+          expandPoe2LocalRunes
+            ? expandPoe2LocalRunes(mainSlotLabel, activeWeapons.main)
+            : activeWeapons.main,
+          build.game,
+        ).weaponStats
+      : undefined;
+  const rawOffWeaponStats = energyBladeWeaponStats
+    ? (postUniqueRes?.energyBlade?.twoHanded ? undefined : activeWeapons.off ? energyBladeWeaponStats : undefined)
+    : activeWeapons.off
+      ? resolveItemEffectiveStats(
+          expandPoe2LocalRunes
+            ? expandPoe2LocalRunes(offSlotLabel, activeWeapons.off)
+            : activeWeapons.off,
+          build.game,
+        ).weaponStats
+      : undefined;
+  const canWield2HIn1H = canWieldTwoHandedMartialInOneHand(build);
   const isDualWield = Boolean(
-    mainWeaponStats && offWeaponStats && !mainWeaponStats.twoHanded && !offWeaponStats.twoHanded,
+    mainWeaponStats &&
+      rawOffWeaponStats &&
+      canWieldWeaponInOneHand(mainWeaponStats, canWield2HIn1H) &&
+      canWieldWeaponInOneHand(rawOffWeaponStats, canWield2HIn1H),
   );
+  const offWeaponStats = isDualWield ? rawOffWeaponStats : undefined;
   const weaponStats = mainWeaponStats;
 
-  const isAttack = (activeDef.modFlags & ModFlag.Attack) !== 0;
-  const weaponModFlags = isAttack
-    ? weaponTypeToModFlags(weaponStats?.weaponType, weaponStats?.twoHanded)
-    : 0;
+  const isAttack =
+    usePartOverride && resolvedPartStats
+      ? resolvedPartStats.attack
+      : (activeDef.modFlags & ModFlag.Attack) !== 0;
+  const isShieldOffHandEarly =
+    typeof activeSkillData?.setOffHandPhysicalMin === 'number' ||
+    typeof activeSkillData?.setOffHandFireMin === 'number' ||
+    (typeof activeSkillData?.setOffHandAttackTime === 'number' && activeSkillData.setOffHandAttackTime > 0);
+  const isUnarmedConcoctionEarly = effectiveSkillTypeSet.has('requiresoffhandnotweapon');
+  const weaponModFlags =
+    isAttack && !isShieldOffHandEarly && !isUnarmedConcoctionEarly
+      ? weaponTypeToModFlags(weaponStats?.weaponType, weaponStats?.twoHanded)
+      : 0;
+  let partModFlags = activeDef.modFlags;
+  if (usePartOverride && resolvedPartStats) {
+    if (resolvedPartStats.melee) partModFlags |= ModFlag.Melee;
+    else partModFlags &= ~ModFlag.Melee;
+    if (resolvedPartStats.projectile) partModFlags |= ModFlag.Projectile;
+    else partModFlags &= ~ModFlag.Projectile;
+    if (resolvedPartStats.area) partModFlags |= ModFlag.Area;
+    else partModFlags &= ~ModFlag.Area;
+  }
+  const activeNameLower = activeDef.name.en.trim().toLowerCase();
+  if (build.game === 'poe2' && activeNameLower === 'arc') {
+    partModFlags &= ~ModFlag.Projectile;
+  }
+  if (isAttack && (isUnarmedConcoctionEarly || (!weaponStats && !isShieldOffHandEarly))) {
+    skillDb.setCondition('UsingUnarmed', true);
+    skillDb.setCondition('Unarmed', true);
+  }
   const flags = isAttack
-    ? activeDef.modFlags | ModFlag.Attack | ModFlag.Hit | weaponModFlags
-    : activeDef.modFlags | ModFlag.Spell | ModFlag.Cast | ModFlag.Hit;
-  const kwFlags = isAttack
-    ? activeDef.keywordFlags | KeywordFlag.Attack | KeywordFlag.Hit
-    : activeDef.keywordFlags | KeywordFlag.Spell | KeywordFlag.Hit;
+    ? partModFlags | ModFlag.Attack | ModFlag.Hit | weaponModFlags
+    : partModFlags | ModFlag.Spell | ModFlag.Cast | ModFlag.Hit;
+  const proxyKwFlags =
+    (effectiveSkillTypeSet.has('totem') || effectiveSkillTypeSet.has('summonsattacktotem')
+      ? KeywordFlag.Totem
+      : 0) |
+    (effectiveSkillTypeSet.has('trap') || effectiveSkillTypeSet.has('trapped')
+      ? KeywordFlag.Trap
+      : 0) |
+    (effectiveSkillTypeSet.has('mine') || effectiveSkillTypeSet.has('remotemined')
+      ? KeywordFlag.Mine
+      : 0);
+  const kwFlags =
+    (isAttack
+      ? activeDef.keywordFlags | KeywordFlag.Attack | KeywordFlag.Hit
+      : activeDef.keywordFlags | KeywordFlag.Spell | KeywordFlag.Hit) | proxyKwFlags;
 
   // Populate dynamic skill stats & combat multipliers on skillDb for ModTag evaluation
+  const noSpaceSkill = activeDef.name.en.replace(/\s+/g, '');
+  skillDb.setStat('Life', _defence.life);
+  skillDb.setStat('Mana', _defence.mana);
+  skillDb.setStat('ManaUnreserved', _defence.manaUnreserved);
+  skillDb.setStat('EnergyShield', _defence.energyShield);
+  skillDb.setStat('BlockChance', _defence.blockChance);
+  skillDb.setStat('FireResistOverCap', _defence.fireResistOvercap);
+  // Count active Elemental Ailments on Enemy (PoE 2 Harness the Elements, PoE 1 The Taming / The Tempest Rising)
+  {
+    const pC = skillDb.getEvalContext().conditions;
+    const eC = groupEnemyDb.getEvalContext().conditions;
+    let eleAilCount = 0;
+    let fsiCount = 0;
+    for (const [pk, ek, isFsi] of [
+      ['EnemyIgnited', 'Ignited', true],
+      ['EnemyChilled', 'Chilled', false],
+      ['EnemyFrozen', 'Frozen', true],
+      ['EnemyShocked', 'Shocked', true],
+      ['EnemyElectrified', 'Electrified', false],
+      ['EnemyElectrocuted', 'Electrocuted', false],
+      ['EnemyScorched', 'Scorched', false],
+      ['EnemyBrittle', 'Brittle', false],
+      ['EnemySapped', 'Sapped', false],
+    ] as const) {
+      if (pC[pk] || eC[ek]) {
+        eleAilCount++;
+        if (isFsi) fsiCount++;
+      }
+    }
+    if (eleAilCount > 0) {
+      skillDb.setMultiplier('EnemyElementalAilmentCount', eleAilCount);
+      skillDb.setStat('EnemyElementalAilmentCount', eleAilCount);
+      if (build.game === 'poe1' && skillDb.flag('EnemyAffectedByEleAilmentCountsAsMoving')) {
+        skillDb.setCondition('EnemyMoving', true);
+        groupEnemyDb.setCondition('Moving', true);
+      }
+    }
+    if (fsiCount > 0 && skillDb.getEvalContext().multipliers.FreezeShockIgniteOnEnemy === undefined) {
+      skillDb.setMultiplier('FreezeShockIgniteOnEnemy', fsiCount);
+    }
+  }
+  // PoE 2 Minion Pact II (`MultiplierThreshold:MinionPresenceCount:1`): auto-detect ONLY sacrificeable active minions
+  // (exclude Companion/Rhoa Mount linked with Brutus' Brain or unconfigured companion mounts!)
+  if (
+    build.game === 'poe2' &&
+    skillDb.getEvalContext().multipliers.MinionPresenceCount === undefined
+  ) {
+    const hasSacrificeableMinion = build.skills.some((grp) => {
+      if (!grp.enabled) return false;
+      const hasBrutusBrain = grp.gems.some((gm) => {
+        if (!gm.enabled) return false;
+        const gd = getGemById('poe2', gm.gemId);
+        return Boolean(gd && /brutus'?s?\s*brain/i.test(gd.name.en));
+      });
+      if (hasBrutusBrain) return false;
+      return grp.gems.some((gm) => {
+        if (!gm.enabled) return false;
+        const gd = getGemById('poe2', gm.gemId);
+        if (!gd) return false;
+        const n = gd.name.en.trim().toLowerCase();
+        if (n === 'rhoa mount') return false;
+        return Boolean(gd.minionBase || gd.tags.some((t) => t.toLowerCase() === 'minion'));
+      });
+    });
+    if (hasSacrificeableMinion) {
+      skillDb.setMultiplier('MinionPresenceCount', 1);
+    }
+  }
+  // PoE 2 Twister element conditions (`twisterLightning/Cold/Fire`) & Perfect Timing (`Snipe`)
+  if (build.game === 'poe2') {
+    if (build.config.rawInputs?.twisterLightning) skillDb.setCondition('TwisterLightning', true);
+    if (build.config.rawInputs?.twisterCold) skillDb.setCondition('TwisterCold', true);
+    if (build.config.rawInputs?.twisterFire) skillDb.setCondition('TwisterFire', true);
+    if (skillDb.sum('BASE', 'PerfectTimingBase', flags, kwFlags) > 0 || activeNameLower === 'snipe') {
+      skillDb.setCondition('PerfectTiming', true);
+    }
+    if (build.config.rawInputs?.conditionShapeshiftToAnimal) {
+      skillDb.setCondition('Shapeshifted', true);
+    }
+    // PoE 2 Berserk scales Rage Effect (`Berserk` gem grants +50..65% Rage Effect -> e.g. 60 Rage -> 99% MORE!)
+    const berserkGem = build.skills
+      .filter((g) => g.enabled)
+      .flatMap((g) => g.gems)
+      .find((gm) => gm.enabled && getGemById('poe2', gm.gemId)?.id === 'poe2_berserk');
+    if (berserkGem && (skillDb.getEvalContext().multipliers.Rage ?? 0) > 0) {
+      const bLv = Math.min(40, Math.max(1, berserkGem.level));
+      const bQual = Math.max(0, berserkGem.quality ?? 0);
+      const bDef = getGemById('poe2', berserkGem.gemId)!;
+      const bCmods = resolveGemLevelEntry(bDef, bLv)?.compiledMods ?? bDef.compiledMods ?? [];
+      const rawBerserkRageEff =
+        (bCmods.find((m) => m.name === 'RageEffect' && typeof m.value === 'number')?.value as number | undefined) ??
+        (39 + bLv);
+      const berserkRageEff = rawBerserkRageEff + Math.floor(bQual * 0.5);
+      const curRage = skillDb.getEvalContext().multipliers.Rage ?? 0;
+      const prevRageMore = skillDb.getEvalContext().multipliers.RageEffect ?? curRage;
+      const totalRageEffInc = skillDb.sum('INC', 'RageEffect') + berserkRageEff;
+      const newRageMore = Math.floor(curRage * Math.max(0, 1 + totalRageEffInc / 100) + 1e-9);
+      const deltaRageMore = newRageMore - prevRageMore;
+      if (deltaRageMore > 0) {
+        skillDb.addMod({
+          name: 'Damage',
+          type: 'MORE',
+          value: ((100 + newRageMore) / Math.max(1, 100 + prevRageMore) - 1) * 100,
+          flags: ModFlag.Attack,
+          keywordFlags: 0,
+          source: `Berserk (Rage Effect +${berserkRageEff}%)`,
+        });
+      }
+    }
+  }
+  // PoE 1 Skill-prefixed Custom Modifiers (`"Ice Shot has 35% more projectile damage with hits"`, etc.)
+  if (build.config.customMods.trim()) {
+    const baseSkillNameLower = activeNameLower.replace(/^vaal\s+/i, '');
+    const matchedSkillCustomLines: string[] = [];
+    for (const rawLine of build.config.customMods.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#') || line.startsWith('//') || line.startsWith('--')) continue;
+      const mPref = line.match(/^([A-Za-z' ]+?)\s+(?:has|have|deals?|gains?)\s+(.+)$/i);
+      if (!mPref) continue;
+      const prefLower = mPref[1]!.trim().toLowerCase();
+      if (prefLower === activeNameLower || prefLower === baseSkillNameLower) {
+        matchedSkillCustomLines.push(mPref[2]!.trim());
+      }
+    }
+    if (matchedSkillCustomLines.length > 0) {
+      const parsedSkillCustom = parseModLines(matchedSkillCustomLines, 'Custom Modifiers (Skill)');
+      if (parsedSkillCustom.length > 0) {
+        skillDb.addMods(parsedSkillCustom);
+      }
+    }
+  }
+  // PoE 1 Momentum Support (`MomentumStacks` default 3 -> +60% Attack Speed INC on Shield Charge/attacks)
+  if (build.game === 'poe1' && compatibleSupportNames.has('momentum')) {
+    skillDb.setMultiplier('MomentumStacks', 3);
+    skillDb.setStat('MomentumStacks', 3);
+  }
+  // PoE 1 Ice Nova of Frostbolts (`iceNovaCastOnFrostbolt`: 50% more Damage)
+  if (
+    build.game === 'poe1' &&
+    activeNameLower === 'ice nova of frostbolts' &&
+    build.config.rawInputs?.iceNovaCastOnFrostbolt
+  ) {
+    skillDb.setCondition('CastOnFrostbolt', true);
+    skillDb.addMod({
+      name: 'Damage',
+      type: 'MORE',
+      value: 50,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Ice Nova of Frostbolts (Cast on Frostbolt)',
+    });
+  }
+  // PoE 1 Pact of Beidat (`BeidatAdditionalBeamChains` & uptime-scaled MORE Spell Damage for Arc / beam skills)
+  if (build.game === 'poe1' && !isAttack) {
+    const beidatGem = build.skills
+      .filter((g) => g.enabled)
+      .flatMap((g) => g.gems)
+      .find((gm) => gm.enabled && getGemById('poe1', gm.gemId)?.id === 'poe1_pactofbeidat');
+    if (beidatGem) {
+      const bDef = getGemById('poe1', beidatGem.gemId)!;
+      const bCmods = resolveGemLevelEntry(bDef, Math.min(40, Math.max(1, beidatGem.level)))?.compiledMods ?? bDef.compiledMods ?? [];
+      const extraChains = (bCmods.find((m) => m.name === 'BeidatAdditionalBeamChains' && typeof m.value === 'number')?.value as number | undefined) ?? 4;
+      if (activeNameLower === 'arc' || activeNameLower === 'arc of oscillating') {
+        skillDb.addMod({
+          name: 'ChainCountMax',
+          type: 'BASE',
+          value: extraChains,
+          flags: 0,
+          keywordFlags: 0,
+          source: 'Pact of Beidat',
+        });
+      }
+    }
+  }
+  // PoE 1 Delirium % enemy damage reduction (`deliriousPercentage="100Percent"` -> -80% MORE DamageTaken)
+  if (build.game === 'poe1' && build.config.rawInputs?.deliriousPercentage) {
+    const rawDelirium = String(build.config.rawInputs.deliriousPercentage);
+    const mDel = rawDelirium.match(/(\d+)/);
+    const delPct = mDel ? Math.min(100, Math.max(0, Number(mDel[1]))) : 0;
+    if (delPct > 0) {
+      groupEnemyDb.addMod({
+        name: 'DamageTaken',
+        type: 'MORE',
+        value: -Math.round(delPct * 0.8),
+        flags: 0,
+        keywordFlags: 0,
+        source: `Delirious (${delPct}%)`,
+      });
+    }
+  }
+  // PoE 1 Mastery 9471: "Nearby Enemies are Intimidated while you have Rage"
+  if (
+    build.game === 'poe1' &&
+    skillDb.flag('EnemyIntimidatedWhileRage') &&
+    (skillDb.getEvalContext().multipliers.Rage ?? 0) > 0 &&
+    !build.config.enemyIntimidated
+  ) {
+    groupEnemyDb.addMod({
+      name: 'DamageTaken',
+      type: 'INC',
+      value: 10,
+      flags: ModFlag.Attack,
+      keywordFlags: 0,
+      source: 'Intimidated (Rage Mastery)',
+    });
+  }
+  // PoE 1 Oscillating Sceptre / Keystone Elemental Overload (+40% MORE Elemental Hit Damage, NoCritExtraDamage)
+  if (
+    build.game === 'poe1' &&
+    skillDb.flag('ElementalOverload') &&
+    !skillDb.flag('NoCritExtraDamage')
+  ) {
+    skillDb.addMod({
+      name: 'NoCritExtraDamage',
+      type: 'FLAG',
+      value: true,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Elemental Overload',
+    });
+    const alreadyHasEo = skillDb
+      .calcStat('ElementalDamage', flags, kwFlags)
+      .sources.some((s) => s.type === 'MORE' && /elemental overload/i.test(s.source));
+    if (!alreadyHasEo) {
+      skillDb.addMod({
+        name: 'ElementalDamage',
+        type: 'MORE',
+        value: 40,
+        flags: ModFlag.Hit,
+        keywordFlags: 0,
+        source: 'Elemental Overload',
+      });
+    }
+  }
+  // PoE 1 Shroud of the Lightless Abyss Jewel count multiplier
+  if (build.game === 'poe1' && skillDb.getEvalContext().multipliers.AbyssJewel === undefined) {
+    let abyssCount = 0;
+    for (const item of Object.values(build.items)) {
+      if (/\b(?:murderous|searching|hypnotic|ghastly)\s+eye\s+jewel\b/i.test(item.baseName)) {
+        abyssCount++;
+      }
+    }
+    if (abyssCount > 0) {
+      skillDb.setMultiplier('AbyssJewel', abyssCount);
+    }
+  }
+  // PoE 1 Sap of the Seasons `ManaBurn` multiplier
+  if (build.game === 'poe1' && skillDb.getEvalContext().multipliers.ManaBurn === undefined) {
+    const rawManaBurn = Number(
+      build.config.rawInputs?.multiplierManaBurn ??
+        build.config.rawInputs?.manaBurnStacks ??
+        build.config.rawInputs?.tinctureManaBurn ??
+        0,
+    );
+    if (Number.isFinite(rawManaBurn) && rawManaBurn > 0) {
+      skillDb.setMultiplier('ManaBurn', rawManaBurn);
+    }
+  }
+  if (activePowerCharges > 0) {
+    skillDb.setCondition('UsePowerCharges', true);
+    skillDb.setMultiplier('PowerCharge', activePowerCharges);
+    skillDb.setStat('PowerCharges', activePowerCharges);
+    skillDb.setMultiplier('RemovablePowerCharge', activePowerCharges);
+    if (build.game === 'poe2' && activeNameLower === 'flicker strike') {
+      skillDb.setCondition('ConsumedPowerChargeRecently', true);
+      skillDb.setCondition('GainedPowerChargeRecently', true);
+    }
+  }
+  const effFrenzyCharges = skillDb.getEvalContext().multipliers.FrenzyCharge ?? (build.config.useFrenzyCharges ? build.config.frenzyCharges : 0);
+  if (effFrenzyCharges > 0) {
+    skillDb.setMultiplier('FrenzyCharge', effFrenzyCharges);
+    skillDb.setStat('FrenzyCharges', effFrenzyCharges);
+    skillDb.setMultiplier('RemovableFrenzyCharge', effFrenzyCharges);
+  }
+  const effEnduranceCharges = skillDb.getEvalContext().multipliers.EnduranceCharge ?? (build.config.useEnduranceCharges ? build.config.enduranceCharges : 0);
+  if (effEnduranceCharges > 0) {
+    skillDb.setMultiplier('EnduranceCharge', effEnduranceCharges);
+    skillDb.setStat('EnduranceCharges', effEnduranceCharges);
+    skillDb.setMultiplier('RemovableEnduranceCharge', effEnduranceCharges);
+  }
+  if (
+    (build.config.enemyChilled || skillDb.getEvalContext().conditions.EnemyChilled) &&
+    skillDb.getEvalContext().multipliers.EnemyChillEffect === undefined
+  ) {
+    skillDb.setMultiplier('EnemyChillEffect', 10);
+  }
   const arcQualChains =
     build.game === 'poe1' &&
-    activeDef.name.en.trim().toLowerCase() === 'arc' &&
+    activeNameLower === 'arc' &&
     !(activeDef.qualityCompiledMods && activeDef.qualityCompiledMods.length > 0)
       ? Math.trunc(Math.max(0, activeQuality) * 0.05)
       : 0;
-  const chainRem = Math.max(
+  const rawExtraProj = Math.max(
     0,
-    skillDb.sum('BASE', 'ChainCountMax', flags, kwFlags) +
-      skillDb.sum('BASE', 'ChainCount', flags, kwFlags) +
-      arcQualChains,
+    skillDb.sum('BASE', 'ProjectileCount', flags, kwFlags) +
+      skillDb.sum('BASE', `ProjectileCount:${activeNameLower}`, flags, kwFlags),
   );
-  skillDb.setStat('ChainRemaining', chainRem);
-  skillDb.setMultiplier('ChainRemaining', chainRem);
-  const projCount = Math.max(1, 1 + skillDb.sum('BASE', 'ProjectileCount', flags, kwFlags));
+  const addProjAsChains = skillDb.flag('AdditionalProjectilesAddChainsInstead', flags, kwFlags);
+  const rawChainBase =
+    skillDb.sum('BASE', 'ChainCountMax', flags, kwFlags) +
+    skillDb.sum('BASE', 'ChainCount', flags, kwFlags) +
+    arcQualChains +
+    (addProjAsChains ? rawExtraProj : 0);
+  const chainMax = Math.max(
+    0,
+    Math.floor(rawChainBase * skillDb.more('ChainCountMax', flags, kwFlags)),
+  );
+  const skillChainsUsed = Math.max(
+    0,
+    Math.round(Number(build.config.rawInputs?.skillChainCount ?? 0)),
+  );
+  const chainRemaining = Math.max(0, chainMax - skillChainsUsed);
+  skillDb.setStat('ChainMax', chainMax);
+  skillDb.setMultiplier('ChainMax', chainMax);
+  skillDb.setStat('ChainRemaining', chainRemaining);
+  skillDb.setMultiplier('ChainRemaining', chainRemaining);
+  const projCount = addProjAsChains ? 1 : Math.max(1, 1 + rawExtraProj);
   skillDb.setStat('ProjectileCount', projCount);
   skillDb.setMultiplier('ProjectileCount', projCount);
+
+  // Kinetic Fusillade Part 1 sequential projectile MORE damage (must apply BEFORE Step E hit damage!)
+  if (
+    (activeNameLower === 'kinetic fusillade' || activeNameLower === 'kinetic fusillade of detonation') &&
+    (resolvedPartStats?.partIndex ?? 1) === 1
+  ) {
+    const morePerProj =
+      typeof activeSkillData?.damagePerProjectile === 'number' ? activeSkillData.damagePerProjectile : 0;
+    if (morePerProj !== 0 && projCount > 1) {
+      skillDb.addMod({
+        name: 'Damage',
+        type: 'MORE',
+        value: (morePerProj * (projCount - 1)) / 2,
+        flags: 0,
+        keywordFlags: 0,
+        source: `Skill: ${activeDef.name.en}`,
+      });
+    }
+  }
+
+  // Sync skill-injected `Multiplier:*` BASE mods and `Condition:*` FLAG mods into skillDb's eval context
+  // (e.g. Blade Vortex `Multiplier:BladeVortexBlade`, `Condition:HaveBladeVortex`, brand/stage part multipliers)
+  for (const [mKey] of skillDb.entriesByPrefix('Multiplier:')) {
+    const varName = mKey.slice('Multiplier:'.length);
+    if (!varName || varName.endsWith('MaxStages')) continue;
+    const mVal = skillDb.sum('BASE', mKey, flags, kwFlags);
+    if (mVal !== 0) {
+      skillDb.setMultiplier(varName, mVal);
+    }
+  }
+  for (const [cKey] of skillDb.entriesByPrefix('Condition:')) {
+    const condName = cKey.slice('Condition:'.length);
+    if (!condName) continue;
+    if (skillDb.flag(cKey, flags, kwFlags)) {
+      skillDb.setCondition(condName, true);
+    }
+  }
+
+  // PoE 1 Snipe Support (`snipeHitMulti` / `snipeAilmentMulti` * Snipe stages, default 6 max stages)
+  if (build.game === 'poe1' && skillDb.flag('TriggeredBySnipe', flags, kwFlags)) {
+    const snipeStages = Math.max(
+      1,
+      Math.round(
+        Number(
+          build.config.rawInputs?.configSnipeStages ??
+            build.config.rawInputs?.snipeStages ??
+            skillDb.getEvalContext().multipliers.SnipeStage ??
+            6,
+        ),
+      ),
+    );
+    const snipeHit = skillDb.sum('BASE', 'snipeHitMulti', flags, kwFlags);
+    const snipeAil = skillDb.sum('BASE', 'snipeAilmentMulti', flags, kwFlags);
+    if (snipeHit > 0) {
+      skillDb.addMod({
+        name: 'Damage',
+        type: 'MORE',
+        value: snipeHit * snipeStages,
+        flags: ModFlag.Hit,
+        keywordFlags: 0,
+        source: `Snipe (${snipeStages} stages)`,
+      });
+    }
+    if (snipeAil > 0) {
+      skillDb.addMod({
+        name: 'Damage',
+        type: 'MORE',
+        value: snipeAil * snipeStages,
+        flags: ModFlag.Ailment,
+        keywordFlags: 0,
+        source: `Snipe (${snipeStages} stages)`,
+      });
+    }
+  }
+
+  // Stage multipliers for Channelling & Brand stage skills (CalcPerform.lua:2375-2392)
+  const xmlExplicitStages = chosenActiveInst?.stageCount ?? mainGroup.stageCount;
+  const blightBaseMaxStages = Math.round(skillDb.sum('BASE', 'BlightBaseMaxStages', flags, kwFlags));
+  const isBlightVariant =
+    activeNameLower === 'blight' ||
+    activeNameLower === 'blight of contagion' ||
+    activeNameLower === 'blight of atrophy';
+  let declaredMaxStages = Math.round(
+    skillDb.sum('BASE', `Multiplier:${noSpaceSkill}MaxStages`) ||
+      (activeNameLower === 'scorching ray' || activeNameLower === 'scorching ray of immolation' ? 8 : 0) ||
+      (activeNameLower === 'bonestorm' ? 20 : 0),
+  );
+  if (isBlightVariant && (resolvedPartStats?.partIndex ?? 1) === 2) {
+    const baseDur =
+      typeof activeSkillData?.duration === 'number' && activeSkillData.duration > 0
+        ? activeSkillData.duration
+        : 2.5;
+    const estCastRate =
+      (1 / (activeDef.castTime ?? 0.25)) *
+      Math.max(0.05, 1 + skillDb.sum('INC', 'Speed', flags, kwFlags) / 100) *
+      skillDb.more('Speed', flags, kwFlags);
+    const estDur =
+      baseDur *
+      Math.max(0.1, 1 + skillDb.sum('INC', 'Duration', flags, kwFlags) / 100) *
+      skillDb.more('Duration', flags, kwFlags);
+    const maxCap = blightBaseMaxStages > 0 ? blightBaseMaxStages : activeNameLower === 'blight' ? 20 : 6;
+    const sustAfterFirst = Math.max(0, Math.min(Math.floor(estCastRate * estDur) - 1, maxCap - 1));
+    declaredMaxStages = sustAfterFirst + 1;
+    const lcOfSkill = noSpaceSkill.replace(/Of/g, 'of');
+    skillDb.setMultiplier(`${noSpaceSkill}Stage`, declaredMaxStages);
+    skillDb.setMultiplier(`${noSpaceSkill}StageAfterFirst`, sustAfterFirst);
+    skillDb.setMultiplier(`${lcOfSkill}Stage`, declaredMaxStages);
+    skillDb.setMultiplier(`${lcOfSkill}StageAfterFirst`, sustAfterFirst);
+  } else if (declaredMaxStages > 0 || isBlightVariant) {
+    const effMaxCap =
+      declaredMaxStages > 0
+        ? declaredMaxStages
+        : blightBaseMaxStages > 0
+          ? blightBaseMaxStages
+          : activeNameLower === 'blight'
+            ? 20
+            : 6;
+    let effStages =
+      xmlExplicitStages !== undefined
+        ? Math.max(1, Math.min(effMaxCap, xmlExplicitStages))
+        : build.game === 'poe2' && activeNameLower === 'supercharged slam'
+          ? 1
+          : effMaxCap;
+    if (activeNameLower === 'penance brand of dissipation' && xmlExplicitStages === undefined) {
+      effStages = Math.min(20, effMaxCap);
+    }
+    const afterFirst = Math.max(0, effStages - 1);
+    const lcOfSkill = noSpaceSkill.replace(/Of/g, 'of');
+    skillDb.setMultiplier(`${noSpaceSkill}Stage`, effStages);
+    skillDb.setMultiplier(`${noSpaceSkill}StageAfterFirst`, afterFirst);
+    skillDb.setMultiplier(`${lcOfSkill}Stage`, effStages);
+    skillDb.setMultiplier(`${lcOfSkill}StageAfterFirst`, afterFirst);
+  }
+  // Bane / Bane of Condemnation: `Multiplier:CurseApplied` = count of enabled linked Curse gems
+  if (build.game === 'poe1' && (activeNameLower === 'bane' || activeNameLower === 'bane of condemnation')) {
+    let linkedCurses = 0;
+    for (const gm of mainGroup.gems) {
+      if (!gm.enabled || gm === chosenActiveInst) continue;
+      const gd = getGemById('poe1', gm.gemId);
+      if (gd && gd.tags.some((t) => t.toLowerCase() === 'curse' || t.toLowerCase() === 'hex')) {
+        linkedCurses++;
+      }
+    }
+    if (linkedCurses > 0) {
+      skillDb.setMultiplier('CurseApplied', linkedCurses);
+    }
+  }
+  // Elemental Hit: 10% more Damage per Elemental Ailment on Enemy (only when not already provided by compiledMods)
+  if (build.game === 'poe1' && activeNameLower.startsWith('elemental hit')) {
+    const conds = skillDb.getEvalContext().conditions;
+    const eConds = groupEnemyDb.getEvalContext().conditions;
+    let eleAilments = 0;
+    for (const [pKey, eKey] of [
+      ['EnemyIgnited', 'Ignited'],
+      ['EnemyChilled', 'Chilled'],
+      ['EnemyFrozen', 'Frozen'],
+      ['EnemyShocked', 'Shocked'],
+      ['EnemyScorched', 'Scorched'],
+      ['EnemyBrittle', 'Brittle'],
+      ['EnemySapped', 'Sapped'],
+    ] as const) {
+      if (conds[pKey] || eConds[eKey]) eleAilments++;
+    }
+    if (eleAilments > 0) {
+      skillDb.setMultiplier('ElementalHitAilmentOnEnemy', eleAilments);
+      const damageEntry = skillDb.entriesByPrefix('Damage').find(([k]) => k === 'Damage');
+      const alreadyHasEhCmod = Boolean(
+        damageEntry &&
+          damageEntry[1].some(
+            (m) =>
+              m.type === 'MORE' &&
+              m.tags?.some((t) => t.type === 'Multiplier' && t.var === 'ElementalHitAilmentOnEnemy'),
+          ),
+      );
+      if (!alreadyHasEhCmod) {
+        skillDb.addMod({
+          name: 'Damage',
+          type: 'MORE',
+          value: eleAilments * 10,
+          flags: ModFlag.Hit,
+          keywordFlags: 0,
+          source: `Elemental Hit (${eleAilments} Elemental Ailments)`,
+        });
+      }
+    }
+  }
+
+  // Wintertide Brand Part 1 average stage + Wintertide's End multiplier (PoB1 act_int.lua:21275)
+  if (activeNameLower === 'wintertide brand' && (resolvedPartStats?.partIndex ?? 1) === 1) {
+    const wbMaxStages = Math.max(1, Math.round(skillDb.sum('BASE', 'Multiplier:WintertideBrandMaxStages') || 20));
+    const wbDmgPerStage = skillDb.sum('BASE', 'Multiplier:WintertideBrandDamagePerStage') || 20;
+    const repFreq =
+      typeof activeSkillData?.repeatFrequency === 'number' && activeSkillData.repeatFrequency > 0
+        ? activeSkillData.repeatFrequency
+        : 0.25;
+    const actRate =
+      (1 + skillDb.sum('INC', ['Speed', 'BrandActivationFrequency'], flags, kwFlags) / 100) *
+      skillDb.more('BrandActivationFrequency', flags, kwFlags);
+    const hitInterval = repFreq / Math.max(0.05, actRate);
+    const baseDur =
+      typeof activeSkillData?.duration === 'number' && activeSkillData.duration > 0
+        ? activeSkillData.duration
+        : 3.0;
+    const durMult =
+      Math.max(0.1, 1 + skillDb.sum('INC', 'Duration', flags, kwFlags) / 100) *
+      skillDb.more('Duration', flags, kwFlags);
+    const effDur = baseDur * durMult;
+    const reachedStages = Math.min(Math.floor(effDur / Math.max(0.01, hitInterval)), wbMaxStages);
+    const timeToMax = reachedStages * hitInterval;
+    const timeAtMax = Math.max(0, effDur - timeToMax);
+    const avgStages =
+      effDur > 0
+        ? ((reachedStages * (reachedStages - 1) * 0.5) * hitInterval + reachedStages * timeAtMax) / effDur
+        : reachedStages;
+    const avgDmgMult = avgStages * wbDmgPerStage;
+    const endBase = typeof activeSkillData?.durationTertiary === 'number' ? activeSkillData.durationTertiary : 1.0;
+    const endDur = endBase * durMult;
+    const endUptime = effDur > 0 ? Math.min(1, endDur / effDur) : 0;
+    const attachedLimit = Math.max(1, Math.round(skillDb.sum('BASE', 'BrandsAttachedLimit', flags, kwFlags)));
+    const endDmgMult = reachedStages * wbDmgPerStage;
+    const wbTotalMore = attachedLimit * (100 + avgDmgMult) + endUptime * (100 + endDmgMult) - 100;
+    if (wbTotalMore !== 0) {
+      skillDb.addMod({
+        name: 'Damage',
+        type: 'MORE',
+        value: wbTotalMore,
+        flags: ModFlag.Dot,
+        keywordFlags: 0,
+        source: 'Wintertide Brand Average Multiplier',
+      });
+    }
+  }
+
+  // Blood Sacrament (Relic of the Pact): ChannelledLifeReservedPerStage (PoB1 other.lua:669-688)
+  if (activeNameLower === 'blood sacrament' && _defence.life > 1) {
+    const resEffInc =
+      baseBuses.playerDb.sum('INC', ['ManaReservationEfficiency', 'ReservationEfficiency', 'LifeReservationEfficiency']) +
+      skillDb.sum('INC', ['ReservationEfficiency', 'LifeReservationEfficiency'], flags, kwFlags);
+    const resEffDiv = Math.max(0.1, 1 + resEffInc / 100);
+    const basePctPerStage = 2 / resEffDiv;
+    const availLifePct = Math.max(0, (_defence.lifeUnreserved / Math.max(1, _defence.life)) * 100 - 0.01);
+    const maxSafeStages = Math.max(1, Math.floor(availLifePct / Math.max(0.01, basePctPerStage)));
+    const effSacStages =
+      xmlExplicitStages !== undefined ? Math.min(maxSafeStages, xmlExplicitStages) : maxSafeStages;
+    const totalReservedPct = effSacStages * basePctPerStage;
+    const totalReservedLife = Math.floor((_defence.life * totalReservedPct) / 100);
+    skillDb.setMultiplier('ChannelledLifeReservedPercentPerStage', totalReservedPct);
+    skillDb.setMultiplier('ChannelledLifeReservedPerStage', Math.floor(totalReservedLife / 10));
+  }
+
+  // Boneshatter / Complex Trauma sustainable TraumaStacks (CalcOffence.lua:2890-2928)
+  if (build.game === 'poe1' && skillDb.flag('HasTrauma', flags, kwFlags)) {
+    const explicitTrauma = Number(build.config.rawInputs?.multiplierTraumaStacks ?? 0);
+    let traumaStacks = explicitTrauma > 0 ? Math.round(explicitTrauma) : 0;
+    if (traumaStacks <= 0) {
+      const baseTraumaDur = Math.max(1, skillDb.sum('BASE', 'TraumaDuration', flags, kwFlags) || 6);
+      const durMult =
+        Math.max(0.1, 1 + skillDb.sum('INC', 'Duration', flags, kwFlags) / 100) *
+        skillDb.more('Duration', flags, kwFlags);
+      const effTraumaDur = baseTraumaDur * durMult;
+      const wAps = weaponStats?.attacksPerSecond ?? 1.2;
+      const atkSpdMult = activeDef.attackSpeedMultiplier ?? 0.85;
+      const estAps =
+        wAps *
+        atkSpdMult *
+        Math.max(0.05, 1 + skillDb.sum('INC', 'Speed', flags, kwFlags) / 100) *
+        skillDb.more('Speed', flags, kwFlags);
+      const repeats = Math.max(1, 1 + skillDb.sum('BASE', 'RepeatCount', flags, kwFlags));
+      traumaStacks = Math.max(1, Math.floor((estAps / repeats) * effTraumaDur));
+      if (activeNameLower === 'boneshatter of complex trauma') {
+        traumaStacks = Math.min(9, traumaStacks);
+      }
+    }
+    skillDb.setMultiplier('TraumaStacks', traumaStacks);
+    skillDb.setMultiplier('SustainableTraumaStacks', traumaStacks);
+  }
+
+  // Nightblade Elusive Crit Multiplier scaling (CalcOffence.lua:558-562)
+  if (
+    build.game === 'poe1' &&
+    skillDb.flag('SupportedByNightblade') &&
+    (Boolean(build.config.rawInputs?.buffElusive) || skillDb.flag('Condition:CanBeElusive'))
+  ) {
+    skillDb.setCondition('Elusive', true);
+    const nbBase = skillDb.sum('BASE', 'NightbladeElusiveCritMultiplier', flags, kwFlags);
+    if (nbBase > 0) {
+      const overrideElusive =
+        typeof build.config.rawInputs?.overrideBuffElusive === 'number'
+          ? build.config.rawInputs.overrideBuffElusive
+          : typeof build.config.rawInputs?.overrideElusive === 'number'
+            ? build.config.rawInputs.overrideElusive
+            : undefined;
+      const elusiveInc = skillDb.sum('INC', ['ElusiveEffect', 'NightbladeElusiveEffect', 'BuffEffect'], flags, kwFlags);
+      const avgElusivePct = overrideElusive !== undefined ? overrideElusive : (100 + elusiveInc) * 0.5;
+      const nbCritBonus = Math.floor((nbBase * Math.max(0, avgElusivePct)) / 100);
+      if (nbCritBonus > 0) {
+        skillDb.addMod({
+          name: 'CritMultiplier',
+          type: 'BASE',
+          value: nbCritBonus,
+          flags: ModFlag.Attack,
+          keywordFlags: 0,
+          source: 'Nightblade (Elusive)',
+        });
+      }
+    }
+  }
+
+  // Cruelty default DoT multiplier when linked (40% max Cruelty unless overridden)
+  if (skillDb.flag('Cruelty') && skillDb.getEvalContext().multipliers.Cruelty === undefined) {
+    skillDb.setMultiplier('Cruelty', 40);
+  }
+  // Lifetap buff auto-active when Lifetap support is linked
+  if (compatibleSupportNames.has('lifetap')) {
+    skillDb.setCondition('Lifetap', true);
+  }
   if (compatibleSupportNames.has('inspiration') || compatibleSupportNames.has('awakened inspiration')) {
     const maxInsp = Math.max(5, 5 + skillDb.sum('BASE', 'InspirationMaxCharges', flags, kwFlags));
     skillDb.setMultiplier('InspirationCharge', maxInsp);
   }
   if (compatibleSupportNames.has('trinity') || compatibleSupportNames.has('awakened trinity')) {
-    skillDb.setMultiplier('ResonanceCount', 50);
-    skillDb.setStat('ResonanceCount', 50);
+    if (
+      build.config.rawInputs?.configResonanceCount === undefined &&
+      skillDb.getEvalContext().multipliers.ResonanceCount === undefined
+    ) {
+      const resVal = build.game === 'poe2' ? 10 : 50;
+      skillDb.setMultiplier('ResonanceCount', resVal);
+      skillDb.setStat('ResonanceCount', resVal);
+    }
+  }
+  if (build.game === 'poe1' && compatibleSupportNames.has('unholy trinity')) {
+    if (
+      build.config.rawInputs?.configUnholyResonanceCount === undefined &&
+      skillDb.getEvalContext().multipliers.UnholyResonanceCount === undefined
+    ) {
+      skillDb.setMultiplier('UnholyResonanceCount', 50);
+      skillDb.setStat('UnholyResonanceCount', 50);
+    }
   }
   skillDb.setCondition('MeleeProximity', true);
   skillDb.setCondition('averageRepeat', true);
+  const stoicismSec = Number(build.config.rawInputs?.stoicismSeconds ?? 0);
+  if (
+    stoicismSec > 0 ||
+    compatibleSupportNames.has('stoicism i') ||
+    compatibleSupportNames.has('stoicism ii')
+  ) {
+    skillDb.setCondition('UsingStoicism', true);
+    skillDb.setMultiplier('StoicismSeconds', Math.min(10, stoicismSec > 0 ? stoicismSec : 10));
+  }
+  if (
+    effectiveSkillTypeSet.has('channelling') ||
+    effectiveSkillTypeSet.has('channel') ||
+    activeDef.tags.some((t) => t.toLowerCase() === 'channelling')
+  ) {
+    skillDb.setCondition('Channelling', true);
+    if (build.game === 'poe2') {
+      const burgeonCap = skillDb.sum('BASE', 'Multiplier:BurgeonDamageCap', flags, kwFlags);
+      const burgeonPerSec = compatibleSupportNames.has('burgeon ii') ? 20 : 10;
+      const maxChanSec = burgeonCap > 0 ? burgeonCap / burgeonPerSec : 2;
+      // PoB 2 defaults ChannellingTime to 0 unless explicitly configured (prevents bogus Burgeon II +40% MORE)
+      const rawChanSec = Number(build.config.rawInputs?.channellingTime ?? 0);
+      if (Number.isFinite(rawChanSec) && rawChanSec > 0) {
+        skillDb.setMultiplier('ChannellingTime', Math.min(maxChanSec, rawChanSec));
+      }
+    } else {
+      // PoE 1 Focused Channelling (`24% MORE/s`, cap 60% = 2.5s)
+      const rawChanSec = Number(
+        build.config.rawInputs?.configChannellingTime ??
+          build.config.rawInputs?.channellingTime ??
+          (compatibleSupportNames.has('focused channelling') ? 2.5 : 0),
+      );
+      if (Number.isFinite(rawChanSec) && rawChanSec > 0) {
+        skillDb.setMultiplier('ChannellingTime', Math.min(2.5, rawChanSec));
+      }
+    }
+  }
+  const hasLevelManaCost = activeLevelEntry?.manaCost !== undefined;
+  const rawBaseMana = activeLevelEntry?.manaCost ?? activeDef.manaCost ?? Math.round(8 + activeLevel * 1.6);
+  const levelScaledMana = hasLevelManaCost
+    ? rawBaseMana
+    : rawBaseMana * Math.pow(1.09, Math.max(0, activeLevel - 20));
+  const supCostMult =
+    build.game === 'poe2'
+      ? Math.pow(1.12, Math.max(0, compatibleSupportNames.size))
+      : Math.pow(1.2, Math.max(0, compatibleSupportNames.size));
+  const baseSkillManaCost = levelScaledMana * supCostMult;
+  const lifeCostConvPct = Math.min(
+    100,
+    Math.max(
+      skillDb.flag('BloodMagic') ? 100 : 0,
+      skillDb.sum('BASE', ['HybridManaAndLifeCost_Life', 'SkillManaCostConvertToLifeCost'], flags, kwFlags),
+    ),
+  );
+  const estLifeCost = Math.round((baseSkillManaCost * lifeCostConvPct) / 100);
+  const estManaCost = Math.max(0, Math.round(baseSkillManaCost - estLifeCost));
+  skillDb.setStat('LifeCost', estLifeCost);
+  skillDb.setStat('ManaCost', estManaCost);
+  // Earthquake of Amplification: 100msEarthquakeDuration multiplier ((base + 25ms*qual) * Duration INC * Duration MORE * 10)
+  if (activeNameLower === 'earthquake of amplification') {
+    const baseEqDur =
+      (typeof activeSkillData?.duration === 'number' && activeSkillData.duration > 0
+        ? activeSkillData.duration
+        : 2.5) +
+      Math.trunc(Math.max(0, activeQuality) * 25) / 1000;
+    const durInc = skillDb.sum('INC', 'Duration', flags, kwFlags);
+    const durMore = skillDb.more('Duration', flags, kwFlags);
+    const effDur = Math.max(0, baseEqDur * Math.max(0, 1 + durInc / 100) * durMore);
+    skillDb.setMultiplier('100msEarthquakeDuration', Math.floor(effDur * 10 + 1e-6));
+  }
 
-  // Crown of Eyes / Heavy Strike of Trarthus / Kinetic Bolt: Spell Damage INC applies to Attack Damage
-  if (isAttack && skillDb.flag('SpellDamageAppliesToAttacks', flags, kwFlags)) {
+  // Ruthless Support average repeat multiplier (CalcOffence.lua:2820)
+  const ruthlessHitMult = skillDb.sum('BASE', 'RuthlessBlowHitMultiplier', flags, kwFlags);
+  const ruthlessBlowPeriod = Math.max(1, skillDb.sum('BASE', 'RuthlessBlowMaxCount', flags, kwFlags) || 3);
+  if (ruthlessHitMult > 0) {
+    skillDb.addMod({
+      name: 'Damage',
+      type: 'MORE',
+      value: ruthlessHitMult / ruthlessBlowPeriod,
+      flags: ModFlag.Hit,
+      keywordFlags: 0,
+      source: 'Ruthless (Average)',
+    });
+  }
+  const ruthlessAilMult = skillDb.sum('BASE', 'RuthlessBlowAilmentMultiplier', flags, kwFlags);
+  if (ruthlessAilMult > 0) {
+    skillDb.addMod({
+      name: 'Damage',
+      type: 'MORE',
+      value: ruthlessAilMult / ruthlessBlowPeriod,
+      flags: ModFlag.Ailment | ModFlag.Dot,
+      keywordFlags: 0,
+      source: 'Ruthless (Ailment Average)',
+    });
+  }
+
+  // PoE 1 Warcry Exerted Attacks (Overexertion, Intimidating Cry, Rallying Cry, War Bringer, Echoes of Creation — CalcOffence.lua:2888-2950)
+  const isExertableMelee =
+    build.game === 'poe1' &&
+    isAttack &&
+    (flags & ModFlag.Melee) !== 0 &&
+    !effectiveSkillTypeSet.has('neverexertable') &&
+    !effectiveSkillTypeSet.has('vaal') &&
+    !effectiveSkillTypeSet.has('channel') &&
+    !effectiveSkillTypeSet.has('totem') &&
+    !compatibleSupportNames.has('multistrike') &&
+    !compatibleSupportNames.has('awakened multistrike');
+  if (isExertableMelee) {
+    const exertingWarcries = new Set<string>();
+    let hasIntimidatingCry = false;
+    let hasRallyingCry = false;
+    for (const grp of build.skills) {
+      if (!grp.enabled) continue;
+      for (const gm of grp.gems) {
+        if (!gm.enabled) continue;
+        const gd = getGemById('poe1', gm.gemId);
+        if (!gd || gd.category !== 'active') continue;
+        const wn = gd.name.en.trim().toLowerCase();
+        if (
+          wn === 'intimidating cry' ||
+          wn === 'seismic cry' ||
+          wn === 'infernal cry' ||
+          wn === 'ancestral cry' ||
+          wn === 'rallying cry' ||
+          wn === "battlemage's cry"
+        ) {
+          exertingWarcries.add(wn);
+          if (wn === 'intimidating cry') hasIntimidatingCry = true;
+          if (wn === 'rallying cry') hasRallyingCry = true;
+        }
+      }
+    }
+    const exertCount = exertingWarcries.size;
+    if (exertCount > 0) {
+      const incExert = skillDb.sum('INC', 'ExertIncrease', flags, kwFlags);
+      if (incExert !== 0) {
+        skillDb.addMod({ name: 'Damage', type: 'INC', value: incExert, flags: ModFlag.Attack, keywordFlags: 0, source: 'Exerted Attacks' });
+      }
+      const moreExert = (skillDb.more('ExertIncrease', flags, kwFlags) - 1) * 100;
+      if (moreExert !== 0) {
+        skillDb.addMod({ name: 'Damage', type: 'MORE', value: moreExert, flags: ModFlag.Attack, keywordFlags: 0, source: 'Exerted Attacks' });
+      }
+      const moreExertAtk = (skillDb.more('ExertAttackIncrease', flags, kwFlags) - 1) * 100;
+      if (moreExertAtk !== 0) {
+        skillDb.addMod({ name: 'Damage', type: 'MORE', value: moreExertAtk, flags: ModFlag.Attack, keywordFlags: 0, source: 'Exerted Attack Damage' });
+      }
+      const overexertPerWarcry = (skillDb.more('OverexertionExertAverageIncrease', flags, kwFlags) - 1) * 100;
+      if (overexertPerWarcry > 0 && exertCount > 1) {
+        // Overexertion: ExertIncrease covers the 1st warcry (+14..18%), OverexertionExertAverageIncrease adds +10..12% per additional exerting warcry
+        skillDb.addMod({
+          name: 'Damage',
+          type: 'MORE',
+          value: overexertPerWarcry * (exertCount - 1),
+          flags: ModFlag.Attack,
+          keywordFlags: 0,
+          source: `Overexertion (${exertCount} Exerting Warcries)`,
+        });
+      }
+      const echoesPerWarcry = (skillDb.more('EchoesExertAverageIncrease', flags, kwFlags) - 1) * 100;
+      if (echoesPerWarcry > 0) {
+        skillDb.addMod({
+          name: 'Damage',
+          type: 'MORE',
+          value: echoesPerWarcry * exertCount,
+          flags: ModFlag.Attack,
+          keywordFlags: 0,
+          source: `Echoes of Creation (${exertCount} Warcries)`,
+        });
+      }
+      if (hasIntimidatingCry) {
+        skillDb.addMod({
+          name: 'DoubleDamageChance',
+          type: 'BASE',
+          value: 100,
+          flags: ModFlag.Attack | ModFlag.Hit,
+          keywordFlags: 0,
+          source: 'Intimidating Cry (Exerted)',
+        });
+      }
+      if (hasRallyingCry) {
+        skillDb.addMod({
+          name: 'Damage',
+          type: 'MORE',
+          value: 15,
+          flags: ModFlag.Attack,
+          keywordFlags: 0,
+          source: 'Rallying Cry (Exerted)',
+        });
+      }
+    }
+  }
+
+  // Crown of Eyes / Kinetic Blast (200%) / Kinetic Fusillade (150%) / Battlemage's Cry / Wandslinger (CalcOffence.lua:655-669)
+  const hasCrownOfEyes = Boolean(postUniqueRes && postUniqueRes.crownOfEyesAttackInc !== 0);
+  const hasSpellDmgToAtk =
+    isAttack &&
+    (skillDb.flag('SpellDamageAppliesToAttacks', flags, kwFlags) || hasCrownOfEyes);
+  if (hasSpellDmgToAtk) {
+    const dbImproved = skillDb.sum('BASE', 'ImprovedSpellDamageAppliesToAttacks', flags, kwFlags);
+    const skillIntrinsicPct =
+      build.game === 'poe1' && activeNameLower === 'kinetic blast'
+        ? 200
+        : build.game === 'poe1' && activeNameLower === 'heavy strike of trarthus'
+          ? 150 + Math.max(0, activeQuality)
+          : build.game === 'poe1' &&
+              (activeNameLower === 'kinetic fusillade' ||
+                activeNameLower === 'kinetic fusillade of detonation' ||
+                activeNameLower === 'power siphon' ||
+                activeNameLower === 'power siphon of the archmage' ||
+                hasCrownOfEyes)
+            ? 150
+            : 100;
+    const convPct = Math.max(100, dbImproved, skillIntrinsicPct);
     const spellOnlyInc =
       skillDb.sum('INC', 'Damage', ModFlag.Spell, KeywordFlag.Spell) -
       skillDb.sum('INC', 'Damage', 0, 0);
-    if (spellOnlyInc !== 0) {
+    const targetBonus = Math.trunc((spellOnlyInc * convPct) / 100);
+    const alreadyAdded = postUniqueRes?.crownOfEyesAttackInc ?? 0;
+    const deltaBonus = targetBonus - alreadyAdded;
+    if (deltaBonus !== 0) {
       skillDb.addMod({
         name: 'Damage',
         type: 'INC',
-        value: spellOnlyInc,
+        value: deltaBonus,
         flags: ModFlag.Attack,
         keywordFlags: 0,
         source: 'Spell Damage Applies to Attacks',
       });
     }
+    // Prevent double-dipping Strength's PhysicalDamage bonus when Iron Will already converted Strength to Spell Damage (CalcOffence.lua:663-666)
+    if (skillDb.flag('IronWill') && _defence.str >= 5) {
+      const strRatio = skillDb.flag('StrDmgBonusRatioOverrideApplied')
+        ? 0.3
+        : getRuleset(build.game).meleePhysPctPerStrength;
+      const strPhys = Math.floor(_defence.str * strRatio);
+      if (strPhys > 0) {
+        if ((flags & ModFlag.Melee) !== 0) {
+          skillDb.addMod({
+            name: 'PhysicalDamage',
+            type: 'INC',
+            value: -strPhys,
+            flags: ModFlag.Melee,
+            keywordFlags: 0,
+            source: 'Iron Will (Strength Dedup)',
+          });
+        } else if (skillDb.flag('IronGrip') && (flags & ModFlag.Projectile) !== 0) {
+          skillDb.addMod({
+            name: 'PhysicalDamage',
+            type: 'INC',
+            value: -strPhys,
+            flags: ModFlag.Attack | ModFlag.Projectile,
+            keywordFlags: 0,
+            source: 'Iron Will (Strength Dedup)',
+          });
+        }
+      }
+    }
   }
 
-  // Multistrike / Awakened Multistrike average repeat damage multiplier: (1 + r1/100 + r2/100 [ + r3/100 ]) / (1 + repeats)
-  const repeatOne = skillDb.sum('MORE' as 'BASE', 'RepeatOneDamage', flags, kwFlags);
-  void repeatOne;
+  // PoE 2 Vilenta's Propulsion (`CastSpeedAppliesToProjectileSpeed`, CalcOffence.lua:944-952)
+  if (skillDb.flag('CastSpeedAppliesToProjectileSpeed', flags, kwFlags)) {
+    const convMult =
+      (skillDb.sum('BASE', 'ImprovedCastSpeedAppliesToProjectileSpeed', flags, kwFlags) || 100) / 100;
+    const castOnlySpeedInc =
+      skillDb.sum('INC', 'Speed', ModFlag.Cast | ModFlag.Spell, KeywordFlag.Spell) -
+      skillDb.sum('INC', 'Speed', 0, 0);
+    const convertedProjSpeed = castOnlySpeedInc * convMult;
+    if (convertedProjSpeed !== 0) {
+      skillDb.addMod({
+        name: 'ProjectileSpeed',
+        type: 'INC',
+        value: convertedProjSpeed,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Cast Speed Applies to Projectile Speed',
+      });
+    }
+  }
+
+  // PoE 2 Projectile Acceleration III (`ProjSpeedAppliesToProjectileDamage` / `ProjectileSpeedAppliesToProjectileDamage`)
+  if (
+    skillDb.flag('ProjSpeedAppliesToProjectileDamage', flags, kwFlags) ||
+    skillDb.flag('ProjectileSpeedAppliesToProjectileDamage', flags, kwFlags)
+  ) {
+    const projSpeedInc = skillDb.sum('INC', 'ProjectileSpeed', flags, kwFlags);
+    if (projSpeedInc !== 0) {
+      skillDb.addMod({
+        name: 'Damage',
+        type: 'INC',
+        value: projSpeedInc,
+        flags: ModFlag.Projectile,
+        keywordFlags: 0,
+        source: 'Projectile Speed Applies to Projectile Damage',
+      });
+    }
+  }
+
+  // PoE 2 Feathered Fletching: Projectile Speed INC/RED applies to Damage with Bows (CalcOffence.lua:953-959)
+  if (
+    isAttack &&
+    weaponStats?.weaponType === 'Bow' &&
+    (skillDb.flag('ProjSpeedAppliesToBowDamage', flags, kwFlags) ||
+      skillDb.flag('ProjectileSpeedAppliesToBowDamage', flags, kwFlags))
+  ) {
+    const projSpeedInc = skillDb.sum('INC', 'ProjectileSpeed', flags, kwFlags);
+    if (projSpeedInc !== 0) {
+      skillDb.addMod({
+        name: 'Damage',
+        type: 'INC',
+        value: projSpeedInc,
+        flags: ModFlag.Bow,
+        keywordFlags: 0,
+        source: 'Feathered Fletching (Projectile Speed)',
+      });
+    }
+  }
+
+  // PoE 2 Lich Price of Power: Spells consume a Power Charge if able to deal 40% more Damage
+  if (!isAttack && activePowerCharges > 0) {
+    const priceMore = skillDb.sum('BASE', 'PriceOfPowerSpellMore', flags, kwFlags);
+    if (priceMore > 0) {
+      skillDb.addMod({
+        name: 'Damage',
+        type: 'MORE',
+        value: priceMore,
+        flags: ModFlag.Spell,
+        keywordFlags: 0,
+        source: 'Ascendancy: Price of Power',
+      });
+    }
+  }
+
+  // Multistrike / Greater Multistrike / Greater Spell Echo average repeat damage multipliers (PoB1 CalcOffence.lua:850-892)
+  const repeatCountVal = Math.max(1, 1 + Math.round(skillDb.sum('BASE', 'RepeatCount', flags, kwFlags)));
+  if (repeatCountVal > 1 && !skillDb.flag('NoRepeatBonuses', flags, kwFlags)) {
+    const rFinalMore = skillDb.more('RepeatFinalDamage', flags, kwFlags);
+    const rFinalPct = (rFinalMore - 1) * 100;
+    if (rFinalPct !== 0) {
+      skillDb.addMod({
+        name: 'Damage',
+        type: 'MORE',
+        value: rFinalPct / repeatCountVal,
+        flags: ModFlag.Hit,
+        keywordFlags: 0,
+        source: 'Repeat Final Damage (Average)',
+      });
+    }
+    const rPerRepeatMore = skillDb.more('RepeatPerRepeatDamage', flags, kwFlags);
+    const rPerRepeatPct = (rPerRepeatMore - 1) * 100;
+    if (rPerRepeatPct !== 0) {
+      const avgPerRepeatMore =
+        rFinalMore !== 1
+          ? (((100 + (rPerRepeatPct * (repeatCountVal - 2)) / 2) * (repeatCountVal - 1) +
+              (100 + rPerRepeatPct * (repeatCountVal - 1)) * rFinalMore) /
+              (repeatCountVal + rFinalPct / 100)) -
+            100
+          : (rPerRepeatPct * (repeatCountVal - 1)) / 2;
+      if (avgPerRepeatMore !== 0) {
+        skillDb.addMod({
+          name: 'Damage',
+          type: 'MORE',
+          value: avgPerRepeatMore,
+          flags: ModFlag.Hit,
+          keywordFlags: 0,
+          source: 'Repeat Per Repeat Damage (Average)',
+        });
+      }
+    }
+  }
   const r1More = skillDb.more('RepeatOneDamage', flags, kwFlags);
   const r2More = skillDb.more('RepeatTwoDamage', flags, kwFlags);
-  if (r1More !== 1 || r2More !== 1) {
-    const r3More = skillDb.more('RepeatThreeDamage', flags, kwFlags);
-    const hasThird = r3More !== 1;
+  const r3More = skillDb.more('RepeatThreeDamage', flags, kwFlags);
+  if (r1More !== 1 || r2More !== 1 || r3More !== 1) {
+    const hasThird = r3More !== 1 || repeatCountVal >= 4;
     const avgRepeatMult = hasThird
       ? (1 + r1More + r2More + r3More) / 4
       : (1 + r1More + r2More) / 3;
@@ -2351,24 +6461,43 @@ function computeGroupOffence(
         name: 'Damage',
         type: 'MORE',
         value: pctMore,
-        flags: ModFlag.Attack,
+        flags: ModFlag.Attack | ModFlag.Hit,
         keywordFlags: 0,
         source: 'Multistrike (Average Repeat)',
       });
     }
   }
 
-  const levelFactor = activeLevelEntry ? 1 : getLevelScalingFactor(activeLevel);
-  const effectiveness =
-    (activeLevelEntry?.damageEffectivenessPct ?? activeDef.damageEffectivenessPct ?? 100) / 100;
+  const hasResolvedPartDmg = Boolean(
+    usePartOverride && resolvedPartStats && Object.keys(resolvedPartStats.baseDamage).length > 0,
+  );
+  const resolvedPartOrBaseDmg = hasResolvedPartDmg
+    ? resolvedPartStats!.baseDamage
+    : (activeLevelEntry?.baseDamage ?? activeDef.baseDamage);
+  const levelFactor = activeLevelEntry || hasResolvedPartDmg ? 1 : getLevelScalingFactor(activeLevel);
+  let effectiveness =
+    ((usePartOverride ? resolvedPartStats?.damageEffectivenessPct : undefined) ??
+      activeLevelEntry?.damageEffectivenessPct ??
+      activeDef.damageEffectivenessPct ??
+      100) / 100;
 
   // Step A: Base Min/Max per DamageType before conversion
   const baseMin: Record<DamageType, number> = { Physical: 0, Lightning: 0, Cold: 0, Fire: 0, Chaos: 0 };
   const baseMax: Record<DamageType, number> = { Physical: 0, Lightning: 0, Cold: 0, Fire: 0, Chaos: 0 };
 
   const doubleHitsDualWield = Boolean(
-    isDualWield && activeSkillData?.doubleHitsWhenDualWielding,
+    build.game === 'poe1' && isDualWield && activeSkillData?.doubleHitsWhenDualWielding,
   );
+  if (build.game === 'poe2' && isDualWield && activeSkillData?.doubleHitsWhenDualWielding) {
+    skillDb.addMod({
+      name: 'DPS',
+      type: 'MORE',
+      value: 100,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Hits with both weapons',
+    });
+  }
   const offHandSetMin =
     typeof activeSkillData?.setOffHandPhysicalMin === 'number'
       ? activeSkillData.setOffHandPhysicalMin
@@ -2377,16 +6506,82 @@ function computeGroupOffence(
     typeof activeSkillData?.setOffHandPhysicalMax === 'number'
       ? activeSkillData.setOffHandPhysicalMax
       : undefined;
+  const offHandFireMin =
+    typeof activeSkillData?.setOffHandFireMin === 'number'
+      ? activeSkillData.setOffHandFireMin
+      : undefined;
+  const offHandFireMax =
+    typeof activeSkillData?.setOffHandFireMax === 'number'
+      ? activeSkillData.setOffHandFireMax
+      : undefined;
+  const offHandAttackTimeMs =
+    typeof activeSkillData?.setOffHandAttackTime === 'number' && activeSkillData.setOffHandAttackTime > 0
+      ? activeSkillData.setOffHandAttackTime
+      : undefined;
+  const isShieldOffHandAttack =
+    offHandSetMin !== undefined ||
+    offHandFireMin !== undefined ||
+    offHandAttackTimeMs !== undefined;
+  if (isShieldOffHandAttack) {
+    skillDb.setCondition('OffHandAttack', true);
+  }
   const isUnarmedConcoction = effectiveSkillTypeSet.has('requiresoffhandnotweapon');
 
   if (isAttack) {
-    const baseAtkPct = activeLevelEntry?.attackDamageMultiplierPct ?? activeDef.attackDamageMultiplierPct ?? 100;
-    const atkMult = activeLevelEntry ? baseAtkPct / 100 : (baseAtkPct / 100) * Math.pow(1.03, activeLevel - 20);
-    if (offHandSetMin !== undefined && offHandSetMax !== undefined) {
-      baseMin.Physical += offHandSetMin * atkMult;
-      baseMax.Physical += offHandSetMax * atkMult;
+    const partAtkMultPct = usePartOverride ? resolvedPartStats?.attackDamageMultiplierPct : undefined;
+    const baseAtkPct =
+      partAtkMultPct ??
+      activeLevelEntry?.attackDamageMultiplierPct ??
+      activeDef.attackDamageMultiplierPct ??
+      100;
+    const atkMult =
+      activeLevelEntry || partAtkMultPct !== undefined
+        ? baseAtkPct / 100
+        : (baseAtkPct / 100) * Math.pow(1.03, activeLevel - 20);
+    // PoB 2 CalcOffence.lua:4131-4136: attacks scale added flat damage by level-scaled `baseMultiplier` (`atkMult`)
+    if (build.game === 'poe2' && !isUnarmedConcoction) {
+      effectiveness = atkMult;
+    }
+    if (isShieldOffHandAttack) {
+      if (offHandSetMin !== undefined && offHandSetMax !== undefined) {
+        baseMin.Physical += offHandSetMin * atkMult;
+        baseMax.Physical += offHandSetMax * atkMult;
+      }
+      if (offHandFireMin !== undefined && offHandFireMax !== undefined) {
+        baseMin.Fire += offHandFireMin * atkMult;
+        baseMax.Fire += offHandFireMax * atkMult;
+      }
+      // `off_hand_minimum/maximum_added_physical_damage_per_15_shield_armour_and_evasion_rating` uses `statList` in PoB
+      // so `cmods` has the per-15 base value without a single-stat PerStat tag; add remaining `(chunks - 1)` shield bonus here.
+      const shieldArmEva =
+        (skillDb.getEvalContext().stats['ArmourOnWeapon 2'] ?? 0) +
+        (skillDb.getEvalContext().stats['EvasionOnWeapon 2'] ?? 0);
+      const chunks15 = Math.floor(shieldArmEva / 15);
+      if (chunks15 > 1) {
+        const cmodsList = activeLevelEntry?.compiledMods ?? activeDef.compiledMods ?? [];
+        const per15Min = cmodsList.find(
+          (m) =>
+            m.name === 'PhysicalMin' &&
+            typeof m.value === 'number' &&
+            m.tags?.some((t) => t.type === 'Condition' && t.var === 'OffHandAttack') &&
+            !m.tags?.some((t) => t.type === 'PerStat'),
+        );
+        const per15Max = cmodsList.find(
+          (m) =>
+            m.name === 'PhysicalMax' &&
+            typeof m.value === 'number' &&
+            m.tags?.some((t) => t.type === 'Condition' && t.var === 'OffHandAttack') &&
+            !m.tags?.some((t) => t.type === 'PerStat'),
+        );
+        if (per15Min && typeof per15Min.value === 'number') {
+          baseMin.Physical += per15Min.value * (chunks15 - 1) * atkMult;
+        }
+        if (per15Max && typeof per15Max.value === 'number') {
+          baseMax.Physical += per15Max.value * (chunks15 - 1) * atkMult;
+        }
+      }
     } else if (isUnarmedConcoction) {
-      const srcDmg = activeLevelEntry?.baseDamage ?? activeDef.baseDamage;
+      const srcDmg = resolvedPartOrBaseDmg;
       if (srcDmg) {
         for (const dt of DAMAGE_TYPES) {
           const range = srcDmg[dt];
@@ -2394,6 +6589,44 @@ function computeGroupOffence(
             baseMin[dt] += range[0] * levelFactor;
             baseMax[dt] += range[1] * levelFactor;
           }
+        }
+      }
+      // PoE 1 Poisonous Concoction / of Bouncing: Added Chaos Damage from highest-recovery equipped Life Flask
+      if (build.game === 'poe1' && activeNameLower.startsWith('poisonous concoction')) {
+        let bestFlaskLife = 0;
+        const flaskRecInc =
+          skillDb.sum('INC', ['FlaskRecovery', 'FlaskLifeRecovery', 'FlaskEffect']) +
+          baseBuses.playerDb.sum('INC', ['FlaskRecovery', 'FlaskLifeRecovery', 'FlaskEffect']);
+        for (const fSlot of ['Flask 1', 'Flask 2', 'Flask 3', 'Flask 4', 'Flask 5'] as const) {
+          const fId = build.equipped[fSlot];
+          const fItem = fId ? build.items[fId] : undefined;
+          if (!fItem || !/life flask/i.test(fItem.baseName)) continue;
+          const bn = fItem.baseName.toLowerCase();
+          const rawBase = bn.includes('divine')
+            ? 2400
+            : bn.includes('eternal')
+              ? 2080
+              : bn.includes('hallowed')
+                ? 1990
+                : bn.includes('sanctified')
+                  ? 1460
+                  : 1200;
+          let localRecInc = 0;
+          for (const fl of [...fItem.implicits, ...fItem.explicits]) {
+            const mInc = fl.match(/(\d+)%\s+increased\s+(?:Amount\s+Recovered|Life\s+Recovered)/i);
+            if (mInc) localRecInc += Number(mInc[1]);
+            const mRed = fl.match(/(\d+)%\s+reduced\s+(?:Amount\s+Recovered|Life\s+Recovered)/i);
+            if (mRed) localRecInc -= Number(mRed[1]);
+          }
+          const qualMult = 1 + Math.max(0, fItem.quality || 20) / 100;
+          const totalRec = rawBase * qualMult * Math.max(0, 1 + localRecInc / 100) * Math.max(0, 1 + flaskRecInc / 100);
+          if (totalRec > bestFlaskLife) bestFlaskLife = totalRec;
+        }
+        if (bestFlaskLife > 0) {
+          const flaskPct = activeNameLower.includes('bouncing') ? 0.11 : 0.09;
+          const flatFlaskChaos = bestFlaskLife * flaskPct;
+          baseMin.Chaos += flatFlaskChaos;
+          baseMax.Chaos += flatFlaskChaos;
         }
       }
     } else if (isDualWield && mainWeaponStats && offWeaponStats) {
@@ -2423,7 +6656,7 @@ function computeGroupOffence(
           baseMax[dt] += range[1] * atkMult;
         }
       }
-      const srcDmg = activeLevelEntry?.baseDamage ?? activeDef.baseDamage;
+      const srcDmg = resolvedPartOrBaseDmg;
       if (srcDmg) {
         for (const dt of DAMAGE_TYPES) {
           const range = srcDmg[dt];
@@ -2434,13 +6667,26 @@ function computeGroupOffence(
         }
       }
     }
-  } else if (activeLevelEntry?.baseDamage ?? activeDef.baseDamage) {
-    const srcDmg = activeLevelEntry?.baseDamage ?? activeDef.baseDamage!;
+  } else if (resolvedPartOrBaseDmg) {
+    const srcDmg = resolvedPartOrBaseDmg;
     for (const dt of DAMAGE_TYPES) {
       const range = srcDmg[dt];
       if (range) {
         baseMin[dt] += range[0] * levelFactor;
         baseMax[dt] += range[1] * levelFactor;
+      }
+    }
+  }
+  // Supplement any missing damage types from `activeSkillData` (e.g. PoE 2 Cold-Infused Spark, Penance Brand, item skills)
+  if (activeSkillData) {
+    for (const dt of DAMAGE_TYPES) {
+      const sMin = activeSkillData[`${dt}Min`];
+      const sMax = activeSkillData[`${dt}Max`];
+      if (typeof sMin === 'number' && typeof sMax === 'number' && (sMin > 0 || sMax > 0)) {
+        if (baseMin[dt] === 0 && baseMax[dt] === 0) {
+          baseMin[dt] = sMin;
+          baseMax[dt] = sMax;
+        }
       }
     }
   }
@@ -2502,15 +6748,39 @@ function computeGroupOffence(
   const hasEphemeralEdge = Boolean(
     activeWeapons.main && activeWeapons.main.name.trim().toLowerCase() === 'ephemeral edge',
   );
-  const specialSkillDmg = computeSkillSpecialDamage(activeDef.name.en, build.game, {
-    gemLevel: activeLevel,
-    enemyLevel: build.config.enemyLevel,
-    maxLife: _defence.life,
-    maxEs: _defence.energyShield,
-    ephemeralEdge: isAttack && hasEphemeralEdge,
-    powerCharges: activePowerCharges,
-    isChannelling: activeDef.tags.some((t) => t.toLowerCase() === 'channelling'),
-  });
+  const ephemeralAlreadyApplied = (postUniqueRes?.ephemeralEdgeLightningMax ?? 0) > 0;
+  const isDetonateDeadHandledByPart = Boolean(resolvedPartStats?.corpseExplosionDamageType);
+  const hasCompiledSkillMods = Boolean(
+    (activeLevelEntry?.compiledMods ?? activeDef.compiledMods)?.length ||
+      activeLevelEntry?.skillData ||
+      activeDef.skillData,
+  );
+  const hasSkillDotData = Boolean(
+    activeSkillData &&
+      (typeof activeSkillData.PhysicalDot === 'number' ||
+        typeof activeSkillData.FireDot === 'number' ||
+        typeof activeSkillData.ColdDot === 'number' ||
+        typeof activeSkillData.LightningDot === 'number' ||
+        typeof activeSkillData.ChaosDot === 'number' ||
+        activeSkillData.dotDamageByType),
+  );
+  const specialSkillDmg = computeSkillSpecialDamage(
+    isDetonateDeadHandledByPart ? '__dd_handled_by_part__' : activeDef.name.en,
+    build.game,
+    {
+      gemLevel: activeLevel,
+      enemyLevel: build.config.enemyLevel,
+      maxLife: _defence.life,
+      maxMana: _defence.mana,
+      maxEs: _defence.energyShield,
+      ephemeralEdge: isAttack && hasEphemeralEdge && !ephemeralAlreadyApplied,
+      powerCharges: activePowerCharges,
+      stages: xmlExplicitStages,
+      isChannelling: activeDef.tags.some((t) => t.toLowerCase() === 'channelling'),
+      hasCompiledSkillMods,
+      hasSkillDotData,
+    },
+  );
   for (const dt of DAMAGE_TYPES) {
     const extraRange = specialSkillDmg.flatAddedDamage[dt];
     if (extraRange) {
@@ -2529,12 +6799,107 @@ function computeGroupOffence(
     });
   }
 
-  // PoE 1 Archmage flat Lightning Damage from unreserved Mana (if not already added by gem stats)
+  // PoE 1 Archmage flat Lightning Damage from unreserved Mana (handle Lv21+ delta if Lv20 cmods exist)
   if (build.game === 'poe1' && archmageLevel > 0 && !isAttack) {
+    const lMaxEntry = skillDb.entriesByPrefix('LightningMax').find(([k]) => k === 'LightningMax');
+    const hasArchmageFlat = Boolean(
+      lMaxEntry && lMaxEntry[1].some((m) => m.type === 'BASE' && /archmage/i.test(m.source)),
+    );
     const am = computeArchmageBonus('poe1', _defence.manaUnreserved, archmageLevel);
-    if (am.flatLightningMax > 0) {
+    if (!hasArchmageFlat && am.flatLightningMax > 0) {
       baseMin.Lightning += am.flatLightningMin * effectiveness;
       baseMax.Lightning += am.flatLightningMax * effectiveness;
+    } else if (hasArchmageFlat && archmageLevel > 20) {
+      const am20 = computeArchmageBonus('poe1', _defence.manaUnreserved, 20);
+      const deltaMin = Math.max(0, am.flatLightningMin - am20.flatLightningMin);
+      const deltaMax = Math.max(0, am.flatLightningMax - am20.flatLightningMax);
+      if (deltaMax > 0) {
+        baseMin.Lightning += deltaMin * effectiveness;
+        baseMax.Lightning += deltaMax * effectiveness;
+      }
+    }
+  }
+  // PoE 1 Mind of the Council: Attacks have Added Lightning Damage equal to X% of Maximum Mana
+  if (build.game === 'poe1' && isAttack && _defence.mana > 0) {
+    const motcPct = skillDb.sum('BASE', 'MindOfTheCouncilManaPct', flags, kwFlags);
+    if (motcPct > 0) {
+      const motcFlat = Math.floor((_defence.mana * motcPct) / 100);
+      baseMin.Lightning += motcFlat * effectiveness;
+      baseMax.Lightning += motcFlat * effectiveness;
+    }
+  }
+
+  // PoE 1 Sacrifice Support (`sacrificeLifePercent` * `sacrificeLifeAsChaos` -> flat Chaos Spell Damage)
+  if (build.game === 'poe1' && !isAttack && compatibleSupportNames.has('sacrifice') && _defence.life > 1) {
+    const sacEntry = supportCandidates.find((s) => s.gem.id === 'poe1_supportsacrifice');
+    const sacLv = sacEntry ? Math.min(40, Math.max(1, sacEntry.instance.level)) : 20;
+    const sacLvData = sacEntry ? resolveGemLevelEntry(sacEntry.gem, sacLv)?.skillData : undefined;
+    const sacLifePct = Number(
+      sacLvData?.sacrificeLifePercent ?? sacEntry?.gem.skillData?.sacrificeLifePercent ?? 20,
+    );
+    const sacAsChaos = Number(
+      sacLvData?.sacrificeLifeAsChaos ?? sacEntry?.gem.skillData?.sacrificeLifeAsChaos ?? 54,
+    );
+    const sacChaos = _defence.life * (sacLifePct / 100) * (sacAsChaos / 100);
+    if (sacChaos > 0) {
+      baseMin.Chaos += sacChaos * effectiveness;
+      baseMax.Chaos += sacChaos * effectiveness;
+    }
+  }
+
+  // PoE 1 Spellblade Support (adds 116..135% of 1H melee weapon / Energy Blade damage to supported Spells)
+  if (
+    build.game === 'poe1' &&
+    !isAttack &&
+    compatibleSupportNames.has('spellblade') &&
+    mainWeaponStats &&
+    !mainWeaponStats.twoHanded &&
+    mainWeaponStats.weaponType !== 'Wand' &&
+    mainWeaponStats.weaponType !== 'Bow'
+  ) {
+    const sbEntry = supportCandidates.find((s) => s.gem.id === 'poe1_supportspellblade');
+    const sbLv = sbEntry ? Math.min(40, Math.max(1, sbEntry.instance.level)) : 20;
+    const sbLvData = sbEntry ? resolveGemLevelEntry(sbEntry.gem, sbLv)?.skillData : undefined;
+    const sbPct = Number(
+      sbLvData?.spellbladeWeaponDamagePct ??
+        sbEntry?.gem.skillData?.spellbladeWeaponDamagePct ??
+        (115 + Math.min(20, sbLv) + Math.max(0, sbLv - 20) * 1.5),
+    );
+    const sbMult = (sbPct / 100) * effectiveness;
+    baseMin.Physical += mainWeaponStats.physicalMin * sbMult;
+    baseMax.Physical += mainWeaponStats.physicalMax * sbMult;
+    if (mainWeaponStats.elementalDamage) {
+      for (const [el, rng] of Object.entries(mainWeaponStats.elementalDamage)) {
+        if (!rng) continue;
+        const dt = el as DamageType;
+        baseMin[dt] += rng[0] * sbMult;
+        baseMax[dt] += rng[1] * sbMult;
+      }
+    }
+  }
+
+  // PoE 1 Spellslinger (adds Equipped Wand damage to supported Spells)
+  if (
+    build.game === 'poe1' &&
+    !isAttack &&
+    (skillDb.flag('Condition:SupportedBySpellslinger') ||
+      linkedSupportNames.has('spellslinger') ||
+      mainGroup.gems.some((g) => g.enabled && getGemById('poe1', g.gemId)?.id === 'poe1_spellslinger'))
+  ) {
+    const wands = [mainWeaponStats, offWeaponStats].filter(
+      (w): w is NonNullable<typeof w> => Boolean(w && w.weaponType === 'Wand'),
+    );
+    for (const w of wands) {
+      baseMin.Physical += w.physicalMin * effectiveness;
+      baseMax.Physical += w.physicalMax * effectiveness;
+      if (w.elementalDamage) {
+        for (const [el, rng] of Object.entries(w.elementalDamage)) {
+          if (!rng) continue;
+          const dt = el as DamageType;
+          baseMin[dt] += rng[0] * effectiveness;
+          baseMax[dt] += rng[1] * effectiveness;
+        }
+      }
     }
   }
 
@@ -2547,7 +6912,153 @@ function computeGroupOffence(
     baseMax[dt] += addMax * flatEffectiveness;
   }
 
+  // PoE 2 Amazon Penetrate: Attacks using your Weapons have Added Physical Damage equal to 25% of Weapon Accuracy
+  if (build.game === 'poe2' && isAttack && activeWeapons.main) {
+    const penAccPct = skillDb.sum('BASE', 'AmazonPenetrateWeaponAccPct', flags, kwFlags);
+    if (penAccPct > 0) {
+      const expandedMain = expandPoe2LocalRunes
+        ? expandPoe2LocalRunes(mainSlotLabel, activeWeapons.main)
+        : activeWeapons.main;
+      let localWepAcc = 0;
+      for (const rawLine of [...expandedMain.implicits, ...expandedMain.explicits]) {
+        const clean = rawLine.replace(/^\{[^}]*\}/, '').trim();
+        const mAcc = clean.match(/^\+?(\d+) to Accuracy Rating$/i);
+        if (mAcc) localWepAcc += Number(mAcc[1]);
+      }
+      const addedPhysFromAcc = Math.floor((localWepAcc * penAccPct) / 100);
+      if (addedPhysFromAcc > 0) {
+        baseMin.Physical += addedPhysFromAcc * effectiveness;
+        baseMax.Physical += addedPhysFromAcc * effectiveness;
+      }
+    }
+  }
+
+  // PoE 2 Uptime Scaled Infernal Cry & Empowered / Ancestrally Boosted Attacks (`CalcOffence.lua:3458-3780`)
+  const isPoe2ExertableMelee =
+    build.game === 'poe2' &&
+    isAttack &&
+    (flags & ModFlag.Melee) !== 0 &&
+    !effectiveSkillTypeSet.has('neverexertable') &&
+    !effectiveSkillTypeSet.has('triggered') &&
+    !effectiveSkillTypeSet.has('otherthingusesskill') &&
+    activeNameLower !== 'mace strike';
+  if (isPoe2ExertableMelee) {
+    let infernalCryGem: { def: GemDefinition; level: number; quality: number; extraEmpowers: number; extraCdr: number } | undefined;
+    for (const grp of build.skills) {
+      if (!grp.enabled) continue;
+      const icInst = grp.gems.find((g) => {
+        if (!g.enabled) return false;
+        const d = getGemById('poe2', g.gemId);
+        return Boolean(d && d.name.en.trim().toLowerCase() === 'infernal cry');
+      });
+      if (icInst) {
+        const icDef = getGemById('poe2', icInst.gemId)!;
+        let extraEmpowers = 0;
+        let extraCdr = 0;
+        for (const sg of grp.gems) {
+          if (!sg.enabled) continue;
+          const sd = getGemById('poe2', sg.gemId);
+          if (!sd || sd.category !== 'support') continue;
+          const sn = sd.name.en.trim().toLowerCase();
+          if (sn.startsWith('echoing cry')) extraEmpowers += 1;
+          if (sn.startsWith('cooldown recovery')) extraCdr += sn.includes('ii') ? 35 : 25;
+        }
+        infernalCryGem = { def: icDef, level: icInst.level, quality: icInst.quality ?? 0, extraEmpowers, extraCdr };
+        break;
+      }
+    }
+    const estWepAps = weaponStats?.attacksPerSecond ?? 1.2;
+    const estAtkSpd =
+      estWepAps *
+      (activeDef.attackSpeedMultiplier ?? 1) *
+      Math.max(0.05, 1 + skillDb.sum('INC', 'Speed', flags, kwFlags) / 100) *
+      skillDb.more('Speed', flags, kwFlags);
+    let infernalUptime = 0;
+    if (infernalCryGem) {
+      const icLv = Math.min(40, Math.max(1, infernalCryGem.level));
+      const lvEntry = resolveGemLevelEntry(infernalCryGem.def, icLv);
+      const icCmods = lvEntry?.compiledMods ?? infernalCryGem.def.compiledMods ?? [];
+      const basePerPower =
+        (icCmods.find((m) => m.name === 'InfernalExtraFireDamageMultiplier' && typeof m.value === 'number')?.value as number | undefined) ??
+        29 + icLv;
+      const qualPerPower = Math.trunc(Math.max(0, infernalCryGem.quality) * 0.5);
+      const warcryPower = Math.min(
+        50,
+        Math.max(
+          skillDb.getEvalContext().multipliers.EnemyPower ?? 20,
+          skillDb.sum('BASE', 'MinimumWarcryPower'),
+        ),
+      );
+      const infernalExtraFire = (basePerPower + qualPerPower) * Math.max(1, Math.floor(warcryPower / 10));
+      const baseCd = typeof infernalCryGem.def.skillData?.cooldown === 'number' ? infernalCryGem.def.skillData.cooldown : 8;
+      const cdrInc =
+        skillDb.sum('INC', ['CooldownRecovery', 'WarcryCooldownRecovery']) + infernalCryGem.extraCdr;
+      const effIcCd = baseCd / Math.max(0.1, 1 + cdrInc / 100);
+      const warcrySpdInc = skillDb.sum('INC', 'WarcrySpeed');
+      const effIcCast = 0.8 / Math.max(0.1, 1 + warcrySpdInc / 100);
+      const empowers = Math.max(
+        1,
+        1 +
+          infernalCryGem.extraEmpowers +
+          skillDb.sum('BASE', ['NumInfernalEmpowers', 'WarcryExtraEmpowers']),
+      );
+      const storedUses = Math.max(1, 1 + skillDb.sum('BASE', 'AdditionalCooldownUses'));
+      infernalUptime =
+        estAtkSpd > 0
+          ? Math.min(1, Math.min((empowers / estAtkSpd) / Math.max(0.1, effIcCd + effIcCast), 1) * storedUses)
+          : 0;
+      const scaledFireGain = infernalExtraFire * infernalUptime;
+      if (scaledFireGain > 0) {
+        skillDb.addMod({
+          name: 'DamageGainAsFire',
+          type: 'BASE',
+          value: scaledFireGain,
+          flags: ModFlag.Melee,
+          keywordFlags: 0,
+          source: 'Uptime Scaled Infernal Cry',
+        });
+      }
+    }
+    const maxEmpFlag =
+      skillDb.flag('MaxBoostedUptimeRatio', flags, kwFlags) ||
+      skillDb.flag('MaxEmpoweredUptimeRatio', flags, kwFlags);
+    const fowCd = skillDb.sum('BASE', 'FistOfWarCooldown', flags, kwFlags);
+    const ancestralUptime = skillDb.flag('MaxBoostedUptimeRatio', flags, kwFlags)
+      ? 1
+      : fowCd > 0 && estAtkSpd > 0 && effectiveSkillTypeSet.has('slam')
+        ? Math.min(1, (1 / estAtkSpd) / fowCd)
+        : 0;
+    const empoweredUptime = maxEmpFlag ? 1 : Math.max(infernalUptime, ancestralUptime);
+    if (empoweredUptime > 0) {
+      const empInc = skillDb.sum('INC', ['EmpoweredIncrease', 'ExertIncrease'], flags, kwFlags);
+      if (empInc !== 0) {
+        skillDb.addMod({
+          name: 'Damage',
+          type: 'INC',
+          value: empInc * empoweredUptime,
+          flags: ModFlag.Attack,
+          keywordFlags: 0,
+          source: 'Uptime Scaled Empowered Attacks',
+        });
+      }
+    }
+    if (ancestralUptime > 0) {
+      const ancInc = skillDb.sum('INC', 'AncestralBoostIncrease', flags, kwFlags);
+      if (ancInc !== 0) {
+        skillDb.addMod({
+          name: 'Damage',
+          type: 'INC',
+          value: ancInc * ancestralUptime,
+          flags: ModFlag.Attack,
+          keywordFlags: 0,
+          source: 'Uptime Scaled Ancestrally Boosted Attacks',
+        });
+      }
+    }
+  }
+
   // Step B: Full PoE Conversion & Gain-as-Extra Pipeline (Physical -> Lightning -> Cold -> Fire -> Chaos)
+  // PoE 2 strictly separates Conversion from Gain-as-Extra (Gained damage NEVER re-converts or double-dips into further Gains!)
   const DMG_BIT: Record<DamageType, number> = {
     Physical: 1,
     Lightning: 2,
@@ -2563,19 +7074,38 @@ function computeGroupOffence(
     Fire: new Map(),
     Chaos: new Map(),
   };
-  const addPacket = (target: DamageType, mask: number, mn: number, mx: number) => {
+  const poe2GainPackets: Record<DamageType, Map<number, [number, number]>> = {
+    Physical: new Map(),
+    Lightning: new Map(),
+    Cold: new Map(),
+    Fire: new Map(),
+    Chaos: new Map(),
+  };
+  const addPacketTo = (
+    dest: Record<DamageType, Map<number, [number, number]>>,
+    target: DamageType,
+    mask: number,
+    mn: number,
+    mx: number,
+  ) => {
     if (mn <= 0 && mx <= 0) return;
-    const prev = packets[target].get(mask);
+    const prev = dest[target].get(mask);
     if (prev) {
       prev[0] += mn;
       prev[1] += mx;
     } else {
-      packets[target].set(mask, [mn, mx]);
+      dest[target].set(mask, [mn, mx]);
     }
   };
+  const addPacket = (target: DamageType, mask: number, mn: number, mx: number) =>
+    addPacketTo(packets, target, mask, mn, mx);
+  const addGainPacket = (target: DamageType, mask: number, mn: number, mx: number) =>
+    addPacketTo(build.game === 'poe2' ? poe2GainPackets : packets, target, mask, mn, mx);
   for (const dt of DAMAGE_TYPES) {
     addPacket(dt, DMG_BIT[dt], baseMin[dt], baseMax[dt]);
   }
+
+  const embitterOnlyCold = skillDb.flag('DamageGainIsOnlyCold', flags, kwFlags);
 
   const applyConversionStage = (
     source: DamageType,
@@ -2585,13 +7115,32 @@ function computeGroupOffence(
   ) => {
     const srcEntries = [...packets[source].entries()];
     if (srcEntries.length === 0) return;
-    const convPcts = targets.map((t) => Math.max(0, skillDb.sum('BASE', `${convModPrefix}${t}`, flags, kwFlags)));
+    const skillConvs = targets.map((t) => Math.max(0, skillDb.sum('BASE', `Skill${convModPrefix}${t}`, flags, kwFlags)));
+    const skillConvSum = skillConvs.reduce((a, b) => a + b, 0);
+    const skillScale = skillConvSum > 100 ? 100 / skillConvSum : 1;
+    const scaledSkillConvs = skillConvs.map((v) => v * skillScale);
+    const remForDb = Math.max(0, 100 - Math.min(100, skillConvSum));
+
+    const dbConvs = targets.map((t) => Math.max(0, skillDb.sum('BASE', `${convModPrefix}${t}`, flags, kwFlags)));
+    const dbConvSum = dbConvs.reduce((a, b) => a + b, 0);
+    const dbScale = dbConvSum > remForDb && dbConvSum > 0 ? remForDb / dbConvSum : 1;
+
+    const convPcts = targets.map((_, i) => scaledSkillConvs[i]! + dbConvs[i]! * dbScale);
     const convSum = convPcts.reduce((a, b) => a + b, 0);
     const convScale = convSum > 100 ? 100 / convSum : 1;
-    const gainPcts = gainModPrefix
-      ? targets.map((t) => Math.max(0, skillDb.sum('BASE', `${gainModPrefix}${t}`, flags, kwFlags)))
+    const rawGainPcts = gainModPrefix
+      ? targets.map((t) =>
+          Math.max(
+            0,
+            skillDb.sum('BASE', `${gainModPrefix}${t}`, flags, kwFlags) +
+              skillDb.sum('BASE', `Skill${gainModPrefix}${t}`, flags, kwFlags),
+          ),
+        )
       : targets.map(() => 0);
-    const gainSum = gainPcts.reduce((a, b) => a + b, 0);
+    const gainSum = rawGainPcts.reduce((a, b) => a + b, 0);
+    const gainPcts = embitterOnlyCold
+      ? targets.map((t) => (t === 'Cold' ? gainSum : 0))
+      : rawGainPcts;
     if (convSum <= 0 && gainSum <= 0) return;
 
     const totalConvFrac = Math.min(1, (convSum * convScale) / 100);
@@ -2605,44 +7154,56 @@ function computeGroupOffence(
       targets.forEach((target, i) => {
         const cFrac = (convPcts[i]! * convScale) / 100;
         const gFrac = gainPcts[i]! / 100;
-        const totalFrac = cFrac + gFrac;
-        if (totalFrac > 0) {
-          const nextMask = build.game === 'poe1' ? mask | DMG_BIT[target] : DMG_BIT[target];
-          addPacket(target, nextMask, mn * totalFrac, mx * totalFrac);
+        const nextMask = build.game === 'poe1' ? mask | DMG_BIT[target] : DMG_BIT[target];
+        if (cFrac > 0) {
+          addPacket(target, nextMask, mn * cFrac, mx * cFrac);
+        }
+        if (gFrac > 0) {
+          addGainPacket(target, nextMask, mn * gFrac, mx * gFrac);
         }
       });
     }
   };
 
   applyConversionStage('Physical', ['Lightning', 'Cold', 'Fire', 'Chaos'], 'PhysicalDamageConvertTo', 'PhysicalDamageGainAs');
-  applyConversionStage('Lightning', ['Cold', 'Fire', 'Chaos'], 'LightningDamageConvertTo');
-  applyConversionStage('Cold', ['Fire', 'Chaos'], 'ColdDamageConvertTo');
-  applyConversionStage('Fire', ['Chaos'], 'FireDamageConvertTo');
+  applyConversionStage('Lightning', ['Cold', 'Fire', 'Chaos'], 'LightningDamageConvertTo', 'LightningDamageGainAs');
+  applyConversionStage('Cold', ['Fire', 'Chaos'], 'ColdDamageConvertTo', 'ColdDamageGainAs');
+  applyConversionStage('Fire', ['Chaos'], 'FireDamageConvertTo', 'FireDamageGainAs');
 
-  const eleExtraChaos = skillDb.sum('BASE', 'ElementalDamageGainAsChaos', flags, kwFlags);
-  if (eleExtraChaos > 0) {
-    const frac = eleExtraChaos / 100;
+  // Elemental Damage Gain as Extra Fire / Cold / Lightning / Chaos (PoE 2 RC-1: 7+ builds!)
+  for (const destType of ['Fire', 'Cold', 'Lightning', 'Chaos'] as const) {
+    const eleExtraPct = skillDb.sum('BASE', `ElementalDamageGainAs${destType}`, flags, kwFlags);
+    if (eleExtraPct <= 0) continue;
+    const frac = eleExtraPct / 100;
+    const targetType: DamageType = embitterOnlyCold ? 'Cold' : destType;
     for (const el of ['Lightning', 'Cold', 'Fire'] as const) {
       for (const [mask, [mn, mx]] of packets[el].entries()) {
-        const nextMask = build.game === 'poe1' ? mask | DMG_BIT.Chaos : DMG_BIT.Chaos;
-        addPacket('Chaos', nextMask, mn * frac, mx * frac);
+        const nextMask = build.game === 'poe1' ? mask | DMG_BIT[targetType] : DMG_BIT[targetType];
+        addGainPacket(targetType, nextMask, mn * frac, mx * frac);
       }
     }
   }
 
-  // Generic "Gain X% of Damage as Extra Fire/Cold/Lightning/Chaos Damage"
-  const genericExtraPcts = {
-    Fire: skillDb.sum('BASE', 'DamageGainAsFire', flags, kwFlags),
-    Cold: skillDb.sum('BASE', 'DamageGainAsCold', flags, kwFlags),
-    Lightning: skillDb.sum('BASE', 'DamageGainAsLightning', flags, kwFlags),
-    Chaos: skillDb.sum('BASE', 'DamageGainAsChaos', flags, kwFlags),
+  // Generic "Gain X% of Damage as Extra Physical/Fire/Cold/Lightning/Chaos/Random Element Damage" (including SkillDamageGainAs* & Embitter)
+  const randomEleExtra =
+    skillDb.sum('BASE', ['DamageGainAsRandom', 'DamageGainAsRandomElement', 'SkillDamageGainAsRandomElement'], flags, kwFlags) / 3;
+  const rawGenericExtraPcts: Record<DamageType, number> = {
+    Physical: skillDb.sum('BASE', ['DamageGainAsPhysical', 'SkillDamageGainAsPhysical'], flags, kwFlags),
+    Fire: skillDb.sum('BASE', ['DamageGainAsFire', 'SkillDamageGainAsFire'], flags, kwFlags) + randomEleExtra,
+    Cold: skillDb.sum('BASE', ['DamageGainAsCold', 'SkillDamageGainAsCold'], flags, kwFlags) + randomEleExtra,
+    Lightning: skillDb.sum('BASE', ['DamageGainAsLightning', 'SkillDamageGainAsLightning'], flags, kwFlags) + randomEleExtra,
+    Chaos: skillDb.sum('BASE', ['DamageGainAsChaos', 'SkillDamageGainAsChaos'], flags, kwFlags),
   };
-  if (
-    genericExtraPcts.Fire > 0 ||
-    genericExtraPcts.Cold > 0 ||
-    genericExtraPcts.Lightning > 0 ||
-    genericExtraPcts.Chaos > 0
-  ) {
+  const totalGenericExtraSum =
+    rawGenericExtraPcts.Physical +
+    rawGenericExtraPcts.Fire +
+    rawGenericExtraPcts.Cold +
+    rawGenericExtraPcts.Lightning +
+    rawGenericExtraPcts.Chaos;
+  const genericExtraPcts: Record<DamageType, number> = embitterOnlyCold
+    ? { Physical: 0, Fire: 0, Cold: totalGenericExtraSum, Lightning: 0, Chaos: 0 }
+    : rawGenericExtraPcts;
+  if (totalGenericExtraSum > 0) {
     let totalPreMin = 0;
     let totalPreMax = 0;
     for (const dt of DAMAGE_TYPES) {
@@ -2651,11 +7212,11 @@ function computeGroupOffence(
         totalPreMax += mx;
       }
     }
-    for (const target of ['Fire', 'Cold', 'Lightning', 'Chaos'] as const) {
+    for (const target of DAMAGE_TYPES) {
       const pct = genericExtraPcts[target];
       if (pct > 0) {
         const extraFrac = pct / 100;
-        addPacket(target, DMG_BIT[target], totalPreMin * extraFrac, totalPreMax * extraFrac);
+        addGainPacket(target, DMG_BIT[target], totalPreMin * extraFrac, totalPreMax * extraFrac);
       }
     }
   }
@@ -2678,7 +7239,7 @@ function computeGroupOffence(
       if (per100 > 0) {
         appliedPerMana100 = true;
         const extraFrac = (per100 * manaHundreds) / 100;
-        addPacket(target, DMG_BIT[target], totalPreMin * extraFrac, totalPreMax * extraFrac);
+        addGainPacket(target, DMG_BIT[target], totalPreMin * extraFrac, totalPreMax * extraFrac);
       }
     }
     const hasArchmageGainCmod = skillDb
@@ -2688,7 +7249,15 @@ function computeGroupOffence(
       const am2 = computeArchmageBonus('poe2', _defence.mana, archmageLevel);
       if (am2.gainAsExtraLightningPct > 0) {
         const extraFrac = am2.gainAsExtraLightningPct / 100;
-        addPacket('Lightning', DMG_BIT.Lightning, totalPreMin * extraFrac, totalPreMax * extraFrac);
+        addGainPacket('Lightning', DMG_BIT.Lightning, totalPreMin * extraFrac, totalPreMax * extraFrac);
+      }
+    }
+  }
+
+  if (build.game === 'poe2') {
+    for (const dt of DAMAGE_TYPES) {
+      for (const [mask, [mn, mx]] of poe2GainPackets[dt].entries()) {
+        addPacket(dt, mask, mn, mx);
       }
     }
   }
@@ -2704,30 +7273,143 @@ function computeGroupOffence(
     finalBaseAvg[dt] = (finalBaseMin[dt] + finalBaseMax[dt]) / 2;
   }
 
-  // Step C: Enemy mitigation & DamageTaken from groupEnemyDb
+  // Step C: Enemy mitigation & DamageTaken from groupEnemyDb (with Double & Triple Damage + High-Impact Mine aura)
   const ruleset = getRuleset(build.game);
-  const doubleDamagePct = Math.min(100, Math.max(0, skillDb.sum('BASE', 'DoubleDamageChance', flags, kwFlags)));
-  const doubleDamageMult = 1 + doubleDamagePct / 100;
+  let highImpactMineDd = 0;
+  if (build.game === 'poe1') {
+    const minePerDd = groupEnemyDb.sum('BASE', 'SelfDoubleDamageChance', flags, kwFlags);
+    const rawCfgMines =
+      build.config.rawInputs?.multiplierActiveMines ?? build.config.rawInputs?.activeMineCount;
+    const parsedCfgMines = rawCfgMines !== undefined ? Number(rawCfgMines) : 0;
+    if (minePerDd > 0 && Number.isFinite(parsedCfgMines) && parsedCfgMines > 0) {
+      const maxActiveMines = Math.max(1, 15 + Math.round(skillDb.sum('BASE', 'ActiveMineLimit', flags, kwFlags)));
+      const effMines = Math.min(maxActiveMines, Math.max(1, parsedCfgMines));
+      const mineAuraMult = Math.max(0, 1 + skillDb.sum('INC', ['MineAuraEffect', 'AuraEffect'], flags, kwFlags) / 100);
+      highImpactMineDd = Math.floor(minePerDd * effMines * mineAuraMult + 1e-9);
+    }
+  }
+  const doubleDamagePct = Math.min(
+    100,
+    Math.max(0, skillDb.sum('BASE', 'DoubleDamageChance', flags, kwFlags) + highImpactMineDd),
+  );
+  const hasEleSkillTriple =
+    skillDb.flag('TripleDamageElementalSkill') &&
+    ((kwFlags & (KeywordFlag.Fire | KeywordFlag.Cold | KeywordFlag.Lightning)) !== 0 ||
+      activeDef.tags.some((t) => /^(fire|cold|lightning|elemental|prismatic)$/i.test(t)));
+  const tripleDamagePct = Math.min(
+    100,
+    Math.max(0, (hasEleSkillTriple ? 100 : 0) + skillDb.sum('BASE', 'TripleDamageChance', flags, kwFlags)),
+  );
+  const effDoubleDamagePct = Math.max(0, doubleDamagePct * (1 - tripleDamagePct / 100));
+  const doubleDamageMult = 1 + effDoubleDamagePct / 100 + (2 * tripleDamagePct) / 100;
 
+  const onConsecGround = Boolean(
+    skillDb.getEvalContext().conditions.OnConsecratedGround ||
+      groupEnemyDb.getEvalContext().conditions.OnConsecratedGround ||
+      build.config.rawInputs?.conditionOnConsecratedGround ||
+      build.config.rawInputs?.conditionEnemyOnConsecratedGround,
+  );
+  const consecGroundTakenInc = onConsecGround
+    ? Math.floor(
+        groupEnemyDb.sum('INC', 'DamageTakenConsecratedGround') *
+          Math.max(0, 1 + skillDb.sum('INC', 'ConsecratedGroundEffect') / 100) +
+          1e-9,
+      )
+    : 0;
+  const yokePerAilment = skillDb.sum('BASE', 'EnemyDamageTakenPerAilmentType', flags, kwFlags);
+  let yokeTakenInc = 0;
+  if (yokePerAilment > 0) {
+    const pConds = skillDb.getEvalContext().conditions;
+    const eConds = groupEnemyDb.getEvalContext().conditions;
+    let ailmentTypes = 0;
+    for (const [pKey, eKey] of [
+      ['EnemyIgnited', 'Ignited'],
+      ['EnemyChilled', 'Chilled'],
+      ['EnemyFrozen', 'Frozen'],
+      ['EnemyShocked', 'Shocked'],
+      ['EnemyBleeding', 'Bleeding'],
+      ['EnemyPoisoned', 'Poisoned'],
+      ['EnemyScorched', 'Scorched'],
+      ['EnemyBrittle', 'Brittle'],
+      ['EnemySapped', 'Sapped'],
+    ] as const) {
+      if (pConds[pKey] || eConds[eKey]) ailmentTypes++;
+    }
+    yokeTakenInc = yokePerAilment * ailmentTypes;
+  }
   const enemyGlobalDmgTakenInc =
     groupEnemyDb.sum('INC', 'DamageTaken', flags, kwFlags) +
     ((flags & ModFlag.Projectile) !== 0 ? groupEnemyDb.sum('INC', 'ProjectileDamageTaken', flags, kwFlags) : 0) +
-    ((flags & ModFlag.Area) !== 0 ? groupEnemyDb.sum('INC', 'AreaDamageTaken', flags, kwFlags) : 0);
+    ((flags & ModFlag.Area) !== 0 ? groupEnemyDb.sum('INC', 'AreaDamageTaken', flags, kwFlags) : 0) +
+    consecGroundTakenInc +
+    yokeTakenInc;
   const enemyGlobalDmgTakenMore = groupEnemyDb.more('DamageTaken', flags, kwFlags);
-  const curseFireRes = groupEnemyDb.sum('BASE', 'FireResist', flags, kwFlags);
-  const curseColdRes = groupEnemyDb.sum('BASE', 'ColdResist', flags, kwFlags);
-  const curseLightRes = groupEnemyDb.sum('BASE', 'LightningResist', flags, kwFlags);
+  const curseEleRes = groupEnemyDb.sum('BASE', 'ElementalResist', flags, kwFlags);
+  // PoE 2 Exposure (`CalcPerform.lua:3478-3509`): collect Fire/Cold/LightningExposure from enemyDb (skills/tree),
+  // scale by ExposureEffect and boss -50% ExposureEffectOnSelf, without double-counting config exposure.
+  const resolvePoe2Exposure = (el: 'Fire' | 'Cold' | 'Lightning'): number => {
+    if (build.game !== 'poe2') return 0;
+    const rawExp = Math.max(0, groupEnemyDb.max(`${el}Exposure`) || groupEnemyDb.sum('BASE', `${el}Exposure`));
+    if (rawExp <= 0) return 0;
+    const extraExp = groupEnemyDb.sum('BASE', 'ExtraExposure') + skillDb.sum('BASE', 'ExtraExposure');
+    const expEffInc =
+      skillDb.sum('INC', ['ExposureEffect', `${el}ExposureEffect`]) +
+      groupEnemyDb.sum('INC', ['ExposureEffect', `${el}ExposureEffect`]);
+    const expOnSelfMore = groupEnemyDb.more('ExposureEffectOnSelf');
+    return Math.floor((rawExp + extraExp) * Math.max(0, 1 + expEffInc / 100) * expOnSelfMore + 1e-9);
+  };
+  const poe2FireExp = resolvePoe2Exposure('Fire');
+  const poe2ColdExp = resolvePoe2Exposure('Cold');
+  const poe2LightExp = resolvePoe2Exposure('Lightning');
+  const curseFireRes = curseEleRes + groupEnemyDb.sum('BASE', 'FireResist', flags, kwFlags) - poe2FireExp;
+  const curseColdRes = curseEleRes + groupEnemyDb.sum('BASE', 'ColdResist', flags, kwFlags) - poe2ColdExp;
+  const curseLightRes = curseEleRes + groupEnemyDb.sum('BASE', 'LightningResist', flags, kwFlags) - poe2LightExp;
   const curseChaosRes = groupEnemyDb.sum('BASE', 'ChaosResist', flags, kwFlags);
 
-  // Step D: Accuracy / Hit Chance (exact PoE 1 & PoE 2 PoB formulas)
+  // Step D: Accuracy / Hit Chance (exact PoE 1 & PoE 2 PoB formulas incl. Enemy Blind & AccuracyVsEnemy)
   let hitChance = 100;
   const cannotBeEvaded =
     skillDb.flag('HitsCantBeEvaded', flags, kwFlags) ||
     skillDb.flag('CannotBeEvaded', flags, kwFlags) ||
     Boolean(activeSkillData?.cannotBeEvaded);
   if (isAttack && !cannotBeEvaded) {
-    const accuracy = Math.max(1, skillDb.calcStat('Accuracy', flags, kwFlags).total);
-    const enemyEva = Math.max(1, build.config.enemyEvasion + groupEnemyDb.sum('BASE', 'Evasion'));
+    let accuracy = Math.max(
+      1,
+      skillDb.calcStat('Accuracy', flags, kwFlags).total * skillDb.more('AccuracyVsEnemy', flags, kwFlags),
+    );
+    // PoE 2 Accuracy distance falloff (`CalcOffence.lua:2715-2731`: AccuracyFalloffStart=20, End=90, MaxPenalty=90%)
+    if (build.game === 'poe2' && !skillDb.flag('NoAccuracyDistancePenalty', flags, kwFlags)) {
+      const rawEnemyDist = Number(
+        build.config.rawInputs?.enemyDistance ??
+          build.config.rawInputs?.projectileDistance ??
+          20,
+      );
+      const distUnits = Number.isFinite(rawEnemyDist) ? rawEnemyDist : 20;
+      const distCapped = Math.max(20, Math.min(90, distUnits));
+      if (distCapped > 20) {
+        const penMod =
+          Math.max(0, 1 + skillDb.sum('INC', 'AccuracyPenalty', flags, kwFlags) / 100) *
+          skillDb.more('AccuracyPenalty', flags, kwFlags);
+        const maxPenPct = Math.floor(90 * penMod);
+        const accPenaltyFactor = Math.max(0.05, 1 - ((distCapped - 20) / 70) * (maxPenPct / 100));
+        accuracy = Math.max(1, Math.floor(accuracy * accPenaltyFactor));
+      }
+    }
+    const enemyEvaBase = Math.max(0, build.config.enemyEvasion + groupEnemyDb.sum('BASE', 'Evasion'));
+    const enemyBlindMult =
+      build.game === 'poe1' &&
+      (build.config.enemyBlinded ||
+        groupEnemyDb.getEvalContext().conditions.Blinded ||
+        skillDb.getEvalContext().conditions.EnemyBlinded)
+        ? Math.max(0.1, 1 - 0.2 * Math.max(0, 1 + skillDb.sum('INC', 'BlindEffect') / 100))
+        : 1;
+    const enemyEva = Math.max(
+      1,
+      enemyEvaBase *
+        Math.max(0.1, 1 + groupEnemyDb.sum('INC', 'Evasion') / 100) *
+        groupEnemyDb.more('Evasion') *
+        enemyBlindMult,
+    );
     const rawHitChance =
       build.game === 'poe2'
         ? ((accuracy * 1.25) / (accuracy + enemyEva * 0.3)) * 100
@@ -2735,39 +7417,179 @@ function computeGroupOffence(
     hitChance = Math.min(100, Math.max(5, Math.round(rawHitChance)));
   }
 
+  // Precise Technique & Point Blank (PoE 1)
+  if (build.game === 'poe1' && isAttack) {
+    const ptMorePct = skillDb.sum('BASE', 'PreciseTechniqueMorePct', flags, kwFlags);
+    if (ptMorePct > 0) {
+      const accCheck = skillDb.calcStat('Accuracy', flags, kwFlags).total;
+      if (accCheck > _defence.life) {
+        skillDb.addMod({
+          name: 'Damage',
+          type: 'MORE',
+          value: ptMorePct,
+          flags: ModFlag.Attack,
+          keywordFlags: 0,
+          source: 'Precise Technique',
+        });
+      }
+    }
+    if (skillDb.flag('FarShot', flags, kwFlags) && (flags & ModFlag.Projectile) !== 0) {
+      const projDist = Number(build.config.rawInputs?.projectileDistance ?? 0);
+      if (projDist > 0) {
+        let fsMore = 0;
+        if (projDist <= 10) fsMore = -20;
+        else if (projDist <= 35) fsMore = -20 * (1 - (projDist - 10) / 25);
+        else fsMore = 30 * Math.min(1, (projDist - 35) / 35);
+        if (fsMore !== 0) {
+          skillDb.addMod({
+            name: 'Damage',
+            type: 'MORE',
+            value: Math.round(fsMore * 100) / 100,
+            flags: ModFlag.Attack | ModFlag.Hit | ModFlag.Projectile,
+            keywordFlags: 0,
+            source: 'Far Shot',
+          });
+        }
+      }
+    }
+    if (skillDb.flag('PointBlank', flags, kwFlags) && (flags & ModFlag.Projectile) !== 0) {
+      const projDist = Number(build.config.rawInputs?.projectileDistance ?? 0);
+      if (projDist > 0) {
+        let pbMore = 0;
+        if (projDist <= 10) pbMore = 30;
+        else if (projDist <= 35) pbMore = 30 * (1 - (projDist - 10) / 25);
+        else pbMore = -30 * Math.min(1, (projDist - 35) / 115);
+        if (pbMore !== 0) {
+          skillDb.addMod({
+            name: 'Damage',
+            type: 'MORE',
+            value: pbMore,
+            flags: ModFlag.Attack | ModFlag.Hit | ModFlag.Projectile,
+            keywordFlags: 0,
+            source: 'Point Blank',
+          });
+        }
+      }
+    }
+  } else if (
+    build.game === 'poe2' &&
+    isAttack &&
+    (flags & ModFlag.Projectile) !== 0 &&
+    skillDb.flag('PointBlank', flags, kwFlags)
+  ) {
+    // PoE 2 Point Blank (`Tree:41875` / Deadeye): up to 20% MORE within 3.5m (35 units), scaling to 0% at 7m (70 units)
+    // Skip if already injected via `modParserPoe2` DistanceRamp rule so it never double-counts.
+    const alreadyHasPbRamp = skillDb
+      .calcStat('Damage', flags, kwFlags)
+      .sources.some((s) => s.type === 'MORE' && s.source.toLowerCase().includes('point blank'));
+    if (!alreadyHasPbRamp) {
+      const dist = Number(
+        build.config.rawInputs?.enemyDistance ?? build.config.rawInputs?.projectileDistance ?? 20,
+      );
+      const d = Number.isFinite(dist) ? dist : 20;
+      const pbMore = d <= 35 ? 20 : d >= 70 ? 0 : 20 * (1 - (d - 35) / 35);
+      if (pbMore > 0) {
+        skillDb.addMod({
+          name: 'Damage',
+          type: 'MORE',
+          value: Math.round(pbMore * 100) / 100,
+          flags: ModFlag.Attack | ModFlag.Hit | ModFlag.Projectile,
+          keywordFlags: 0,
+          source: 'Point Blank',
+        });
+      }
+    }
+  }
+
   // Step E: Crit Chance & Crit Multiplier (PoE 1 additive CritMulti vs PoE 2 scaled CritDamageBonus + Lucky/Bifurcated)
   const neverCrit = skillDb.flag('NeverCrit', flags, kwFlags);
+  const isPoe1PerfectAgony = build.game === 'poe1' && skillDb.flag('PerfectAgony', flags, kwFlags);
   const noCritExtra =
-    skillDb.flag('NoCritExtraDamage', flags, kwFlags) || skillDb.flag('NoExtraDamageFromCrits', flags, kwFlags);
+    skillDb.flag('NoCritExtraDamage', flags, kwFlags) ||
+    skillDb.flag('NoExtraDamageFromCrits', flags, kwFlags) ||
+    skillDb.flag('ElementalOverload', flags, kwFlags) ||
+    isPoe1PerfectAgony;
+  const hasDiamondShrine = skillDb.flag('DiamondShrineCrit');
   const enemyCritBonus = groupEnemyDb.sum('BASE', 'SelfCritChance', flags, kwFlags);
-  const flatBaseCrit = skillDb.sum('BASE', ['BaseCritChance', 'CritChance'], flags, kwFlags);
+  let flatBaseCrit = skillDb.sum('BASE', ['BaseCritChance', 'CritChance'], flags, kwFlags);
   const enemyCritMulti = groupEnemyDb.sum('BASE', 'SelfCritMultiplier', flags, kwFlags);
   const weaponCritOverride = skillDb.override('WeaponBaseCritChance', flags, kwFlags);
-  const spellCritOverride =
+  let spellCritOverride =
     skillDb.override('SpellBaseCritOverride', flags, kwFlags) ??
     (skillDb.sum('BASE', 'SpellBaseCritOverride', flags, kwFlags) || null);
+  // PoE 1 Sandstorm Visage: Base Spell Critical Strike Chance is equal to Main Hand Weapon Crit Chance
+  if (
+    build.game === 'poe1' &&
+    !isAttack &&
+    skillDb.flag('SpellCritChanceFromMainHandWeapon', flags, kwFlags) &&
+    mainWeaponStats &&
+    mainWeaponStats.critChance > 0
+  ) {
+    spellCritOverride = mainWeaponStats.critChance;
+  }
+  // PoE 1 Seething Fury: +OffHandBaseCritPer10ShieldEs & +OffHandCritMultiPer10ShieldEs on off-hand shield attacks
+  let seethingFuryCritMulti = 0;
+  if (build.game === 'poe1' && isShieldOffHandAttack) {
+    const shieldEsVal = skillDb.getEvalContext().stats.ShieldES ?? 0;
+    const shieldEs10 = Math.floor(shieldEsVal / 10);
+    if (shieldEs10 > 0) {
+      const sfCritPer10 = skillDb.sum('BASE', 'OffHandBaseCritPer10ShieldEs', flags, kwFlags);
+      const sfMultiPer10 = skillDb.sum('BASE', 'OffHandCritMultiPer10ShieldEs', flags, kwFlags);
+      if (sfCritPer10 > 0) flatBaseCrit += shieldEs10 * sfCritPer10;
+      if (sfMultiPer10 > 0) seethingFuryCritMulti = shieldEs10 * sfMultiPer10;
+    }
+  }
+  const sdataBaseCrit =
+    typeof activeSkillData?.CritChance === 'number' && activeSkillData.CritChance > 0
+      ? activeSkillData.CritChance
+      : undefined;
   const rawWeaponBaseCrit =
     offHandSetMin !== undefined
-      ? (activeDef.baseCritChance ?? 5)
+      ? (sdataBaseCrit ?? activeDef.baseCritChance ?? 5)
       : isUnarmedConcoction
-        ? (activeDef.baseCritChance ?? 0)
+        ? (sdataBaseCrit ?? activeDef.baseCritChance ?? 0)
         : isDualWield && mainWeaponStats && offWeaponStats
           ? (mainWeaponStats.critChance + offWeaponStats.critChance) / 2
-          : (weaponStats?.critChance ?? activeDef.baseCritChance ?? 5);
+          : (weaponStats?.critChance ?? sdataBaseCrit ?? activeDef.baseCritChance ?? 5);
   const weaponBaseCrit = weaponCritOverride !== null ? weaponCritOverride : rawWeaponBaseCrit;
   const resolvedSkillBaseCrit = !isAttack && spellCritOverride !== null
     ? spellCritOverride
     : isAttack
       ? weaponBaseCrit
-      : (activeDef.baseCritChance ?? 6);
+      : (sdataBaseCrit ?? activeDef.baseCritChance ?? 6);
   const baseCrit = resolvedSkillBaseCrit + enemyCritBonus + flatBaseCrit;
+  // PoE 2 Inexorable Critical I / II (`SecondsSinceInevitableCrit` default 10s + `InevitableCritCap` / `InevitableCritMultCap` clamping)
+  if (build.game === 'poe2') {
+    const inevCritCap = skillDb.sum('BASE', 'Multiplier:InevitableCritCap', flags, kwFlags);
+    if (inevCritCap > 0) {
+      const inevMultCap = skillDb.sum('BASE', 'Multiplier:InevitableCritMultCap', flags, kwFlags);
+      const rawInevSecs =
+        typeof build.config.rawInputs?.SecondsSinceInevitableCrit === 'number'
+          ? build.config.rawInputs.SecondsSinceInevitableCrit
+          : 10;
+      const satSecs = inevMultCap < 0 ? 5 : 10;
+      const clampedSecs = Math.max(0, Math.min(rawInevSecs, satSecs));
+      skillDb.setMultiplier('SecondsSinceInevitableCrit', clampedSecs);
+      if (rawInevSecs < 4) {
+        skillDb.setCondition('CritRecently', true);
+        skillDb.setCondition('SkillCritRecently', true);
+      }
+    }
+  }
   const critInc = skillDb.sum('INC', 'CritChance', flags, kwFlags);
   const critMore = skillDb.more('CritChance', flags, kwFlags);
   const hasGarukhansResolve = linkedSupportNames.has("garukhan's resolve");
+  const hasBifurcatedCrit = hasGarukhansResolve || skillDb.flag('BifurcateCrit', flags, kwFlags);
+  const critChanceCapOverride =
+    skillDb.override('CritChanceCap', flags, kwFlags) ??
+    (hasGarukhansResolve ? 50 : null);
+  const effLowLife = Boolean(skillDb.getEvalContext().conditions.LowLife);
+  const effFullLife = Boolean(skillDb.getEvalContext().conditions.FullLife);
 
   let critChance: number;
   let critMultiplier: number;
   let effectiveCritMultiplier: number;
+  let rawPoe1CritMulti = 150;
 
   if (build.game === 'poe2') {
     const flatCritBonus = skillDb.sum('BASE', 'CritDamageBonusFlat', flags, kwFlags);
@@ -2776,40 +7598,106 @@ function computeGroupOffence(
       skillDb.sum('INC', 'CritDamageBonusInc', flags, kwFlags) +
       skillDb.sum('INC', 'CritMultiplier', flags, kwFlags);
     const paLowLifeMore =
-      build.config.conditionLowLife ? skillDb.sum('BASE', 'CritDamageBonusLowLifeMore', flags, kwFlags) : 0;
+      effLowLife ? skillDb.sum('BASE', 'CritDamageBonusLowLifeMore', flags, kwFlags) : 0;
     const paFullLifeMore =
-      !build.config.conditionLowLife ? skillDb.sum('BASE', 'CritDamageBonusFullLifeMore', flags, kwFlags) : 0;
+      effFullLife ? skillDb.sum('BASE', 'CritDamageBonusFullLifeMore', flags, kwFlags) : 0;
     const moreCritBonusMult =
       skillDb.more('CritDamageBonusInc', flags, kwFlags) *
+      skillDb.more('CritMultiplier', flags, kwFlags) *
       (1 + paLowLifeMore / 100) *
       (1 + paFullLifeMore / 100);
+    const overridePoe2Bonus = skillDb.override('CritDamageBonusOverride', flags, kwFlags);
+    const hasInevitable = skillDb.flag('InevitableCriticalHits', flags, kwFlags);
     const poe2Crit = computePoe2CritMultiplier({
-      baseCritChance: baseCrit,
+      baseCritChance: hasDiamondShrine ? 100 : baseCrit,
       incCritChancePct: critInc,
       moreCritChanceMult: critMore,
+      ...(critChanceCapOverride !== null ? { critChanceCap: critChanceCapOverride } : {}),
+      ...(isAttack ? { accuracyHitChancePct: hitChance } : {}),
       flatBonusPct: flatCritBonus,
       incBonusPct: incCritBonus,
       moreBonusMult: moreCritBonusMult,
+      ...(overridePoe2Bonus !== null ? { overrideBonusPct: overridePoe2Bonus } : {}),
       enemyExtraCritFlatPct: enemyCritMulti,
-      luckyCrit: hasGarukhansResolve || skillDb.flag('CritChanceIsLucky', flags, kwFlags),
-      bifurcatedCrit: hasGarukhansResolve,
+      luckyCrit:
+        skillDb.flag('CritChanceIsLucky', flags, kwFlags) ||
+        skillDb.flag('CritChanceLucky', flags, kwFlags),
+      bifurcatedCrit: hasBifurcatedCrit,
+      inevitableCrits: hasInevitable,
       neverCrit,
       noCritMultiplier: noCritExtra,
     });
-    critChance = Math.round(poe2Crit.effectiveCritChance * (isAttack ? hitChance / 100 : 1) * 100) / 100;
+    const effPoe2Crit =
+      (hasDiamondShrine || (hasInevitable && poe2Crit.effectiveCritChance > 0)) && !neverCrit
+        ? 100
+        : poe2Crit.effectiveCritChance;
+    critChance = hasInevitable && effPoe2Crit >= 100
+      ? 100
+      : Math.round(effPoe2Crit * 100) / 100;
     critMultiplier = neverCrit ? 0 : Math.round(poe2Crit.critMultiplierPct);
     effectiveCritMultiplier =
       neverCrit || noCritExtra ? 1 : 1 + (critChance / 100) * Math.max(0, poe2Crit.critMultiplierPct / 100 - 1);
   } else {
-    const preEffectiveCrit = neverCrit ? 0 : Math.min(100, baseCrit * (1 + critInc / 100) * critMore);
-    critChance = Math.round(preEffectiveCrit * (isAttack ? hitChance / 100 : 1) * 100) / 100;
+    const preLuckyCrit = neverCrit
+      ? 0
+      : hasDiamondShrine
+        ? 100
+        : Math.min(100, baseCrit * (1 + critInc / 100) * critMore);
+    const isLuckyCrit =
+      skillDb.flag('CritChanceIsLucky', flags, kwFlags) ||
+      skillDb.flag('CritChanceLucky', flags, kwFlags);
+    const preBifurcateCrit =
+      isLuckyCrit && !neverCrit && !hasDiamondShrine
+        ? (1 - Math.pow(1 - preLuckyCrit / 100, 2)) * 100
+        : preLuckyCrit;
+    let postUseCrit =
+      hasBifurcatedCrit && !neverCrit && !hasDiamondShrine
+        ? (1 - Math.pow(1 - preBifurcateCrit / 100, 2)) * 100
+        : preBifurcateCrit;
+    if (!neverCrit && !hasDiamondShrine) {
+      if (skillDb.flag('Every3UseCrit', flags, kwFlags)) {
+        postUseCrit = (2 * postUseCrit + 100) / 3;
+      }
+      if (skillDb.flag('Every5UseCrit', flags, kwFlags)) {
+        postUseCrit = (4 * postUseCrit + 100) / 5;
+      }
+      if (skillDb.flag('Every6UseCrit', flags, kwFlags)) {
+        postUseCrit = (5 * postUseCrit + 100) / 6;
+      }
+    }
+    const postBifurcateCrit = postUseCrit;
+    critChance = Math.round(postBifurcateCrit * (isAttack ? hitChance / 100 : 1) * 100) / 100;
+    const overridePoe1Multi = skillDb.override('CritMultiplierOverride', flags, kwFlags);
+    const enemyCritMultiInc = 1 + groupEnemyDb.sum('INC', 'SelfCritMultiplier', flags, kwFlags) / 100;
+    const baseExtraCritPct =
+      overridePoe1Multi !== null
+        ? Math.max(0, overridePoe1Multi - 100)
+        : Math.max(0, (skillDb.sum('BASE', 'CritMultiplier', flags, kwFlags) + seethingFuryCritMulti - 100 + enemyCritMulti) * enemyCritMultiInc);
+    rawPoe1CritMulti = Math.round(100 + baseExtraCritPct);
+    let effPoe1CritMulti = rawPoe1CritMulti;
+    if (hasBifurcatedCrit && !neverCrit && !noCritExtra && !hasDiamondShrine && postBifurcateCrit > 0) {
+      // PoB1 CalcOffence.lua:3265-3302 (Assassin Spell Critical Strike Chance Bifurcates)
+      const bifurcateMultiChance = (preBifurcateCrit * preBifurcateCrit) / 100;
+      const conditionalBifurcateChance = Math.min(1, bifurcateMultiChance / postBifurcateCrit);
+      effPoe1CritMulti = Math.round(100 + baseExtraCritPct * (1 + conditionalBifurcateChance));
+    }
     critMultiplier = neverCrit
       ? 0
       : noCritExtra
         ? 100
-        : Math.round(skillDb.sum('BASE', 'CritMultiplier', flags, kwFlags) + enemyCritMulti);
+        : effPoe1CritMulti;
     effectiveCritMultiplier =
       neverCrit || noCritExtra ? 1 : 1 + (critChance / 100) * Math.max(0, critMultiplier / 100 - 1);
+  }
+  if (
+    specialSkillDmg.canHit &&
+    !neverCrit &&
+    critChance > 0 &&
+    (build.game === 'poe1'
+      ? build.config.rawInputs?.conditionCritInPast8Sec !== false
+      : build.config.rawInputs?.conditionCritInPast8Sec === true)
+  ) {
+    skillDb.setCondition('CritInPast8Sec', true);
   }
 
   const damageByType: Record<DamageType, DamageRange> = { ...emptyRanges };
@@ -2830,6 +7718,8 @@ function computeGroupOffence(
   const dealNoNonFire = skillDb.flag('DealNoNonFire', flags, kwFlags);
   const globalMinMore = skillDb.more('MinDamage', flags, kwFlags);
   const globalMaxMore = skillDb.more('MaxDamage', flags, kwFlags);
+  const hasLuckyHits = skillDb.flag('LuckyHits', flags, kwFlags);
+  const hasLightningNoCritLucky = skillDb.flag('LightningNoCritLucky', flags, kwFlags);
   let totalAvgHit = 0;
 
   for (const dt of DAMAGE_TYPES) {
@@ -2848,8 +7738,10 @@ function computeGroupOffence(
     }
     let rawMin = 0;
     let rawMax = 0;
-    const typeMinMore = globalMinMore * skillDb.more(`${dt}MinDamage`, flags, kwFlags);
-    const typeMaxMore = globalMaxMore * skillDb.more(`${dt}MaxDamage`, flags, kwFlags);
+    const typeMinMore =
+      globalMinMore * skillDb.more([`${dt}MinDamage`, `Min${dt}Damage`], flags, kwFlags);
+    const typeMaxMore =
+      globalMaxMore * skillDb.more([`${dt}MaxDamage`, `Max${dt}Damage`], flags, kwFlags);
     for (const [mask, [pMin, pMax]] of packets[dt].entries()) {
       const statNames: string[] = ['Damage'];
       if ((mask & ELE_MASK) !== 0) statNames.push('ElementalDamage');
@@ -2864,32 +7756,62 @@ function computeGroupOffence(
       rawMin += pMin * mult * typeMinMore;
       rawMax += pMax * mult * typeMaxMore;
     }
-    const rawAvg = (rawMin + rawMax) / 2;
+    const typeLuckyChance = hasLuckyHits
+      ? 1
+      : Math.min(
+          1,
+          Math.max(
+            0,
+            skillDb.sum('BASE', ['LuckyHitsChance', `${dt}LuckyHitsChance`], flags, kwFlags) / 100,
+          ),
+        );
+    const rawAvg =
+      typeLuckyChance > 0
+        ? typeLuckyChance * ((rawMin + 2 * rawMax) / 3) + (1 - typeLuckyChance) * ((rawMin + rawMax) / 2)
+        : (rawMin + rawMax) / 2;
     preMitigationHitByType[dt] = rawAvg * effectiveCritMultiplier * doubleDamageMult;
 
-    // Enemy mitigation (Resistances + Curses + Penetration; separate Non-Crit & Crit Enemy Armour PDR)
+    // Enemy mitigation (Resistances + Curses + Penetration; separate Non-Crit & Crit Enemy Armour PDR + Negative PDR)
     let enemyFactor = 1;
     let typeDmgTakenInc = enemyGlobalDmgTakenInc;
     let typeDmgTakenMore = enemyGlobalDmgTakenMore;
     if (dt === 'Physical') {
       typeDmgTakenInc += groupEnemyDb.sum('INC', 'PhysicalDamageTaken', flags, kwFlags);
       typeDmgTakenMore *= groupEnemyDb.more('PhysicalDamageTaken', flags, kwFlags);
-      const eArm = Math.max(
-        0,
-        (build.config.enemyArmour + groupEnemyDb.sum('BASE', 'Armour')) *
-          Math.max(0, 1 + groupEnemyDb.sum('INC', 'Armour') / 100) *
-          groupEnemyDb.more('Armour'),
-      );
-      if (eArm > 0 && rawAvg > 0) {
-        const pdrCap = 0.75;
-        const pdrNonCrit = Math.min(pdrCap, eArm / (eArm + ruleset.armourFormulaFactor * rawAvg * doubleDamageMult));
+      const poe2ArmourBroken =
+        build.game === 'poe2' &&
+        Boolean(
+          build.config.rawInputs?.conditionEnemyArmourBroken ||
+            build.config.rawInputs?.enemyIsArmourBroken ||
+            groupEnemyDb.getEvalContext().conditions.ArmourBroken ||
+            skillDb.getEvalContext().conditions.EnemyArmourBroken,
+        );
+      if (poe2ArmourBroken) {
+        // PoE 2 Fully Broken Armour (`CalcSetup.lua`): Enemy Armour = 0 AND +20% increased Physical Damage Taken!
+        typeDmgTakenInc += 20;
+      }
+      const eArm = poe2ArmourBroken
+        ? 0
+        : Math.max(
+            0,
+            (build.config.enemyArmour + groupEnemyDb.sum('BASE', 'Armour')) *
+              Math.max(0, 1 + groupEnemyDb.sum('INC', 'Armour') / 100) *
+              groupEnemyDb.more('Armour'),
+          );
+      const baseEnemyPdr =
+        (groupEnemyDb.sum('BASE', 'PhysicalDamageReduction', flags, kwFlags) +
+          skillDb.sum('BASE', 'EnemyPhysicalDamageReduction', flags, kwFlags)) /
+        100;
+      const pdrFloor = build.game === 'poe2' ? -1.0 : -0.75;
+      const pdrCap = 0.75;
+      if ((eArm > 0 || baseEnemyPdr !== 0) && rawAvg > 0) {
+        const armPdrNonCrit = eArm > 0 ? eArm / (eArm + ruleset.armourFormulaFactor * rawAvg * doubleDamageMult) : 0;
+        const pdrNonCrit = Math.max(pdrFloor, Math.min(pdrCap, armPdrNonCrit + baseEnemyPdr));
         const critFactor = neverCrit || noCritExtra ? 1 : Math.max(1, critMultiplier / 100);
         const critFrac = neverCrit || noCritExtra ? 0 : critChance / 100;
-        if (critFrac > 0 && critFactor > 1) {
-          const pdrCrit = Math.min(
-            pdrCap,
-            eArm / (eArm + ruleset.armourFormulaFactor * rawAvg * doubleDamageMult * critFactor),
-          );
+        if (eArm > 0 && critFrac > 0 && critFactor > 1) {
+          const armPdrCrit = eArm / (eArm + ruleset.armourFormulaFactor * rawAvg * doubleDamageMult * critFactor);
+          const pdrCrit = Math.max(pdrFloor, Math.min(pdrCap, armPdrCrit + baseEnemyPdr));
           const weightedPhys = (1 - critFrac) * (1 - pdrNonCrit) + critFrac * critFactor * (1 - pdrCrit);
           enemyFactor = weightedPhys / effectiveCritMultiplier;
         } else {
@@ -2899,35 +7821,79 @@ function computeGroupOffence(
     } else if (dt === 'Fire' || dt === 'Cold' || dt === 'Lightning') {
       typeDmgTakenInc += groupEnemyDb.sum('INC', ['ElementalDamageTaken', `${dt}DamageTaken`], flags, kwFlags);
       typeDmgTakenMore *= groupEnemyDb.more(['ElementalDamageTaken', `${dt}DamageTaken`], flags, kwFlags);
-      const hasRakiata = linkedSupportNames.has("rakiata's flow") || linkedSupportNames.has('rakiatas flow');
+      const hasRakiata =
+        linkedSupportNames.has("rakiata's flow") ||
+        linkedSupportNames.has('rakiatas flow') ||
+        skillDb.flag('InvertEnemyEleRes', flags, kwFlags);
+      const invertEleResChance = hasRakiata
+        ? 1
+        : Math.min(
+            1,
+            Math.max(
+              0,
+              (skillDb.sum(
+                'BASE',
+                ['InvertEleResChance', 'HitsInvertEleResChance', 'InvertEnemyEleResChance'],
+                flags,
+                kwFlags,
+              ) +
+                skillDb.sum('BASE', [`Invert${dt}ResChance`, `HitsInvert${dt}ResChance`], flags, kwFlags)) /
+                100,
+            ),
+          );
       const allEnemyEle = {
         Fire: build.config.enemyFireResist + curseFireRes,
         Cold: build.config.enemyColdResist + curseColdRes,
-        Lightning: build.config.enemyLightningResist + curseLightRes,
+        Lightning:
+          postUniqueRes?.enemyLightningResistOverride !== null &&
+          postUniqueRes?.enemyLightningResistOverride !== undefined
+            ? postUniqueRes.enemyLightningResistOverride
+            : build.config.enemyLightningResist + curseLightRes,
       };
       const baseEnemyRes = allEnemyEle[dt];
       const pen =
         skillDb.sum('BASE', `${dt}Penetration`, flags, kwFlags) +
         skillDb.sum('BASE', 'ElementalPenetration', flags, kwFlags);
+      const poe2MinPen =
+        build.game === 'poe2'
+          ? (skillDb.override('ElementalPenetrationMinimum', flags, kwFlags) ?? 0)
+          : undefined;
       const critIgnoresEleRes =
         skillDb.flag('CritIgnoresEleRes', flags, kwFlags) ||
         skillDb.flag(`CritIgnores${dt}Res`, flags, kwFlags);
+      const critIgnoresNonNegEleRes = skillDb.flag('CritIgnoresNonNegativeEleRes', flags, kwFlags);
+      const hitsIgnoreNonNegEleRes =
+        skillDb.flag('HitsIgnoreNonNegativeEleResFrozen', flags, kwFlags) &&
+        Boolean(build.config.rawInputs?.conditionFrozen || skillDb.getEvalContext().conditions.Frozen);
+      const effBaseEnemyRes = hitsIgnoreNonNegEleRes ? Math.min(0, baseEnemyRes) : baseEnemyRes;
       const nonCritElePen = skillDb.sum('BASE', 'NonCritElePen', flags, kwFlags);
-      if (hasRakiata || uniqueGearResult?.enemyResistLowestElement) {
-        const resEval = computeEffectiveEnemyResistance(baseEnemyRes, {
+      if (hasRakiata || invertEleResChance > 0 || uniqueGearResult?.enemyResistLowestElement) {
+        const resEval = computeEffectiveEnemyResistance(effBaseEnemyRes, {
           element: dt,
           allElementalResists: allEnemyEle,
           penetrationPct: pen,
+          ...(poe2MinPen !== undefined ? { minPenRes: poe2MinPen } : {}),
           invertEnemyEleRes: hasRakiata,
+          invertChance: invertEleResChance,
           useLowestEleRes: Boolean(uniqueGearResult?.enemyResistLowestElement),
-          ignoreOnCrit: critIgnoresEleRes,
+          ignoreOnCrit: critIgnoresEleRes || (critIgnoresNonNegEleRes && effBaseEnemyRes > 0),
           critChancePct: neverCrit || noCritExtra ? 0 : critChance,
         });
         enemyFactor = resEval.damageMult;
       } else {
-        const nonCritRes = Math.min(75, baseEnemyRes) - pen - nonCritElePen;
-        const critRes = critIgnoresEleRes ? 0 : Math.min(75, baseEnemyRes) - pen;
-        if (critIgnoresEleRes || nonCritElePen !== 0) {
+        const minPenFloor = poe2MinPen ?? 0;
+        const nonCritRes =
+          build.game === 'poe2'
+            ? (effBaseEnemyRes > minPenFloor ? Math.max(minPenFloor, Math.min(75, effBaseEnemyRes) - pen - nonCritElePen) : effBaseEnemyRes)
+            : Math.min(75, effBaseEnemyRes) - pen - nonCritElePen;
+        const critRes = critIgnoresEleRes
+          ? 0
+          : critIgnoresNonNegEleRes
+            ? Math.min(0, effBaseEnemyRes)
+            : build.game === 'poe2'
+              ? (effBaseEnemyRes > minPenFloor ? Math.max(minPenFloor, Math.min(75, effBaseEnemyRes) - pen) : effBaseEnemyRes)
+              : Math.min(75, effBaseEnemyRes) - pen;
+        if (critIgnoresEleRes || critIgnoresNonNegEleRes || nonCritElePen !== 0) {
           const critFactor = neverCrit || noCritExtra ? 1 : Math.max(1, critMultiplier / 100);
           const critFrac = neverCrit || noCritExtra ? 0 : critChance / 100;
           const nonCritMult = Math.max(0.05, 1 - nonCritRes / 100);
@@ -2937,19 +7903,49 @@ function computeGroupOffence(
           enemyFactor = 1 - nonCritRes / 100;
         }
       }
+      const ignoreEleResChance = Math.min(
+        1,
+        Math.max(0, skillDb.sum('BASE', `ChanceToIgnore${dt}Resistance`, flags, kwFlags) / 100),
+      );
+      if (ignoreEleResChance > 0) {
+        enemyFactor = (1 - ignoreEleResChance) * enemyFactor + ignoreEleResChance;
+      }
     } else if (dt === 'Chaos') {
       typeDmgTakenInc += groupEnemyDb.sum('INC', 'ChaosDamageTaken', flags, kwFlags);
       typeDmgTakenMore *= groupEnemyDb.more('ChaosDamageTaken', flags, kwFlags);
       const chaosPen = skillDb.sum('BASE', 'ChaosPenetration', flags, kwFlags);
-      const effRes = Math.min(75, build.config.enemyChaosResist + curseChaosRes) - chaosPen;
+      const baseChaosEnemyRes =
+        preUniqueRes?.enemyChaosResistOverride !== null &&
+        preUniqueRes?.enemyChaosResistOverride !== undefined
+          ? preUniqueRes.enemyChaosResistOverride
+          : Math.min(75, build.config.enemyChaosResist + curseChaosRes);
+      const effRes = baseChaosEnemyRes - chaosPen;
       enemyFactor = 1 - effRes / 100;
+      const ignoreChaosResChance = Math.min(
+        1,
+        Math.max(0, skillDb.sum('BASE', 'ChanceToIgnoreChaosResistance', flags, kwFlags) / 100),
+      );
+      if (ignoreChaosResChance > 0) {
+        enemyFactor = (1 - ignoreChaosResChance) * enemyFactor + ignoreChaosResChance;
+      }
     }
 
     const finalMult =
       Math.max(0.05, enemyFactor) * Math.max(0, 1 + typeDmgTakenInc / 100) * typeDmgTakenMore;
     const min = rawMin * finalMult;
     const max = rawMax * finalMult;
-    const average = (min + max) / 2;
+    let average: number;
+    if (typeLuckyChance > 0) {
+      average = typeLuckyChance * ((min + 2 * max) / 3) + (1 - typeLuckyChance) * ((min + max) / 2);
+    } else if (dt === 'Lightning' && hasLightningNoCritLucky) {
+      const critFrac = neverCrit || noCritExtra ? 0 : critChance / 100;
+      const noCritShare = effectiveCritMultiplier > 0 ? (1 - critFrac) / effectiveCritMultiplier : 1;
+      const luckyAvg = (min + 2 * max) / 3;
+      const normalAvg = (min + max) / 2;
+      average = noCritShare * luckyAvg + (1 - noCritShare) * normalAvg;
+    } else {
+      average = (min + max) / 2;
+    }
     damageByType[dt] = { min: Math.round(min), max: Math.round(max), average: Math.round(average * 100) / 100 };
     totalAvgHit += average;
   }
@@ -2963,35 +7959,241 @@ function computeGroupOffence(
     effectiveSkillTypeSet.has('mine') ||
     effectiveSkillTypeSet.has('remotemined') ||
     activeDef.tags.some((t) => t.toLowerCase() === 'mine');
+  // PoE 2 Unarmed / Concoction base attack rate is 1.65 (Data/Misc.lua; Concoctions apply -15% -> 1.4025)
   const weaponBaseAps =
-    isDualWield && mainWeaponStats && offWeaponStats
-      ? 2 / (1 / Math.max(0.1, mainWeaponStats.attacksPerSecond) + 1 / Math.max(0.1, offWeaponStats.attacksPerSecond))
-      : (weaponStats?.attacksPerSecond ?? 1.2);
+    build.game === 'poe2' && isUnarmedConcoction
+      ? 1.65
+      : isDualWield && mainWeaponStats && offWeaponStats
+        ? 2 / (1 / Math.max(0.1, mainWeaponStats.attacksPerSecond) + 1 / Math.max(0.1, offWeaponStats.attacksPerSecond))
+        : (weaponStats?.attacksPerSecond ?? (build.game === 'poe2' ? 1.65 : 1.2));
   const skillFixedAttackTimeMs =
-    typeof activeSkillData?.attackTime === 'number' && activeSkillData.attackTime > 0
+    offHandAttackTimeMs ??
+    (typeof activeSkillData?.attackTime === 'number' && activeSkillData.attackTime > 0
       ? activeSkillData.attackTime
+      : undefined);
+  const sdataAtkSpeedMult =
+    activeDef.attackSpeedMultiplier === undefined && typeof activeSkillData?.attackSpeedMultiplier === 'number'
+      ? Math.max(0.05, 1 + activeSkillData.attackSpeedMultiplier / 100)
       : undefined;
-  const baseRate = isMineSkill
-    ? 1 / 0.3
-    : isTrapSkill
-      ? 1 / 0.6
-      : isAttack
-        ? skillFixedAttackTimeMs !== undefined
-          ? (1000 / skillFixedAttackTimeMs) * (activeDef.attackSpeedMultiplier ?? 1)
-          : weaponBaseAps * (activeDef.attackSpeedMultiplier ?? 1)
-        : 1 / (activeDef.castTime ?? 0.75);
-  const speedInc = skillDb.sum('INC', 'Speed', flags, kwFlags) + specialSkillDmg.hitRateIncPct;
-  const isPoe2Flicker = build.game === 'poe2' && activeDef.name.en.trim().toLowerCase() === 'flicker strike';
+  const resolvedAtkSpeedMult =
+    (usePartOverride ? resolvedPartStats?.attackSpeedMultiplier : undefined) ??
+    activeDef.attackSpeedMultiplier ??
+    sdataAtkSpeedMult ??
+    1;
+  // PoE 2 Barrage Repeats buff (`CalcOffence.lua:1114-1127`)
+  if (
+    build.game === 'poe2' &&
+    effectiveSkillTypeSet.has('barrageable') &&
+    !skillDb.flag('OneShotProj', flags, kwFlags) &&
+    !skillDb.flag('NoAdditionalProjectiles', flags, kwFlags)
+  ) {
+    let barrageGemQual: number | undefined;
+    for (const grp of build.skills) {
+      if (!grp.enabled) continue;
+      for (const gm of grp.gems) {
+        if (!gm.enabled) continue;
+        const gd = getGemById('poe2', gm.gemId);
+        if (gd && gd.id === 'poe2_barrage') {
+          barrageGemQual = gm.quality ?? 0;
+          break;
+        }
+      }
+      if (barrageGemQual !== undefined) break;
+    }
+    if (barrageGemQual !== undefined) {
+      const removableFrenzy = skillDb.flag('CannotConsumeCharges', flags, kwFlags)
+        ? 0
+        : (skillDb.getEvalContext().multipliers.RemovableFrenzyCharge ?? 0);
+      const barrageRepeats = 2 + Math.max(0, removableFrenzy);
+      const repeatDmgMod = 0.5 + Math.trunc(Math.max(0, barrageGemQual) * 0.25) / 100;
+      const dpsMulti = (1 + barrageRepeats) * repeatDmgMod;
+      if (dpsMulti > 0) {
+        skillDb.addMod({
+          name: 'DPS',
+          type: 'MORE',
+          value: dpsMulti,
+          flags: 0,
+          keywordFlags: 0,
+          source: 'Barrage Repeats',
+        });
+      }
+    }
+  }
+
+  // PoE 2 Hazards `Chance To Rearm` (`CalcOffence.lua:1647-1650`) & `GrenadeActivateTwice` (`CalcOffence.lua:1281-1284`)
+  if (build.game === 'poe2' && skillDb.flag('CanCreateHazards', flags, kwFlags)) {
+    const rearmChance = Math.min(100, Math.max(0, skillDb.sum('BASE', 'HazardRearmChance', flags, kwFlags)));
+    if (rearmChance > 0) {
+      skillDb.addMod({
+        name: 'DPS',
+        type: 'MORE',
+        value: rearmChance,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Chance To Rearm',
+      });
+    }
+  }
+  if (
+    build.game === 'poe2' &&
+    (effectiveSkillTypeSet.has('grenade') || activeDef.tags.some((t) => t.toLowerCase() === 'grenade'))
+  ) {
+    const grenadeTwice = Math.min(100, Math.max(0, skillDb.sum('BASE', 'GrenadeActivateTwice', flags, kwFlags)));
+    if (grenadeTwice > 0) {
+      skillDb.addMod({
+        name: 'DPS',
+        type: 'MORE',
+        value: grenadeTwice,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Repeating Explosives',
+      });
+    }
+  }
+  // PoE 2 Dance with Death (`25% more Skill Speed while Off Hand is empty and using a 1H Martial Weapon`)
+  if (
+    build.game === 'poe2' &&
+    !activeWeapons.off &&
+    !build.equipped[offSlotLabel] &&
+    mainWeaponStats &&
+    !mainWeaponStats.twoHanded &&
+    mainWeaponStats.weaponType !== 'Wand' &&
+    (mainWeaponStats.weaponType as string) !== 'Sceptre' &&
+    !/sceptre/i.test(activeWeapons.main?.baseName ?? '')
+  ) {
+    const dwdMore = skillDb.sum('BASE', 'DanceWithDeathSkillSpeedMore', flags, kwFlags);
+    if (dwdMore > 0) {
+      skillDb.addMod({
+        name: 'Speed',
+        type: 'MORE',
+        value: dwdMore,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Dance with Death',
+      });
+    }
+  }
+
+  // PoE 2 Unleash Seals (`HasSeals` + `DamageSeal`, `CalcOffence.lua:1291-1313`)
+  if (
+    build.game === 'poe2' &&
+    !isAttack &&
+    skillDb.flag('HasSeals', flags, kwFlags) &&
+    skillDb.flag('DamageSeal', flags, kwFlags) &&
+    !skillDb.flag('NoRepeatBonuses', flags, kwFlags) &&
+    !(typeof activeSkillData?.hitTimeOverride === 'number' && activeSkillData.hitTimeOverride > 0)
+  ) {
+    const rawCastTime = activeDef.castTime ?? 0.75;
+    const rawCastSpdMult =
+      Math.max(0.05, 1 + skillDb.sum('INC', 'Speed', flags, kwFlags) / 100) *
+      skillDb.more('Speed', flags, kwFlags);
+    const totalCastSpd = rawCastTime > 0 ? (1 / rawCastTime) * rawCastSpdMult : 0;
+    const sealFreqBase = skillDb.sum('BASE', 'SealGainFrequency', flags, kwFlags);
+    const sealFreqMod =
+      Math.max(0.05, 1 + skillDb.sum('INC', 'SealGainFrequency', flags, kwFlags) / 100) *
+      skillDb.more('SealGainFrequency', flags, kwFlags);
+    const sealCooldown = (rawCastTime * sealFreqBase) / sealFreqMod / 100;
+    const sealRepeatMult =
+      Math.max(0, 1 + skillDb.sum('INC', 'SealRepeatPenalty', flags, kwFlags) / 100) *
+      skillDb.more('SealRepeatPenalty', flags, kwFlags);
+    if (sealCooldown > 0 && totalCastSpd > 0) {
+      const unleashDpsMore =
+        Math.round(((1 / sealCooldown / (totalCastSpd * 1.1)) * sealRepeatMult) * 10000) / 100;
+      if (unleashDpsMore > 0) {
+        skillDb.addMod({
+          name: 'DPS',
+          type: 'MORE',
+          value: unleashDpsMore,
+          flags: 0,
+          keywordFlags: 0,
+          source: 'Unleash',
+        });
+      }
+    }
+  }
+
+  const flatBaseSpeedTime = skillDb.sum('BASE', 'Speed', flags, kwFlags);
+  let baseTimeSec: number;
+  if (isMineSkill) {
+    baseTimeSec = 0.3;
+  } else if (isTrapSkill) {
+    baseTimeSec = 0.6;
+  } else if (isAttack) {
+    if (build.game === 'poe2' && Boolean(activeSkillData?.castTimeOverridesAttackTime)) {
+      let localWepSpdInc = 0;
+      if (activeWeapons.main) {
+        const expMain = expandPoe2LocalRunes
+          ? expandPoe2LocalRunes(mainSlotLabel, activeWeapons.main)
+          : activeWeapons.main;
+        for (const rl of [...expMain.implicits, ...expMain.explicits]) {
+          const cl = rl.replace(/^\{[^}]*\}/g, '').trim();
+          const mSpd = cl.match(/^(\d+)% (increased|reduced) Attack Speed$/i);
+          if (mSpd) {
+            localWepSpdInc += (mSpd[2]!.toLowerCase() === 'reduced' ? -1 : 1) * Number(mSpd[1]);
+          }
+        }
+      }
+      baseTimeSec = (activeDef.castTime ?? 1) / Math.max(0.1, 1 + localWepSpdInc / 100);
+    } else if (skillFixedAttackTimeMs !== undefined) {
+      baseTimeSec = skillFixedAttackTimeMs / 1000 / Math.max(0.05, resolvedAtkSpeedMult) + flatBaseSpeedTime;
+    } else {
+      baseTimeSec = 1 / Math.max(0.05, weaponBaseAps * resolvedAtkSpeedMult) + flatBaseSpeedTime;
+    }
+  } else {
+    baseTimeSec = (activeDef.castTime ?? 0.75) + flatBaseSpeedTime;
+  }
+  const hasMultistrikeSup =
+    compatibleSupportNames.has('multistrike') ||
+    compatibleSupportNames.has('awakened multistrike') ||
+    compatibleSupportNames.has('greater multistrike');
+  const speedQueryFlags =
+    isAttack && hasMultistrikeSup && (activeDef.modFlags & ModFlag.Melee) !== 0
+      ? flags | ModFlag.Melee
+      : flags;
+  const speedInc =
+    skillDb.sum('INC', 'Speed', speedQueryFlags, kwFlags) +
+    (isMineSkill ? skillDb.sum('INC', 'MineLayingSpeed', speedQueryFlags, kwFlags) : 0) +
+    specialSkillDmg.hitRateIncPct;
+  const isPoe2Flicker = build.game === 'poe2' && activeNameLower === 'flicker strike';
   const skillTimeDiv = isAttack
-    ? Math.max(0.1, skillDb.more('SkillAttackTime', flags, kwFlags))
+    ? Math.max(0.1, skillDb.more('SkillAttackTime', speedQueryFlags, kwFlags))
     : 1;
   const speedMore =
-    (skillDb.more('Speed', flags, kwFlags) / skillTimeDiv) *
+    (skillDb.more('Speed', speedQueryFlags, kwFlags) / skillTimeDiv) *
+    (isMineSkill ? skillDb.more('MineLayingSpeed', speedQueryFlags, kwFlags) : 1) *
     (isPoe2Flicker ? 1 : specialSkillDmg.hitRateMoreMult);
-  let speedExact = Math.max(0, baseRate * Math.max(0.05, 1 + speedInc / 100) * speedMore);
-  if (activeDef.cooldown && activeDef.cooldown > 0 && !specialSkillDmg.bypassCooldown) {
+  const combinedSpeedMult =
+    build.game === 'poe2'
+      ? Math.round(Math.max(0.05, 1 + speedInc / 100) * speedMore * 100) / 100
+      : Math.max(0.05, 1 + speedInc / 100) * speedMore;
+  const extraTotalAttackTime = isAttack ? Math.max(0, skillDb.sum('BASE', 'TotalAttackTime', flags, kwFlags)) : 0;
+  const extraTotalCastTime = !isAttack ? Math.max(0, skillDb.sum('BASE', 'TotalCastTime', flags, kwFlags)) : 0;
+  const totalUseTimeSec =
+    baseTimeSec > 0 && combinedSpeedMult > 0
+      ? baseTimeSec / combinedSpeedMult + extraTotalAttackTime + extraTotalCastTime
+      : 0;
+  // Action Speed (Boots Eldritch implicit + Tailwind + Trickster One Step Ahead 108% floor; PoB1 CalcOffence.lua)
+  const minActionSpeedPct =
+    build.game === 'poe1' && skillDb.flag('OneStepAhead', flags, kwFlags) ? 108 : 0;
+  const actionSpeedMult =
+    Math.max(minActionSpeedPct, Math.max(1, 100 + skillDb.sum('INC', 'ActionSpeed', flags, kwFlags))) / 100;
+  let speedExact = totalUseTimeSec > 0 ? (1 / totalUseTimeSec) * actionSpeedMult : 0;
+  // PoE 1 MineThrowCount (Minefield +4 -> 5 / 1.4 = 3.571x effective mines/sec; PoB1 CalcOffence.lua:1365-1377)
+  if (isMineSkill && speedExact > 0) {
+    const mineThrowCount = Math.max(1, 1 + skillDb.sum('BASE', 'MineThrowCount', flags, kwFlags));
+    if (mineThrowCount > 1) {
+      speedExact = (speedExact * mineThrowCount) / (1 + (mineThrowCount - 1) * 0.1);
+    }
+  }
+  const effCooldown =
+    activeDef.cooldown ??
+    (typeof activeSkillData?.cooldown === 'number' && activeSkillData.cooldown > 0
+      ? activeSkillData.cooldown
+      : undefined);
+  if (effCooldown && effCooldown > 0 && !specialSkillDmg.bypassCooldown) {
     const cdr = Math.max(0, skillDb.sum('INC', 'CooldownRecovery', flags, kwFlags));
-    const cdRate = (1 + cdr / 100) / activeDef.cooldown;
+    const cdRepeats = Math.max(1, 1 + skillDb.sum('BASE', 'RepeatCount', flags, kwFlags));
+    const cdRate = ((1 + cdr / 100) / effCooldown) * cdRepeats;
     speedExact = Math.min(speedExact, cdRate);
   }
   let triggerRate: number | undefined;
@@ -3000,11 +8202,32 @@ function computeGroupOffence(
     const cdr = Math.max(0, skillDb.sum('INC', 'CooldownRecovery', flags, kwFlags));
     const atkFlags = triggerAttackDef.modFlags | ModFlag.Attack | ModFlag.Hit | weaponTypeToModFlags(weaponStats?.weaponType, weaponStats?.twoHanded);
     const atkKw = triggerAttackDef.keywordFlags | KeywordFlag.Attack | KeywordFlag.Hit;
-    const atkBaseAps = weaponBaseAps * (triggerAttackDef.attackSpeedMultiplier ?? 1);
-    const atkAps =
+    const trigSkillData = triggerAttackDef.skillData;
+    const trigNameLower = triggerAttackDef.name.en.trim().toLowerCase();
+    const rawTrigAtkSpdMult =
+      triggerAttackDef.attackSpeedMultiplier ??
+      (typeof trigSkillData?.attackSpeedMultiplier === 'number'
+        ? Math.max(0.05, 1 + trigSkillData.attackSpeedMultiplier / 100)
+        : 1);
+    const trigAtkSpdMult =
+      rawTrigAtkSpdMult === 1 && (trigNameLower === 'cyclone' || trigNameLower === 'vaal cyclone')
+        ? 3
+        : rawTrigAtkSpdMult;
+    const trigStageSpeedMore =
+      trigNameLower === 'cyclone of tumult'
+        ? 1 + 0.25 * (skillDb.getEvalContext().multipliers.CycloneofTumultStage ?? 5)
+        : 1;
+    const atkBaseAps = weaponBaseAps * trigAtkSpdMult;
+    let atkAps =
       atkBaseAps *
       Math.max(0.05, 1 + skillDb.sum('INC', 'Speed', atkFlags, atkKw) / 100) *
-      skillDb.more('Speed', atkFlags, atkKw);
+      skillDb.more('Speed', atkFlags, atkKw) *
+      trigStageSpeedMore *
+      actionSpeedMult;
+    if (trigNameLower === 'lancing steel of spraying') {
+      const lancingProj = Math.max(1, 8 + skillDb.sum('BASE', 'ProjectileCount', atkFlags, atkKw));
+      atkAps *= lancingProj;
+    }
 
     let atkHitChance = 100;
     if (!skillDb.flag('HitsCantBeEvaded', atkFlags, atkKw) && !skillDb.flag('CannotBeEvaded', atkFlags, atkKw)) {
@@ -3023,26 +8246,300 @@ function computeGroupOffence(
             Math.max(0, 1 + skillDb.sum('INC', 'CritChance', atkFlags, atkKw) / 100) *
             skillDb.more('CritChance', atkFlags, atkKw),
         );
-    const atkEffCrit = atkPreCrit * (atkHitChance / 100);
     const trigRes = computeTriggeredSkillRate({
       cooldown: 0.15,
       icdrPct: cdr,
       attackAps: atkAps,
       attackHitChancePct: atkHitChance,
-      attackCritChancePct: atkEffCrit,
+      attackCritChancePct: atkPreCrit,
     });
     const effRate = trigRes.syncedTriggerRate ?? trigRes.effectiveTriggerRate;
     speedExact = effRate;
     triggerRate = Math.round(effRate * 100) / 100;
+  } else if (
+    poe2MetaResolution?.isMetaGroup &&
+    poe2MetaResolution.estimatedTriggerRate > 0
+  ) {
+    speedExact = poe2MetaResolution.estimatedTriggerRate;
+    triggerRate = poe2MetaResolution.estimatedTriggerRate;
+  }
+  // PoE 2 Crossbows: adjust effective firing rate ONLY when skill explicitly defines `reloadTime > 0` (CalcOffence.lua:3020)
+  const crossbowBoltCount =
+    build.game === 'poe2'
+      ? (typeof activeSkillData?.boltCount === 'number' && activeSkillData.boltCount > 0
+          ? activeSkillData.boltCount
+          : skillDb.sum('BASE', 'CrossbowBoltCount', flags, kwFlags))
+      : 0;
+  const crossbowBaseReload =
+    build.game === 'poe2' &&
+    weaponStats?.weaponType === 'Crossbow' &&
+    !effectiveSkillTypeSet.has('grenade')
+      ? typeof activeSkillData?.reloadTime === 'number' && activeSkillData.reloadTime > 0
+        ? activeSkillData.reloadTime
+        : crossbowBoltCount > 0 && activeNameLower !== 'crossbow shot'
+          ? 0.8
+          : 0
+      : 0;
+  if (crossbowBaseReload > 0 && crossbowBoltCount > 0 && speedExact > 0) {
+    const noConsumePct = Math.min(100, Math.max(0, skillDb.sum('BASE', 'ChanceToNotConsumeAmmo', flags, kwFlags)));
+    const instantReloadPct = Math.min(100, Math.max(0, skillDb.sum('BASE', 'InstantReloadChance', flags, kwFlags)));
+    if (noConsumePct < 100) {
+      const effBolts = crossbowBoltCount / Math.max(0.01, 1 - noConsumePct / 100);
+      const reloadInc = skillDb.sum('INC', ['ReloadSpeed', 'Speed'], flags, kwFlags);
+      const reloadMore =
+        skillDb.more('ReloadSpeed', flags, kwFlags) * skillDb.more('Speed', flags, kwFlags);
+      const effReloadSec =
+        (crossbowBaseReload / Math.max(0.05, (1 + reloadInc / 100) * reloadMore)) *
+        (1 - instantReloadPct / 100);
+      const totalFiringTime = effBolts / speedExact;
+      speedExact = effBolts / Math.max(0.01, totalFiringTime + effReloadSec);
+    }
   }
   const speed = Math.round(speedExact * 100) / 100;
 
-  const dpsMult = (activeDef.dpsMultiplier ?? 1) * skillDb.more('DPS', flags, kwFlags);
-  const avgHitWithCrit = specialSkillDmg.canHit
-    ? Math.round(totalAvgHit * effectiveCritMultiplier * doubleDamageMult * 100) / 100
+  // Fist of War cooldown-uptime average multiplier (CalcOffence.lua:2812)
+  const fowDmgMult = isAttack ? skillDb.sum('BASE', 'FistOfWarDamageMultiplier', flags, kwFlags) : 0;
+  let fowAvgMult = 1;
+  if (fowDmgMult > 0 && speedExact > 0) {
+    const fowCd = Math.max(0.1, skillDb.sum('BASE', 'FistOfWarCooldown', flags, kwFlags) || 1.8);
+    const fowUptime = Math.min(1, (1 / speedExact) / fowCd);
+    fowAvgMult = 1 + (fowDmgMult / 100) * fowUptime;
+  }
+
+  // Dynamic PoB `preDamageFunc` multi-projectile & sequence `dpsMultiplier` rules
+  const partIdxForDps = resolvedPartStats?.partIndex ?? 1;
+  let dynamicPreDamageDpsMult = 1;
+  const isSequentialProj =
+    skillDb.flag('SequentialProjectiles', flags, kwFlags) &&
+    !skillDb.flag('OneShotProj', flags, kwFlags) &&
+    !skillDb.flag('NoAdditionalProjectiles', flags, kwFlags) &&
+    !skillDb.flag('SingleProjectile', flags, kwFlags);
+  if (activeNameLower === 'kinetic fusillade' || activeNameLower === 'kinetic fusillade of detonation') {
+    if (partIdxForDps === 1) {
+      dynamicPreDamageDpsMult *= projCount;
+    }
+  } else if (isSequentialProj && build.game === 'poe1') {
+    dynamicPreDamageDpsMult *= projCount;
+  } else if (
+    (activeNameLower === 'spark' || activeNameLower === 'spark of the nova') &&
+    build.game === 'poe1' &&
+    partIdxForDps === 2
+  ) {
+    // Spark Part 2 ("Maximum Hits"): floor(effDuration / 0.66) + 1 hits per cast (CalcOffence / act_int.lua)
+    const baseSparkDur =
+      typeof activeSkillData?.duration === 'number' && activeSkillData.duration > 0
+        ? activeSkillData.duration
+        : 2.0;
+    const effSparkDur =
+      baseSparkDur *
+      Math.max(0.1, 1 + skillDb.sum('INC', 'Duration', flags, kwFlags) / 100) *
+      skillDb.more('Duration', flags, kwFlags);
+    dynamicPreDamageDpsMult *= Math.max(1, Math.floor(effSparkDur / 0.66) + 1);
+  } else if (
+    (activeNameLower === 'ice spear' || activeNameLower === 'ice spear of splitting') &&
+    build.game === 'poe1' &&
+    (partIdxForDps === 2 || partIdxForDps === 4)
+  ) {
+    dynamicPreDamageDpsMult *= projCount;
+  } else if (
+    activeNameLower === 'shield crush' &&
+    build.game === 'poe1' &&
+    partIdxForDps === 2 &&
+    !(typeof activeSkillData?.dpsMultiplier === 'number' && activeSkillData.dpsMultiplier > 1)
+  ) {
+    dynamicPreDamageDpsMult *= 2;
+  } else if (
+    (activeNameLower === 'lacerate' ||
+      activeNameLower === 'lacerate of haemorrhage' ||
+      activeNameLower === 'lacerate of butchering') &&
+    build.game === 'poe1' &&
+    partIdxForDps === 2 &&
+    !(typeof activeSkillData?.dpsMultiplier === 'number' && activeSkillData.dpsMultiplier > 1)
+  ) {
+    dynamicPreDamageDpsMult *= 2;
+  } else if (
+    activeNameLower === 'ball lightning of orbiting' ||
+    activeNameLower === 'ball lightning of static' ||
+    (activeNameLower === 'ball lightning' && partIdxForDps >= 2)
+  ) {
+    if (activeNameLower === 'ball lightning of static' || partIdxForDps >= 2) {
+      const strikeInt =
+        typeof activeSkillData?.strikeInterval === 'number' && activeSkillData.strikeInterval > 0
+          ? activeSkillData.strikeInterval
+          : 0.15;
+      const ballDur =
+        typeof activeSkillData?.duration === 'number' && activeSkillData.duration > 0
+          ? activeSkillData.duration
+          : 2.0;
+      dynamicPreDamageDpsMult *= Math.max(1, Math.floor(ballDur / strikeInt));
+    }
+  } else if (
+    (activeNameLower === 'forbidden rite' ||
+      activeNameLower === 'forbidden rite of soul sacrifice') &&
+    partIdxForDps === 2
+  ) {
+    // Official PoB1 Forbidden Rite Part 2 ("All Primary Projectiles"): 1 primary + projCount additional
+    dynamicPreDamageDpsMult *= projCount + 1;
+  } else if (
+    (activeNameLower === 'blazing salvo' ||
+      activeNameLower === 'blast rain' ||
+      activeNameLower === 'barrage' ||
+      activeNameLower === 'barrage of volley fire' ||
+      activeNameLower === 'vaal lightning arrow') &&
+    partIdxForDps === 2
+  ) {
+    dynamicPreDamageDpsMult *= projCount;
+  } else if (
+    (activeNameLower === 'tornado shot' || activeNameLower === 'tornado shot of cloudburst') &&
+    partIdxForDps === 2
+  ) {
+    const secProj = Math.max(0, skillDb.sum('BASE', 'tornadoShotSecondaryProjectiles', flags, kwFlags) || 3);
+    const secHitChance = Math.min(1, (20 * secProj) / 100);
+    const avgSec = projCount + Math.max(0, skillDb.sum('BASE', 'SplitCount', flags, kwFlags));
+    dynamicPreDamageDpsMult *= 1 + secHitChance * avgSec;
+  } else if (
+    (activeNameLower === 'molten strike' || activeNameLower === 'molten strike of the zenith') &&
+    build.game === 'poe1' &&
+    (partIdxForDps === 3 || partIdxForDps === 5 || partIdxForDps === 6)
+  ) {
+    // Official PoB1 `act_str.lua:8024-8081` Molten Strike / Zenith ball overlap & 5th-strike weighted average
+    const aoeInc =
+      skillDb.sum('INC', 'AreaOfEffect', flags, kwFlags) +
+      (Boolean(activeSkillData?.projectileSpeedAppliesToMSAreaOfEffect)
+        ? skillDb.sum('INC', 'ProjectileSpeed', flags, kwFlags)
+        : 0);
+    const aoeMore = skillDb.more('AreaOfEffect', flags, kwFlags);
+    const radiusScale = Math.sqrt(Math.max(0.1, 1 + aoeInc / 100) * aoeMore);
+    const enemyRadius = skillDb.override('EnemyRadius', flags, kwFlags) ?? (skillDb.sum('BASE', 'EnemyRadius', flags, kwFlags) || 2);
+    const ballRadius = Math.floor(9 * radiusScale);
+    const innerRadius = 2;
+    const outerRadius = Math.max(innerRadius + 1, Math.floor(25 * radiusScale));
+    const overlapChance = Math.min(1, Math.max(0, (enemyRadius + ballRadius - innerRadius) / (outerRadius - innerRadius)));
+    if (activeNameLower === 'molten strike of the zenith' && partIdxForDps === 6) {
+      const fifthDmgPct =
+        typeof activeSkillData?.FifthStrikeDamage === 'number' ? activeSkillData.FifthStrikeDamage : 600;
+      const fifthExtraProj =
+        typeof activeSkillData?.FifthStrikeProjectiles === 'number' ? activeSkillData.FifthStrikeProjectiles : 5;
+      const fifthMult = 1 + fifthDmgPct / 100;
+      dynamicPreDamageDpsMult *=
+        overlapChance * (0.8 * projCount + 0.2 * fifthMult * (projCount + fifthExtraProj));
+    } else {
+      dynamicPreDamageDpsMult *= overlapChance * projCount;
+    }
+  } else if (build.game === 'poe1' && activeNameLower === 'storm burst' && partIdxForDps === 2) {
+    // Official PoB1 `act_int.lua:18119-18126` Storm Burst Part 2 ("Max Channelled Orbs")
+    const sbBaseDur = typeof activeSkillData?.duration === 'number' && activeSkillData.duration > 0 ? activeSkillData.duration : 1.2;
+    const sbDurMod =
+      Math.max(0.1, 1 + skillDb.sum('INC', 'Duration', flags, kwFlags) / 100) *
+      skillDb.more('Duration', flags, kwFlags);
+    const sbJump =
+      typeof activeSkillData?.repeatFrequency === 'number' && activeSkillData.repeatFrequency > 0
+        ? activeSkillData.repeatFrequency
+        : 0.4;
+    const sbOrbMult = 1 + Math.floor((sbBaseDur * sbDurMod * 10) / (sbJump * 10));
+    dynamicPreDamageDpsMult *= Math.max(1, sbOrbMult);
+  } else if (build.game === 'poe1' && activeNameLower === 'swordstorm') {
+    dynamicPreDamageDpsMult *= 8;
+  } else if (build.game === 'poe2' && activeNameLower === 'bonestorm') {
+    const bsStages = Math.max(1, skillDb.getEvalContext().multipliers.BonestormStage ?? 20);
+    dynamicPreDamageDpsMult *= bsStages;
+  }
+
+  const attachedBrandsMult =
+    effectiveSkillTypeSet.has('brand') && activeNameLower !== 'wintertide brand'
+      ? Math.max(1, Math.round(skillDb.sum('BASE', 'BrandsAttachedLimit', flags, kwFlags)))
+      : 1;
+  const sdataDpsMult =
+    typeof activeSkillData?.dpsMultiplier === 'number' && activeSkillData.dpsMultiplier > 0
+      ? activeSkillData.dpsMultiplier
+      : undefined;
+  const dpsMult =
+    (sdataDpsMult ?? activeDef.dpsMultiplier ?? 1) *
+    dynamicPreDamageDpsMult *
+    attachedBrandsMult *
+    skillDb.more('DPS', flags, kwFlags);
+
+  // Separate periodic/pulse hit rate (`hitTimeOverride`, `hitTimeMultiplier`, `hitFrequency`, Brand `repeatFrequency`) from display Cast/Attack `speed`
+  let hitRateForDps = speedExact;
+  const isShowAvgSkill = Boolean(activeSkillData?.showAverage) && !effCooldown;
+  if (typeof activeSkillData?.hitTimeOverride === 'number' && activeSkillData.hitTimeOverride > 0) {
+    hitRateForDps = 1 / activeSkillData.hitTimeOverride;
+  } else if (
+    typeof activeSkillData?.hitTimeMultiplier === 'number' &&
+    activeSkillData.hitTimeMultiplier > 0 &&
+    !activeSkillData.triggeredOnDeath &&
+    speedExact > 0
+  ) {
+    const rawHitTime = (1 / speedExact) * activeSkillData.hitTimeMultiplier;
+    const minChan =
+      typeof activeSkillData.minChannelTime === 'number' && activeSkillData.minChannelTime > 0
+        ? activeSkillData.minChannelTime
+        : 0;
+    hitRateForDps = 1 / Math.max(rawHitTime, minChan);
+  } else if (
+    build.game === 'poe2' &&
+    Boolean(activeSkillData?.channelRelease) &&
+    typeof activeSkillData?.minChannelTime === 'number' &&
+    activeSkillData.minChannelTime > 0 &&
+    speedExact > 0
+  ) {
+    const chStages = Math.max(
+      1,
+      Number(skillDb.getEvalContext().multipliers[`${noSpaceSkill}Stage`] ?? 1),
+    );
+    hitRateForDps = 1 / Math.max(activeSkillData.minChannelTime, chStages / speedExact);
+  } else if (
+    build.game === 'poe2' &&
+    !isShowAvgSkill &&
+    typeof activeSkillData?.channelPercentOfAttackTime === 'number' &&
+    activeSkillData.channelPercentOfAttackTime > 0
+  ) {
+    hitRateForDps = speedExact / activeSkillData.channelPercentOfAttackTime;
+  } else if (build.game === 'poe2' && activeNameLower === 'bonestorm') {
+    const bsStages = Math.max(1, skillDb.getEvalContext().multipliers.BonestormStage ?? 20);
+    hitRateForDps = speedExact / Math.max(1, Math.ceil(bsStages / Math.max(1, projCount)));
+  } else if (typeof activeSkillData?.hitFrequency === 'number' && activeSkillData.hitFrequency > 0) {
+    const perBlade =
+      (typeof activeSkillData.hitFrequencyPerBlade === 'number' ? activeSkillData.hitFrequencyPerBlade : 0) +
+      (activeNameLower === 'blade vortex' ? Math.max(0, activeQuality) * 0.0025 : 0);
+    const bladeStages = Math.max(
+      0,
+      activeNameLower === 'blade vortex'
+        ? (skillDb.getEvalContext().multipliers.BladeVortexBlade ?? declaredMaxStages)
+        : declaredMaxStages,
+    );
+    hitRateForDps = (1 + bladeStages * perBlade) / activeSkillData.hitFrequency;
+  } else if (
+    build.game === 'poe1' &&
+    activeNameLower === 'winter orb' &&
+    typeof activeSkillData?.repeatFrequency === 'number' &&
+    activeSkillData.repeatFrequency > 0
+  ) {
+    const woFreqInc = skillDb.sum('INC', ['HitRate', 'Speed'], flags, kwFlags);
+    const woFreqMore = skillDb.more('HitRate', flags, kwFlags) * skillDb.more('Speed', flags, kwFlags);
+    hitRateForDps =
+      (1 / activeSkillData.repeatFrequency) * Math.max(0.05, 1 + woFreqInc / 100) * woFreqMore * actionSpeedMult;
+  } else if (
+    effectiveSkillTypeSet.has('brand') &&
+    typeof activeSkillData?.repeatFrequency === 'number' &&
+    activeSkillData.repeatFrequency > 0
+  ) {
+    const brandFreqInc = skillDb.sum('INC', ['BrandActivationFrequency', 'Speed'], flags, kwFlags);
+    const brandFreqMore = skillDb.more('BrandActivationFrequency', flags, kwFlags);
+    hitRateForDps =
+      (1 / activeSkillData.repeatFrequency) * Math.max(0.05, 1 + brandFreqInc / 100) * brandFreqMore * actionSpeedMult;
+  }
+
+  const isPoe2PureDotPart =
+    build.game === 'poe2' &&
+    activeNameLower === 'essence drain' &&
+    (resolvedPartStats?.partIndex ?? 1) === 2;
+  const effectiveCanHit = specialSkillDmg.canHit && !isPoe2PureDotPart;
+  const avgHitWithCrit = effectiveCanHit
+    ? Math.round(totalAvgHit * effectiveCritMultiplier * doubleDamageMult * fowAvgMult * 100) / 100
     : 0;
-  const hitDps = specialSkillDmg.canHit
-    ? Math.round(avgHitWithCrit * speedExact * dpsMult * (hitChance / 100) * 100) / 100
+  const hitDps = effectiveCanHit
+    ? Math.round(avgHitWithCrit * hitRateForDps * dpsMult * (hitChance / 100) * 100) / 100
     : 0;
 
   // Impale DPS (Physical Attacks: 10% stored phys * (1 + impaleEffect) * maxHits * impaleChance)
@@ -3055,6 +8552,7 @@ function computeGroupOffence(
       damageByType.Physical.average *
       effectiveCritMultiplier *
       doubleDamageMult *
+      fowAvgMult *
       speedExact *
       dpsMult *
       (hitChance / 100);
@@ -3063,8 +8561,13 @@ function computeGroupOffence(
   }
 
   // Authentic Ailments (Poison stacks, Mamba single-poison, Crimson Dance/Aggravated Bleed, Ignite) & skillData DoTs
-  const mergedSkillData = {
+  const wintertideAttachedLimit =
+    build.game === 'poe1' && activeNameLower === 'wintertide brand'
+      ? Math.max(1, Math.round(skillDb.sum('BASE', 'BrandsAttachedLimit', flags, kwFlags)))
+      : 0;
+  const mergedSkillData: Record<string, unknown> = {
     ...(activeSkillData ?? {}),
+    ...(wintertideAttachedLimit > 1 ? { dotMaxStacks: wintertideAttachedLimit } : {}),
     ...(Object.keys(specialSkillDmg.baseDotDps).length > 0
       ? {
           dotDamageByType: specialSkillDmg.baseDotDps,
@@ -3072,6 +8575,16 @@ function computeGroupOffence(
         }
       : {}),
   };
+  if (fowAvgMult > 1) {
+    skillDb.addMod({
+      name: 'DotDamage',
+      type: 'MORE',
+      value: (fowAvgMult - 1) * 100,
+      flags: ModFlag.Ailment | ModFlag.Dot,
+      keywordFlags: 0,
+      source: 'Fist of War (Ailment Average)',
+    });
+  }
   if (specialSkillDmg.ailmentMoreMult !== 1) {
     skillDb.addMod({
       name: 'DotDamage',
@@ -3108,19 +8621,29 @@ function computeGroupOffence(
     });
   }
 
+  const baseRangeByType: Record<DamageType, [number, number]> = {
+    Physical: [finalBaseMin.Physical, finalBaseMax.Physical],
+    Lightning: [finalBaseMin.Lightning, finalBaseMax.Lightning],
+    Cold: [finalBaseMin.Cold, finalBaseMax.Cold],
+    Fire: [finalBaseMin.Fire, finalBaseMax.Fire],
+    Chaos: [finalBaseMin.Chaos, finalBaseMax.Chaos],
+  };
   const hitsPerUseForAilments = Math.max(1, dpsMult * (doubleHitsDualWield ? 2 : 1));
   const dotResult = computeAuthenticAilmentAndSkillDots({
     game: build.game,
     skillDb,
     enemyDb: groupEnemyDb,
     baseDamageByType: finalBaseAvg,
+    baseDamageRangeByType: baseRangeByType,
     preMitigationHitByType,
+    hitDamageRangeByType: damageByType,
     flags,
     keywordFlags: kwFlags,
-    speed: speedExact,
+    speed: hitRateForDps,
     hitChancePct: hitChance,
     critChancePct: critChance,
     critMultiplierPct: critMultiplier,
+    ...(build.game === 'poe1' ? { rawCritMultiplierPct: rawPoe1CritMulti } : {}),
     hitsPerUse: hitsPerUseForAilments,
     isAttack,
     skillHasDurationTag: effectiveSkillTypeSet.has('duration'),
@@ -3134,14 +8657,151 @@ function computeGroupOffence(
       enemyArmour: build.config.enemyArmour,
       enemyEvasion: build.config.enemyEvasion,
     },
-  });
+  } as Parameters<typeof computeAuthenticAilmentAndSkillDots>[0]);
 
   const igniteDps = dotResult.ignite.totalDps;
   const bleedDps = dotResult.bleed.totalDps;
   const poisonDps = dotResult.poison.totalDps;
   const spellDotDps = dotResult.skillDot.totalDps;
+  const causticGroundDps = dotResult.causticGroundDps ?? 0;
+  const burningGroundDps = dotResult.burningGroundDps ?? 0;
 
-  const totalDps = Math.round((hitDps + impaleDps + igniteDps + bleedDps + poisonDps + spellDotDps) * 100) / 100;
+  // Mirage Archer, Sacred Wisps & General's Cry CombinedDPS contribution (CalcMirages.lua / CalcOffence.lua)
+  let mirageAndWispsDps = 0;
+  if (build.game === 'poe1') {
+    const mirageableDps = hitDps + impaleDps + poisonDps;
+    if (
+      mirageableDps > 0 &&
+      (skillDb.flag('triggeredByMirageArcher') || compatibleSupportNames.has('mirage archer'))
+    ) {
+      const maCount = Math.max(1, Math.round(skillDb.sum('BASE', 'MirageArcherMaxCount', flags, kwFlags)));
+      const rawMaSpd = skillDb.sum('BASE', 'MirageArcherLessAttackSpeed', flags, kwFlags);
+      const rawMaDmg = skillDb.sum('BASE', 'MirageArcherLessDamage', flags, kwFlags);
+      const maLessSpd = rawMaSpd !== 0 ? rawMaSpd : -60;
+      const maLessDmg = rawMaDmg !== 0 ? rawMaDmg : -31;
+      const maMult = maCount * Math.max(0, 1 + maLessSpd / 100) * Math.max(0, 1 + maLessDmg / 100);
+      mirageAndWispsDps += mirageableDps * maMult;
+    }
+    if (
+      mirageableDps > 0 &&
+      Boolean(activeSkillData?.triggeredBySacredWisps || compatibleSupportNames.has('sacred wisps'))
+    ) {
+      const swLessDmg = skillDb.sum('BASE', 'SacredWispsLessDamage', flags, kwFlags);
+      const swCount = Math.max(1, Math.round(skillDb.sum('BASE', 'SacredWispsMaxCount', flags, kwFlags) || 2));
+      const swCastChance = build.config.enemyIsBoss !== 'None' ? 0.5 : 0.25;
+      const swMult = swCount * swCastChance * Math.max(0, 1 + swLessDmg / 100);
+      mirageAndWispsDps += mirageableDps * swMult;
+    }
+    const gcGem = mainGroup.gems.find((g) => {
+      if (!g.enabled) return false;
+      const d = getGemById('poe1', g.gemId);
+      return Boolean(d && d.name.en.trim().toLowerCase() === "general's cry");
+    });
+    if (gcGem && isAttack && (flags & ModFlag.Melee) !== 0 && avgHitWithCrit > 0) {
+      const gcDef = getGemById('poe1', gcGem.gemId)!;
+      const gcLv = Math.min(40, Math.max(1, gcGem.level));
+      const gcEntry = resolveGemLevelEntry(gcDef, gcLv);
+      const gcCmods = gcEntry?.compiledMods ?? gcDef.compiledMods ?? [];
+      const gcLessDmg =
+        (gcCmods.find((m) => m.name === 'Damage' && m.type === 'MORE' && typeof m.value === 'number')?.value as number | undefined) ??
+        -30;
+      const maxWarriors = Math.max(
+        1,
+        Math.round(5 + skillDb.sum('BASE', 'GeneralsCryDoubleMaxCount', flags, kwFlags)),
+      );
+      const gcBaseCd = typeof gcDef.skillData?.cooldown === 'number' ? gcDef.skillData.cooldown : 4;
+      const gcCdr = skillDb.sum('INC', ['CooldownRecovery', 'WarcryCooldownRecovery']);
+      const effGcCd = gcBaseCd / Math.max(0.1, 1 + gcCdr / 100);
+      const warriorRate = maxWarriors / Math.max(0.35, effGcCd);
+      const gcDmgMult = Math.max(0, 1 + gcLessDmg / 100);
+      const gcHitDps = avgHitWithCrit * warriorRate * (hitChance / 100) * gcDmgMult;
+      if (gcHitDps > hitDps) {
+        mirageAndWispsDps += gcHitDps - hitDps;
+      }
+    }
+  }
+
+  // Culling Strike Multiplier (PoB1 CalcOffence.lua:3345-3352 & PoB2 CalcOffence.lua:4069-4079)
+  const effHitRateForCull = Math.max(0, hitRateForDps * dpsMult * (hitChance / 100));
+  let cullPct = 0;
+  if (build.game === 'poe2') {
+    const enemyRarityThreshold = build.config.enemyIsBoss !== 'None' ? 5 : 30;
+    const critCullOverride = skillDb.override('CriticalCullPercent', flags, kwFlags);
+    const hasCritCull =
+      skillDb.flag('CritCanCull', flags, kwFlags) ||
+      skillDb.flag('CritCullingStrike', flags, kwFlags);
+    let critCull = critCullOverride ?? (hasCritCull ? enemyRarityThreshold : 0);
+    if (critCull > 0 && effHitRateForCull > 0) {
+      critCull = Math.min(critCull, critCull * (1 - Math.pow(Math.max(0, 1 - critChance / 100), effHitRateForCull)));
+    }
+    const regCullOverride = skillDb.override('CullPercent', flags, kwFlags);
+    const hasRegCull =
+      skillDb.flag('CanCull', flags, kwFlags) ||
+      skillDb.flag('CullingStrike', flags, kwFlags) ||
+      compatibleSupportNames.has('culling strike') ||
+      compatibleSupportNames.has('culling strike i') ||
+      compatibleSupportNames.has('culling strike ii');
+    const regCull = regCullOverride ?? (hasRegCull ? enemyRarityThreshold : 0);
+    const incCullMult = Math.max(0, 1 + skillDb.sum('INC', 'CullPercent', flags, kwFlags) / 100);
+    cullPct = Math.min(90, Math.max(critCull, regCull) * incCullMult);
+  } else {
+    const critCullBase = Math.max(
+      skillDb.max('CriticalCullPercent', flags, kwFlags) ?? 0,
+      skillDb.sum('BASE', 'CriticalCullPercent', flags, kwFlags),
+      skillDb.flag('CritCullingStrike', flags, kwFlags) ? 10 : 0,
+    );
+    const critCull =
+      critCullBase > 0 && effHitRateForCull > 0
+        ? Math.min(
+            critCullBase,
+            critCullBase * (1 - Math.pow(Math.max(0, 1 - critChance / 100), effHitRateForCull)),
+          )
+        : 0;
+    const regCull = Math.max(
+      skillDb.max('CullPercent', flags, kwFlags) ?? 0,
+      skillDb.sum('BASE', 'CullPercent', flags, kwFlags),
+      skillDb.sum('BASE', 'CullingStrikeThreshold', flags, kwFlags),
+      skillDb.flag('CullingStrike', flags, kwFlags) || compatibleSupportNames.has('culling strike') ? 10 : 0,
+    );
+    cullPct = Math.min(90, Math.max(critCull, regCull));
+  }
+  const cullMult = cullPct > 0 ? 100 / (100 - cullPct) : 1;
+
+  const isPoe2CrossbowNonGrenade =
+    build.game === 'poe2' &&
+    weaponStats?.weaponType === 'Crossbow' &&
+    !effectiveSkillTypeSet.has('grenade');
+  const hasHitTimeOverride =
+    typeof activeSkillData?.hitTimeOverride === 'number' && activeSkillData.hitTimeOverride > 0;
+  const poe2SelfCastCooldownDisablesAvg =
+    build.game === 'poe2' &&
+    Boolean(effCooldown && effCooldown > 0) &&
+    !isTrapSkill &&
+    !isMineSkill;
+  const showAverage =
+    Boolean(activeSkillData?.showAverage) &&
+    triggerRate === undefined &&
+    !isPoe2CrossbowNonGrenade &&
+    !hasHitTimeOverride &&
+    !poe2SelfCastCooldownDisablesAvg;
+  const avgDamagePerHit = Math.round(avgHitWithCrit * (hitChance / 100) * 100) / 100;
+  const showAvgImpalePerHit =
+    showAverage && impaleDps > 0 && speedExact > 0 ? impaleDps / speedExact : 0;
+  const totalDps = showAverage
+    ? Math.round((avgDamagePerHit + showAvgImpalePerHit) * cullMult * 100) / 100
+    : Math.round(
+        (hitDps +
+          impaleDps +
+          igniteDps +
+          bleedDps +
+          poisonDps +
+          spellDotDps +
+          causticGroundDps +
+          burningGroundDps +
+          mirageAndWispsDps) *
+          cullMult *
+          100,
+      ) / 100;
   const manaCost = activeLevelEntry?.manaCost ?? activeDef.manaCost ?? 15;
   const manaPerSecond = Math.round(manaCost * speed * 10) / 10;
 
@@ -3183,7 +8843,7 @@ export function computeNodePower(
   baseline?: CalcOutput,
 ): NodePowerDelta {
   const baseOut = baseline ?? calculateBuild(build);
-  const tree = getTreeForGame(build.game);
+  const tree = getTreeForGame(build.game, build.tree.treeVersion);
   const startNodeId = tree.classStartNodeIds[build.classId] ?? build.tree.allocatedNodeIds[0] ?? 0;
   const ascStartNodeId = getAscendancyStartNodeId(tree, build.ascendancyId);
   const rootIds = ascStartNodeId ? [startNodeId, ascStartNodeId] : [startNodeId];

@@ -32,9 +32,17 @@ interface LocalWeaponAccum {
   eleDamage: Partial<Record<'Fire' | 'Cold' | 'Lightning' | 'Chaos', [number, number]>>;
 }
 
-function tryConsumeLocalArmourMod(rawLine: string, acc: LocalArmourAccum): boolean {
-  const line = normalizeStatLineToEn(rawLine);
+function tryConsumeLocalArmourMod(
+  rawLine: string,
+  acc: LocalArmourAccum,
+  allowBonded?: boolean,
+): boolean {
+  let line = normalizeStatLineToEn(rawLine);
   if (!line) return false;
+  if (/^Bonded\s*:/i.test(line)) {
+    if (!allowBonded) return false;
+    line = line.replace(/^Bonded\s*:\s*/i, '').trim();
+  }
 
   let m = line.match(/^\+(\d+) to Armour$/i);
   if (m) {
@@ -51,44 +59,52 @@ function tryConsumeLocalArmourMod(rawLine: string, acc: LocalArmourAccum): boole
     acc.flatEs += Number(m[1]);
     return true;
   }
-  m = line.match(/^(\d+)% increased Armour$/i);
+  m = line.match(/^(\d+)% (increased|reduced) Armour$/i);
   if (m) {
-    acc.incArmour += Number(m[1]);
+    const s = m[2]!.toLowerCase() === 'reduced' ? -1 : 1;
+    acc.incArmour += s * Number(m[1]);
     return true;
   }
-  m = line.match(/^(\d+)% increased Evasion Rating$/i);
+  m = line.match(/^(\d+)% (increased|reduced) Evasion Rating$/i);
   if (m) {
-    acc.incEvasion += Number(m[1]);
+    const s = m[2]!.toLowerCase() === 'reduced' ? -1 : 1;
+    acc.incEvasion += s * Number(m[1]);
     return true;
   }
-  m = line.match(/^(\d+)% increased (?:maximum )?Energy Shield$/i);
+  m = line.match(/^(\d+)% (increased|reduced) (?:maximum )?Energy Shield$/i);
   if (m) {
-    acc.incEs += Number(m[1]);
+    const s = m[2]!.toLowerCase() === 'reduced' ? -1 : 1;
+    acc.incEs += s * Number(m[1]);
     return true;
   }
-  m = line.match(/^(\d+)% increased Armour and Evasion$/i);
+  m = line.match(/^(\d+)% (increased|reduced) Armour and Evasion(?: Rating)?$/i);
   if (m) {
-    acc.incArmour += Number(m[1]);
-    acc.incEvasion += Number(m[1]);
+    const v = (m[2]!.toLowerCase() === 'reduced' ? -1 : 1) * Number(m[1]);
+    acc.incArmour += v;
+    acc.incEvasion += v;
     return true;
   }
-  m = line.match(/^(\d+)% increased Armour and Energy Shield$/i);
+  m = line.match(/^(\d+)% (increased|reduced) Armour and Energy Shield$/i);
   if (m) {
-    acc.incArmour += Number(m[1]);
-    acc.incEs += Number(m[1]);
+    const v = (m[2]!.toLowerCase() === 'reduced' ? -1 : 1) * Number(m[1]);
+    acc.incArmour += v;
+    acc.incEs += v;
     return true;
   }
-  m = line.match(/^(\d+)% increased Evasion and Energy Shield$/i);
+  m = line.match(/^(\d+)% (increased|reduced) Evasion(?: Rating)? and Energy Shield$/i);
   if (m) {
-    acc.incEvasion += Number(m[1]);
-    acc.incEs += Number(m[1]);
+    const v = (m[2]!.toLowerCase() === 'reduced' ? -1 : 1) * Number(m[1]);
+    acc.incEvasion += v;
+    acc.incEs += v;
     return true;
   }
-  m = line.match(/^(\d+)% increased Armour, Evasion and Energy Shield$/i);
+  m = line.match(/^(\d+)% (increased|reduced) (?:Armour, Evasion(?: Rating)? and Energy Shield|Defences)$/i);
   if (m) {
-    acc.incArmour += Number(m[1]);
-    acc.incEvasion += Number(m[1]);
-    acc.incEs += Number(m[1]);
+    const v = (m[2]!.toLowerCase() === 'reduced' ? -1 : 1) * Number(m[1]);
+    acc.incArmour += v;
+    acc.incEvasion += v;
+    acc.incEs += v;
+    acc.incWard += v;
     return true;
   }
   m = line.match(/^\+(\d+)% Chance to Block$/i);
@@ -96,22 +112,42 @@ function tryConsumeLocalArmourMod(rawLine: string, acc: LocalArmourAccum): boole
     acc.flatBlock += Number(m[1]);
     return true;
   }
-  m = line.match(/^\+(\d+) to Ward$/i);
+  m = line.match(/^\+(\d+) to (?:maximum )?(?:Runic )?Ward$/i);
   if (m) {
     acc.flatWard += Number(m[1]);
     return true;
   }
-  m = line.match(/^(\d+)% increased Ward$/i);
+  m = line.match(/^(\d+)% (increased|reduced) (?:maximum )?(?:Runic )?Ward$/i);
   if (m) {
-    acc.incWard += Number(m[1]);
+    const s = m[2]!.toLowerCase() === 'reduced' ? -1 : 1;
+    acc.incWard += s * Number(m[1]);
     return true;
   }
   return false;
 }
 
-function tryConsumeLocalWeaponMod(rawLine: string, acc: LocalWeaponAccum): boolean {
-  const line = normalizeStatLineToEn(rawLine);
+function tryConsumeLocalWeaponMod(
+  rawLine: string,
+  acc: LocalWeaponAccum,
+  allowBonded?: boolean,
+): boolean {
+  let line = normalizeStatLineToEn(rawLine);
   if (!line) return false;
+  if (/^Bonded\s*:/i.test(line)) {
+    if (!allowBonded) return false;
+    line = line.replace(/^Bonded\s*:\s*/i, '').trim();
+  }
+
+  // Strictly global weapon modifiers must never be consumed into local weapon stats
+  // (e.g. "83% increased Elemental Damage with Attacks", "increased Elemental Damage with Attack Skills",
+  // "Adds X to Y Fire Damage to Attacks/Spells", "Global Critical Strike Chance").
+  if (
+    /\b(?:with\s+Attacks?|with\s+Attack\s+Skills?|to\s+Attacks?|to\s+Spells?|for\s+Spells?|Global)\b/i.test(
+      line,
+    )
+  ) {
+    return false;
+  }
 
   // Local flat damage: "Adds X to Y <Type> Damage" (NOT "to Spells" / "to Attacks")
   let m = line.match(/^Adds (\d+) to (\d+) (Physical|Fire|Cold|Lightning|Chaos) Damage$/i);
@@ -129,22 +165,25 @@ function tryConsumeLocalWeaponMod(rawLine: string, acc: LocalWeaponAccum): boole
     return true;
   }
 
-  m = line.match(/^(\d+)% increased Physical Damage$/i);
+  m = line.match(/^(\d+)% (increased|reduced) Physical Damage$/i);
   if (m) {
-    acc.incPhys += Number(m[1]);
+    const s = m[2]!.toLowerCase() === 'reduced' ? -1 : 1;
+    acc.incPhys += s * Number(m[1]);
     return true;
   }
 
-  m = line.match(/^(\d+)% increased Attack Speed$/i);
+  m = line.match(/^(\d+)% (increased|reduced) Attack Speed$/i);
   if (m) {
-    acc.incAttackSpeed += Number(m[1]);
+    const s = m[2]!.toLowerCase() === 'reduced' ? -1 : 1;
+    acc.incAttackSpeed += s * Number(m[1]);
     return true;
   }
 
   // Local Crit Chance: "X% increased Critical Strike Chance" (NOT "Global" / "for Spells")
-  m = line.match(/^(\d+)% increased Critical (?:Strike|Hit) Chance$/i);
+  m = line.match(/^(\d+)% (increased|reduced) Critical (?:Strike|Hit) Chance$/i);
   if (m) {
-    acc.incCrit += Number(m[1]);
+    const s = m[2]!.toLowerCase() === 'reduced' ? -1 : 1;
+    acc.incCrit += s * Number(m[1]);
     return true;
   }
 
@@ -162,7 +201,11 @@ function tryConsumeLocalWeaponMod(rawLine: string, acc: LocalWeaponAccum): boole
  * (PoE 1 3.25+/3.30 & PoE 2 0.5 multiplicative quality formula) and returns
  * only the non-local modifiers that should be fed to the global `ModDB`.
  */
-export function resolveItemEffectiveStats(item: Item, game: GameId): ResolvedItemStats {
+export function resolveItemEffectiveStats(
+  item: Item,
+  game: GameId,
+  opts?: { allowBonded?: boolean },
+): ResolvedItemStats {
   // Hand-crafted starter presets without `localStatsPrecomputed` flag retain backward compatibility
   if (item.localStatsPrecomputed === undefined) {
     return {
@@ -182,7 +225,14 @@ export function resolveItemEffectiveStats(item: Item, game: GameId): ResolvedIte
       : [...lines];
 
   const isWeapon = Boolean(item.weaponStats);
-  const isArmour = !isWeapon && Boolean(item.armourStats);
+  const isArmour =
+    !isWeapon &&
+    (Boolean(item.armourStats) ||
+      item.slotType === 'Body Armour' ||
+      item.slotType === 'Helmet' ||
+      item.slotType === 'Gloves' ||
+      item.slotType === 'Boots' ||
+      /\b(?:shield|buckler|focus)\b/i.test(item.baseName));
 
   if (!isWeapon && !isArmour) {
     return {
@@ -209,10 +259,10 @@ export function resolveItemEffectiveStats(item: Item, game: GameId): ResolvedIte
       incWard: 0,
     };
     for (const line of item.implicits) {
-      if (!tryConsumeLocalArmourMod(line, acc)) globalImplicits.push(line);
+      if (!tryConsumeLocalArmourMod(line, acc, opts?.allowBonded)) globalImplicits.push(line);
     }
     for (const line of item.explicits) {
-      if (!tryConsumeLocalArmourMod(line, acc)) globalExplicits.push(line);
+      if (!tryConsumeLocalArmourMod(line, acc, opts?.allowBonded)) globalExplicits.push(line);
     }
 
     if (item.localStatsPrecomputed) {
@@ -252,17 +302,17 @@ export function resolveItemEffectiveStats(item: Item, game: GameId): ResolvedIte
     const baseWard = (rawBase.ward ?? 0) + acc.flatWard;
 
     const computedArmour: ArmourBaseStats = {
-      ...(baseArm > 0 ? { armour: Math.round(baseArm * (1 + acc.incArmour / 100) * qMult) } : {}),
-      ...(baseEva > 0 ? { evasion: Math.round(baseEva * (1 + acc.incEvasion / 100) * qMult) } : {}),
-      ...(baseEs > 0 ? { energyShield: Math.round(baseEs * (1 + acc.incEs / 100) * qMult) } : {}),
-      ...(baseWard > 0 ? { ward: Math.round(baseWard * (1 + acc.incWard / 100) * qMult) } : {}),
+      ...(baseArm > 0 ? { armour: Math.round(baseArm * Math.max(0, 1 + acc.incArmour / 100) * qMult) } : {}),
+      ...(baseEva > 0 ? { evasion: Math.round(baseEva * Math.max(0, 1 + acc.incEvasion / 100) * qMult) } : {}),
+      ...(baseEs > 0 ? { energyShield: Math.round(baseEs * Math.max(0, 1 + acc.incEs / 100) * qMult) } : {}),
+      ...(baseWard > 0 ? { ward: Math.round(baseWard * Math.max(0, 1 + acc.incWard / 100) * qMult) } : {}),
       ...(rawBase.blockChance || acc.flatBlock
         ? { blockChance: Math.min(100, (rawBase.blockChance ?? 0) + acc.flatBlock) }
         : {}),
     };
 
     return {
-      armourStats: computedArmour,
+      armourStats: Object.keys(computedArmour).length > 0 ? computedArmour : undefined,
       weaponStats: undefined,
       globalImplicits: stripLocalSpirit(globalImplicits),
       globalExplicits: stripLocalSpirit(globalExplicits),
@@ -280,10 +330,10 @@ export function resolveItemEffectiveStats(item: Item, game: GameId): ResolvedIte
     eleDamage: {},
   };
   for (const line of item.implicits) {
-    if (!tryConsumeLocalWeaponMod(line, acc)) globalImplicits.push(line);
+    if (!tryConsumeLocalWeaponMod(line, acc, opts?.allowBonded)) globalImplicits.push(line);
   }
   for (const line of item.explicits) {
-    if (!tryConsumeLocalWeaponMod(line, acc)) globalExplicits.push(line);
+    if (!tryConsumeLocalWeaponMod(line, acc, opts?.allowBonded)) globalExplicits.push(line);
   }
 
   if (item.localStatsPrecomputed) {

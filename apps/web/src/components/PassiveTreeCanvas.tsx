@@ -212,8 +212,8 @@ export function PassiveTreeCanvas() {
   // Re-evaluate whenever game switches or official full JSON finishes loading
   const tree = useMemo(() => {
     void treeRevision;
-    return getTreeForGame(build.game);
-  }, [build.game, treeRevision]);
+    return getTreeForGame(build.game, build.tree.treeVersion);
+  }, [build.game, build.tree.treeVersion, treeRevision]);
 
   const isOfficialFull = Boolean(tree.isOfficialFull);
 

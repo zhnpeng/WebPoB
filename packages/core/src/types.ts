@@ -41,7 +41,10 @@ export type EquipmentSlotId =
   | 'Amulet'
   | 'Ring 1'
   | 'Ring 2'
+  | 'Ring 3'
   | 'Belt'
+  | 'Graft 1'
+  | 'Graft 2'
   | 'Flask 1'
   | 'Flask 2'
   | 'Flask 3'
@@ -51,7 +54,7 @@ export type EquipmentSlotId =
   | 'Charm 2'
   | 'Charm 3';
 
-export type ModType = 'BASE' | 'INC' | 'MORE' | 'OVERRIDE' | 'FLAG' | 'LIST';
+export type ModType = 'BASE' | 'INC' | 'MORE' | 'OVERRIDE' | 'FLAG' | 'LIST' | 'MAX';
 
 /**
  * Bitmask flags matching Path of Building's ModFlag taxonomy.
@@ -80,6 +83,7 @@ export const ModFlag = {
   Claw: 1 << 19,
   Crossbow: 1 << 20,
   Quarterstaff: 1 << 21,
+  Talisman: 1 << 22,
 } as const;
 
 export const KeywordFlag = {
@@ -232,6 +236,7 @@ export interface SkillPartDefinition {
   area?: boolean;
   critChance?: number;
   damageEffectiveness?: number;
+  attackDamageMultiplierPct?: number;
   attackSpeedMultiplier?: number;
   baseDamage?: Partial<Record<DamageType, [number, number]>>;
   compiledMods?: CompiledGemMod[];
@@ -352,10 +357,16 @@ export interface GemInstance {
   skillPart?: number;
   /** Selected 1-based PoE 2 statSet index (PoB2 `statSetIndex` / `statSetIndexCalcs`). */
   statSetIndex?: number;
+  /** Selected skill stage count from PoB XML (`skillStageCount` / `skillStageCountCalcs`). */
+  stageCount?: number;
+  /** True when the skill is granted directly by an equipped item (`fromItem` / `<Skill source="Item:...">`). */
+  fromItem?: boolean;
   /** PoB1 Vaal gem flag: whether the base skill / aura is enabled (`enableGlobal1`). */
   enableGlobal1?: boolean;
   /** PoB1 Vaal gem flag: whether the Vaal active skill is enabled (`enableGlobal2`). */
   enableGlobal2?: boolean;
+  /** PoB2 corrupted gem level delta (`<Gem corruptLevel="1"/>`), already added into `level`. */
+  corruptLevel?: number;
 }
 
 export interface SkillGroup {
@@ -374,6 +385,8 @@ export interface SkillGroup {
   skillPart?: number;
   /** Selected 1-based PoE 2 statSet index on the skill group (PoB2 `statSetIndex` / `statSetIndexCalcs`). */
   statSetIndex?: number;
+  /** Selected skill stage count on the skill group (`skillStageCount` / `skillStageCountCalcs`). */
+  stageCount?: number;
   /** Optional PoB `<Skill source="...">` origin descriptor (e.g. `Item:1:...`). */
   source?: string;
   gems: GemInstance[];
@@ -385,7 +398,7 @@ export interface WeaponBaseStats {
   elementalDamage?: Partial<Record<'Fire' | 'Cold' | 'Lightning' | 'Chaos', [number, number]>>;
   attacksPerSecond: number;
   critChance: number;
-  weaponType: 'Sword' | 'Axe' | 'Mace' | 'Bow' | 'Wand' | 'Staff' | 'Dagger' | 'Claw' | 'Crossbow' | 'Quarterstaff';
+  weaponType: 'Sword' | 'Axe' | 'Mace' | 'Bow' | 'Wand' | 'Staff' | 'Dagger' | 'Claw' | 'Crossbow' | 'Quarterstaff' | 'Talisman';
   twoHanded: boolean;
 }
 
@@ -488,6 +501,10 @@ export interface BuildConfig {
   pantheonMinor?: 'None' | 'Abberath' | 'Gruthkul' | 'Ralakesh' | 'Shakari' | 'Tukohama' | 'Garukhan';
   /** Free-form custom modifiers (supports both English and Chinese lines!). */
   customMods: string;
+  /** Generic PoB `<ConfigSet><Input>` key-value map for Condition/Multiplier resolution. */
+  rawInputs?: Record<string, boolean | number | string>;
+  /** Optional imported party aura/buff/curse modifiers from PoB `<Party><ImportedBuffs>`. */
+  importedPartyMods?: Mod[];
 }
 
 export interface TreeSpec {
@@ -505,6 +522,8 @@ export interface TreeSpec {
   socketedJewels?: Record<number, string>;
   /** PoE 2: Chosen attribute overrides on "+5 to any Attribute" travel nodes. */
   attributeOverrides?: Record<number, 'str' | 'dex' | 'int'>;
+  /** PoE 1: Synthetic cluster jewel subgraph passive node IDs (`>= 65536`). */
+  clusterNodeIds?: number[];
   /** PoE 1: Tattoo / Runegraft passive node overrides (`<Overrides><Override nodeId="..." dn="...">`). */
   nodeOverrides?: Record<number, { name?: string; stats: string[] }>;
 }

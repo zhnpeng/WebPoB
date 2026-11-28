@@ -270,11 +270,50 @@ describe('equipmentAndFlasks — Utility Flasks & PoE 1 Mageblood', () => {
     // Global +20% flask effect
     const res = evaluateActiveFlasks(build, 20);
     expect(res.grantsOnslaught).toBe(true);
+    // Silver Flask must NOT push raw 'Onslaught' into modLines (engine.ts injects scaled Onslaught once)
+    expect(res.modLines.some((l) => /^Onslaught$/i.test(l))).toBe(false);
+    expect(res.perFlask.find((f) => f.baseName === 'Silver Flask')?.baseBuffLines).toContain('Onslaught');
     expect(res.grantsConsecratedGround).toBe(true);
     expect(res.bottledFaithBaseCrit).toBeCloseTo(1.8, 2);
     expect(res.progenesisDelayPct).toBe(30); // trunc(25 * 1.2) = 30
     expect(res.modLines).toContain('48% increased Damage'); // Sulphur 40 * 1.2
     expect(res.modLines).toContain('Enemies take 12% increased Damage');
+  });
+
+  it('sets grantsOnslaught without emitting raw Onslaught into modLines (preventing 2x speed with engine.ts)', () => {
+    const silver = makeItem({
+      id: 'fl1',
+      name: "Alchemist's Silver Flask of the Cheetah",
+      baseName: 'Silver Flask',
+      rarity: 'MAGIC',
+      implicits: ['{enchant}70% increased effect'],
+      explicits: ['25% increased effect', '14% increased Movement Speed during Effect'],
+    });
+    const explicitOnslaughtFlask = makeItem({
+      id: 'fl2',
+      name: 'Special Onslaught Flask',
+      baseName: 'Diamond Flask',
+      rarity: 'UNIQUE',
+      explicits: ['Onslaught during Effect'],
+    });
+    const build = makeMinimalBuild({
+      items: { fl1: silver, fl2: explicitOnslaughtFlask },
+      equipped: { 'Flask 1': 'fl1', 'Flask 2': 'fl2' },
+      activeFlaskSlots: { 'Flask 1': true, 'Flask 2': true },
+    });
+
+    const res = evaluateActiveFlasks(build, 0);
+    expect(res.grantsOnslaught).toBe(true);
+    expect(res.modLines.some((l) => /^Onslaught$/i.test(l))).toBe(false);
+    expect(res.perFlask[0]?.effectMult).toBeCloseTo(1.95, 4);
+
+    // Parsing res.modLines into ModDB must NOT add raw +20% Attack/Cast Speed from Onslaught
+    const db = new ModDB();
+    db.addMods(parseModLines(res.modLines, 'Active Flasks'));
+    expect(db.sum('INC', 'Speed', 1)).toBe(0); // ModFlag.Attack = 1
+    expect(db.sum('INC', 'Speed', 2)).toBe(0); // ModFlag.Spell = 2
+    // Only Cheetah suffix (trunc(14 * 1.95) = 27% Movement Speed) should be present
+    expect(db.sum('INC', 'MovementSpeed')).toBe(27);
   });
 });
 
@@ -553,13 +592,16 @@ describe('equipmentAndFlasks — Special Meta Unique Gear Mechanics', () => {
     expect(db.flag('ChaosTakenFromManaBeforeLife')).toBe(true);
   });
 
-  it('Prism of Belief returns skill-name-specific gem level bonuses', () => {
+  it('Prism of Belief returns lowercase skill-name-specific gem level bonuses and dedupes against GemLevel', () => {
     const prism = makeItem({
       id: 'j-prism',
       name: 'Prism of Belief',
       baseName: 'Diamond',
       rarity: 'UNIQUE',
-      explicits: ['+3 to Level of all Earthshatter Skills'],
+      explicits: [
+        '+3 to Level of all Earthshatter Skills',
+        '+3 to Level of all Supercharged Slam Skills',
+      ],
     });
 
     const db = new ModDB();
@@ -567,8 +609,64 @@ describe('equipmentAndFlasks — Special Meta Unique Gear Mechanics', () => {
       socketedJewels: [prism],
     });
 
-    expect(res.skillSpecificGemLevels).toEqual({ Earthshatter: 3 });
-    expect(db.sum('BASE', 'SkillLevel:Earthshatter')).toBe(3);
+    expect(res.skillSpecificGemLevels).toEqual({
+      earthshatter: 3,
+      'supercharged slam': 3,
+    });
+    expect(db.sum('BASE', 'SkillLevel:earthshatter')).toBe(3);
+    expect(db.sum('BASE', 'SkillLevel:supercharged slam')).toBe(3);
+
+    // When modParserPoe2 already emitted GemLevel:supercharged+slam into db, skillSpecificGemLevels dedupes it
+    const dbPreParsed = new ModDB();
+    dbPreParsed.addMod({
+      name: 'GemLevel:supercharged+slam',
+      type: 'BASE',
+      value: 3,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Jewel (Prism of Belief)',
+    });
+    const resDeduped = evaluateSpecialUniqueGearMechanics([], dbPreParsed, 'poe2', {
+      socketedJewels: [prism],
+    });
+    expect(resDeduped.skillSpecificGemLevels).toEqual({ earthshatter: 3 });
+  });
+
+  it('scales Equipped Focus non-local mods when EffectOfBonusesFromFocus is set (e.g. Instruments of Power -50%)', () => {
+    const focus = makeItem({
+      id: 'w2-focus',
+      name: 'Ghoul Chant',
+      baseName: 'Tasalian Focus',
+      rarity: 'RARE',
+      explicits: [
+        '+120 to maximum Energy Shield',
+        '83% increased Spell Damage',
+        '31% increased Critical Spell Damage Bonus',
+      ],
+    });
+
+    const db = new ModDB();
+    db.addMods(
+      parseModLines(
+        ['83% increased Spell Damage', '31% increased Critical Spell Damage Bonus'],
+        'Focus',
+      ),
+    );
+    db.addMod({
+      name: 'EffectOfBonusesFromFocus',
+      type: 'INC',
+      value: -50,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Ascendancy: Instruments of Power',
+    });
+
+    evaluateSpecialUniqueGearMechanics([{ slot: 'Weapon 2', item: focus }], db, 'poe2');
+
+    // PoB 2 ModStore.lua:114 truncation: 83 + trunc(-41.5) = 42; 31 + trunc(-15.5) = 16
+    expect(db.sum('INC', 'Damage', 2)).toBe(42);
+    expect(db.sum('INC', 'CritDamageBonusInc', 2) + db.sum('INC', 'CritMultiplier', 2)).toBe(16);
+    expect(db.flag('FocusEffectApplied')).toBe(true);
   });
 
   it('handles Cogwork/Helical Ring suffix magnitudes, Sacred Flame, Aegis Aurora, and Svalinn', () => {
@@ -636,5 +734,129 @@ describe('equipmentAndFlasks — Special Meta Unique Gear Mechanics', () => {
     expect(db.flag('BlockChanceLucky')).toBe(true);
     expect(db.sum('BASE', 'MaxBlockChance')).toBe(-10);
     expect(db.sum('BASE', 'MaxSpellBlockChance')).toBe(-10);
+  });
+
+  it('scales PoE 1 Tinctures with PoB multiplicative quality formula, filters meta lines, and normalizes WeaponMelee scope when melee weapon equipped', () => {
+    const claw = makeItem({
+      id: 'w1',
+      name: 'Viper Talon',
+      baseName: 'Imperial Claw',
+      rarity: 'RARE',
+      slotType: 'Weapon 1',
+    });
+    const prismaticTincture = makeItem({
+      id: 'fl4',
+      name: 'Enriched Prismatic Tincture of Overpowering',
+      baseName: 'Enriched Prismatic Tincture of Overpowering',
+      rarity: 'MAGIC',
+      quality: 20,
+      implicits: ['162% increased Elemental Damage with Melee Weapons'],
+      explicits: [
+        'Inflicts Mana Burn every 0.43 Seconds',
+        '8 Second Cooldown when Deactivated',
+        '35% increased effect',
+        '64% increased Mana Burn rate',
+        'Melee Weapon Damage Penetrates 30% Elemental Resistances',
+      ],
+    });
+    const rosethornTincture = makeItem({
+      id: 'fl5',
+      name: 'Concentrated Rosethorn Tincture of Mastery',
+      baseName: 'Concentrated Rosethorn Tincture of Mastery',
+      rarity: 'MAGIC',
+      quality: 20,
+      implicits: ['243% increased Critical Strike Chance with Melee Weapons'],
+      explicits: [
+        '35% increased effect',
+        '69% increased Mana Burn rate',
+        '46% increased Melee Weapon Attack Speed',
+      ],
+    });
+
+    const build = makeMinimalBuild({
+      items: { w1: claw, fl4: prismaticTincture, fl5: rosethornTincture },
+      equipped: { 'Weapon 1': 'w1', 'Flask 4': 'fl4', 'Flask 5': 'fl5' },
+      activeFlaskSlots: { 'Flask 4': true, 'Flask 5': true },
+    });
+
+    // Global 71% + Local 35% = 106% -> floor((1 + 1.06) * 1.20 * 100) / 100 = 2.47 (exact PoB1 CalcPerform.lua:1938)
+    const evalRes = evaluateActiveFlasks(build, 0, { tinctureEffectPct: 71 });
+    expect(evalRes.perFlask[0]?.effectMult).toBe(2.47);
+    expect(evalRes.perFlask[1]?.effectMult).toBe(2.47);
+    // Exact PoB1 integer outputs: floor(162*2.47)=400, floor(30*2.47)=74, floor(243*2.47)=600, floor(46*2.47)=113
+    expect(evalRes.modLines).toContain('400% increased Elemental Damage with Attacks');
+    expect(evalRes.modLines).toContain('Attack Damage Penetrates 74% Elemental Resistances');
+    expect(evalRes.modLines).toContain('600% increased Critical Strike Chance with Attacks');
+    expect(evalRes.modLines).toContain('113% increased Attack Speed');
+    // Tincture meta lines filtered out
+    expect(evalRes.modLines.some((l) => /Inflicts Mana Burn|Cooldown when Deactivated/i.test(l))).toBe(false);
+
+    // Verify parsed mods apply to Attack Projectile skills (e.g. Lightning Strike part 2: Attack|Projectile|Hit, NO ModFlag.Melee)
+    const db = new ModDB();
+    db.addMods(parseModLines(evalRes.modLines, 'Active Flasks'));
+    const lsProjFlags = 1 | 4 | 128; // Attack | Hit | Projectile
+    expect(db.sum('INC', 'ElementalDamage', lsProjFlags)).toBe(400);
+    expect(db.sum('BASE', 'LightningPenetration', lsProjFlags)).toBe(74);
+    expect(db.sum('INC', 'CritChance', lsProjFlags)).toBe(600);
+    expect(db.sum('INC', 'Speed', lsProjFlags)).toBe(113);
+  });
+
+  it('evaluates PoE 2 Mageblood duplicate Legacy scaling accurately across 1-duplicate and 2-duplicate rolls', () => {
+    const mbInvoker = makeItem({
+      id: 'mb1',
+      name: 'Mageblood',
+      baseName: 'Heavy Belt',
+      rarity: 'UNIQUE',
+      explicits: [
+        'Legacy of Sulphur',
+        'Legacy of Diamond',
+        'Legacy of Silver',
+        'Legacy of Sulphur',
+        "All Mage's Legacies have 48% increased effect per duplicate Mage's Legacy you have",
+      ],
+    });
+    expect(evaluatePoe2MagebloodLegacies(mbInvoker)).toEqual([
+      '88% increased Damage',
+      '111% increased Global Critical Strike Chance',
+      '44% increased Attack and Cast Speed',
+    ]);
+
+    const mbOracle = makeItem({
+      id: 'mb2',
+      name: 'Mageblood',
+      baseName: 'Heavy Belt',
+      rarity: 'UNIQUE',
+      explicits: [
+        'Legacy of Quicksilver',
+        'Legacy of Silver',
+        'Legacy of Sulphur',
+        'Legacy of Silver',
+        "All Mage's Legacies have 46% increased effect per duplicate Mage's Legacy you have",
+      ],
+    });
+    expect(evaluatePoe2MagebloodLegacies(mbOracle)).toEqual([
+      '43% increased Movement Speed',
+      '43% increased Attack and Cast Speed',
+      '87% increased Damage',
+    ]);
+
+    const mbTwoDupes = makeItem({
+      id: 'mb3',
+      name: 'Mageblood',
+      baseName: 'Heavy Belt',
+      rarity: 'UNIQUE',
+      explicits: [
+        'Legacy of Sulphur',
+        'Legacy of Silver',
+        'Legacy of Sulphur',
+        'Legacy of Sulphur',
+        "All Mage's Legacies have 49% increased effect per duplicate Mage's Legacy you have",
+      ],
+    });
+    // 2 duplicates * 49% = +98% effect -> floor(60 * 1.98) = 118, floor(30 * 1.98) = 59
+    expect(evaluatePoe2MagebloodLegacies(mbTwoDupes)).toEqual([
+      '118% increased Damage',
+      '59% increased Attack and Cast Speed',
+    ]);
   });
 });

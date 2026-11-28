@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { ClipboardPaste, Copy, ExternalLink, FlaskConical, GitCompareArrows, Hammer, Layers, Power, PowerOff, Search, Shield, Sparkles, Trash2, TrendingUp, X } from 'lucide-react';
 import type { EquipmentSlotId, Item } from '@webpob/core';
 import {
+  getBaseItemStats,
   getLocalizedBaseName,
   getLocalizedUniqueName,
   getPresetItemsForGame,
@@ -12,7 +13,15 @@ import {
   type CompactUniqueEntry,
 } from '@webpob/data';
 import { parseItemText } from '@webpob/codec';
-import { calculateBuild, parseModLine, rankUniqueUpgradesForSlot, resolveItemEffectiveStats } from '@webpob/calc';
+import {
+  calculateBuild,
+  canWieldTwoHandedMartialInOneHand,
+  canWieldWeaponInOneHand,
+  hasCantUseBodyArmour,
+  parseModLine,
+  rankUniqueUpgradesForSlot,
+  resolveItemEffectiveStats,
+} from '@webpob/calc';
 import { getSlotLabel, localizeStatLine, t, toTraditionalZh, uiText } from '@webpob/i18n';
 import { useWebPobStore } from '../store/useWebPobStore';
 import { ItemCompareModal } from './ItemCompareModal';
@@ -188,11 +197,58 @@ export function ItemsTab() {
     return getUniquesForGame(build.game);
   }, [build.game, treeRevision]);
 
+  const canWield2HIn1H = useMemo(() => {
+    void treeRevision;
+    return canWieldTwoHandedMartialInOneHand(build);
+  }, [build, treeRevision]);
+
+  const cantUseBodyArmour = useMemo(() => hasCantUseBodyArmour(build), [build]);
+
+  const resolveTargetEquipSlot = (
+    itemSlotType: EquipmentSlotId | 'Any',
+    weaponStats: Item['weaponStats'],
+    preferredSlot: EquipmentSlotId,
+  ): EquipmentSlotId => {
+    if (itemSlotType === 'Any') return preferredSlot;
+    if (itemSlotType === 'Weapon 1') {
+      if (
+        (preferredSlot === 'Weapon 2' || preferredSlot === 'Weapon 2 Swap') &&
+        canWieldWeaponInOneHand(weaponStats, canWield2HIn1H)
+      ) {
+        return preferredSlot;
+      }
+      if (preferredSlot === 'Weapon 1 Swap') return 'Weapon 1 Swap';
+      if (build.game === 'poe2' && build.activeWeaponSet === 2) return 'Weapon 1 Swap';
+      return 'Weapon 1';
+    }
+    if (itemSlotType === 'Weapon 2') {
+      if (preferredSlot === 'Weapon 2 Swap') return 'Weapon 2 Swap';
+      if (build.game === 'poe2' && build.activeWeaponSet === 2) return 'Weapon 2 Swap';
+      return 'Weapon 2';
+    }
+    if (itemSlotType === 'Ring 1' && (preferredSlot === 'Ring 1' || preferredSlot === 'Ring 2' || preferredSlot === 'Ring 3')) {
+      return preferredSlot;
+    }
+    if (itemSlotType === 'Flask 1' && preferredSlot.startsWith('Flask ')) {
+      return preferredSlot;
+    }
+    if (itemSlotType === 'Charm 1' && preferredSlot.startsWith('Charm ')) {
+      return preferredSlot;
+    }
+    return itemSlotType;
+  };
+
   const filteredUniques = useMemo(() => {
     const q = uniqueSearch.trim().toLowerCase();
     const list: CompactUniqueEntry[] = [];
     for (const u of officialUniques) {
-      if (uniqueSlotFilter !== 'ALL' && u.s !== uniqueSlotFilter) continue;
+      if (uniqueSlotFilter !== 'ALL' && u.s !== uniqueSlotFilter) {
+        const allowWeaponInOffhand =
+          uniqueSlotFilter === 'Weapon 2' &&
+          u.s === 'Weapon 1' &&
+          canWieldWeaponInOneHand(getBaseItemStats(u.b, 0, build.game)?.weapon, canWield2HIn1H);
+        if (!allowWeaponInOffhand) continue;
+      }
       if (q) {
         const hay = `${u.en} ${u.zh ?? ''} ${u.zhTw ?? ''} ${u.b} ${u.bz ?? ''} ${u.bzTw ?? ''} ${u.e.join(' ')}`.toLowerCase();
         if (!hay.includes(q)) continue;
@@ -201,7 +257,7 @@ export function ItemsTab() {
       if (list.length >= 60) break;
     }
     return list;
-  }, [officialUniques, uniqueSearch, uniqueSlotFilter]);
+  }, [officialUniques, uniqueSearch, uniqueSlotFilter, build.game, canWield2HIn1H]);
 
   const handleParse = (autoEquip: boolean) => {
     const parsed = parseItemText(pasteText, undefined, build.game);
@@ -209,15 +265,9 @@ export function ItemsTab() {
       setStatusMsg({ ok: false, text: t(locale, 'items.parseError') });
       return;
     }
-    const resolveEquipSlot = (): EquipmentSlotId => {
-      if (parsed.slotType === 'Any') return selectedSlot;
-      if (build.game === 'poe2' && build.activeWeaponSet === 2) {
-        if (parsed.slotType === 'Weapon 1') return 'Weapon 1 Swap';
-        if (parsed.slotType === 'Weapon 2') return 'Weapon 2 Swap';
-      }
-      return parsed.slotType;
-    };
-    const targetSlot = autoEquip ? resolveEquipSlot() : undefined;
+    const targetSlot = autoEquip
+      ? resolveTargetEquipSlot(parsed.slotType, parsed.weaponStats, selectedSlot)
+      : undefined;
     const beforeCalc = calc;
     addItem(parsed, targetSlot);
     if (targetSlot) {
@@ -272,7 +322,7 @@ export function ItemsTab() {
     setPasteText('');
   };
 
-  const handleEquipUnique = (entry: CompactUniqueEntry) => {
+  const handleEquipUnique = (entry: CompactUniqueEntry, explicitSlot?: EquipmentSlotId) => {
     const item = instantiateUniqueItem(build.game, entry, 20);
     if (entry.s === 'Jewel') {
       addItem(item);
@@ -283,7 +333,8 @@ export function ItemsTab() {
       });
       return;
     }
-    const targetSlot = (entry.s !== 'Any' ? entry.s : selectedSlot) as EquipmentSlotId;
+    const targetSlot =
+      explicitSlot ?? resolveTargetEquipSlot(item.slotType, item.weaponStats, selectedSlot);
     addItem(item, targetSlot);
     equipItem(targetSlot, item.id);
     if (targetSlot.startsWith('Flask ') && !build.activeFlaskSlots?.[targetSlot]) {
@@ -568,9 +619,25 @@ export function ItemsTab() {
                 }`}
               >
                 <div className="min-w-0">
-                  <div className="text-[11px] text-zinc-400">{getSlotLabel(locale, slot)}</div>
+                  <div className="text-[11px] text-zinc-400 flex items-center gap-1.5 flex-wrap">
+                    <span>{getSlotLabel(locale, slot)}</span>
+                    {canWield2HIn1H && (slot === 'Weapon 2' || slot === 'Weapon 2 Swap') && (
+                      <span className="px-1.5 py-0.2 rounded text-[10px] bg-amber-500/15 border border-amber-500/40 text-amber-200">
+                        {uiText(locale, '支持双持双手锤/斧/剑', '2H Martial OK')}
+                      </span>
+                    )}
+                    {cantUseBodyArmour && slot === 'Body Armour' && (
+                      <span className="px-1.5 py-0.2 rounded text-[10px] bg-rose-500/15 border border-rose-500/40 text-rose-300">
+                        {uiText(locale, '祭礼之雨已禁用', 'Disabled')}
+                      </span>
+                    )}
+                  </div>
                   {item ? (
-                    <div className={`text-xs font-semibold truncate ${RARITY_COLOR[item.rarity].split(' ')[0]}`}>
+                    <div
+                      className={`text-xs font-semibold truncate ${RARITY_COLOR[item.rarity].split(' ')[0]} ${
+                        cantUseBodyArmour && slot === 'Body Armour' ? 'opacity-50 line-through' : ''
+                      }`}
+                    >
                       {displayName(item)}{' '}
                       <span className="text-zinc-400 font-normal">({displayBase(item)})</span>
                     </div>
@@ -1032,15 +1099,33 @@ export function ItemsTab() {
                         : getSlotLabel(locale, u.s as EquipmentSlotId)}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handleEquipUnique(u)}
-                    className="px-2 py-0.5 rounded text-[11px] bg-orange-500/20 hover:bg-orange-500/30 text-orange-200 border border-orange-500/40 shrink-0 cursor-pointer"
-                  >
-                    {u.s === 'Jewel'
-                      ? uiText(locale, '添加', 'Add')
-                      : t(locale, 'items.equip')}
-                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleEquipUnique(u)}
+                      className="px-2 py-0.5 rounded text-[11px] bg-orange-500/20 hover:bg-orange-500/30 text-orange-200 border border-orange-500/40 shrink-0 cursor-pointer"
+                    >
+                      {u.s === 'Jewel'
+                        ? uiText(locale, '添加', 'Add')
+                        : t(locale, 'items.equip')}
+                    </button>
+                    {u.s === 'Weapon 1' &&
+                      canWieldWeaponInOneHand(getBaseItemStats(u.b, 0, build.game)?.weapon, canWield2HIn1H) && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleEquipUnique(
+                              u,
+                              build.game === 'poe2' && build.activeWeaponSet === 2 ? 'Weapon 2 Swap' : 'Weapon 2',
+                            )
+                          }
+                          className="px-1.5 py-0.5 rounded text-[11px] bg-amber-500/15 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 shrink-0 cursor-pointer"
+                          title={uiText(locale, '装备到副手（支持双持）', 'Equip to Offhand (Dual Wield)')}
+                        >
+                          {uiText(locale, '副手', 'Off')}
+                        </button>
+                      )}
+                  </div>
                 </div>
                 {u.e.length > 0 && (
                   <div className="text-[10px] text-indigo-200/80 line-clamp-2 leading-tight">
@@ -1137,7 +1222,7 @@ export function ItemsTab() {
                 <button
                   type="button"
                   onClick={() => {
-                    const slot = item.slotType !== 'Any' ? item.slotType : selectedSlot;
+                    const slot = resolveTargetEquipSlot(item.slotType, item.weaponStats, selectedSlot);
                     addItem(item, slot);
                     equipItem(slot, item.id);
                   }}

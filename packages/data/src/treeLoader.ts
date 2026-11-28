@@ -98,6 +98,7 @@ export interface CompactSkillPartEntry {
   cc?: number;
   de?: number;
   am?: number;
+  asm?: number;
   bd?: Partial<Record<DamageType, [number, number]>>;
   cmods?: CompactCompiledMod[];
   sdata?: Record<string, number | boolean | string>;
@@ -516,7 +517,8 @@ function hydrateSkillParts(
       ...(p.area !== undefined ? { area: p.area } : {}),
       ...(p.cc !== undefined ? { critChance: p.cc } : {}),
       ...(p.de !== undefined ? { damageEffectiveness: p.de } : {}),
-      ...(p.am !== undefined ? { attackSpeedMultiplier: p.am } : {}),
+      ...(p.am !== undefined ? { attackDamageMultiplierPct: p.am } : {}),
+      ...(p.asm !== undefined ? { attackSpeedMultiplier: p.asm } : {}),
       ...(p.bd ? { baseDamage: p.bd } : {}),
       ...(compiledMods ? { compiledMods } : {}),
       ...(skillData ? { skillData } : {}),
@@ -655,7 +657,12 @@ function synthesizeGemDefinition(
             : {}),
           ...(entry.mrf !== undefined ? { manaReservationFlat: entry.mrf } : {}),
           spiritReservation: entry.sr ?? (game === 'poe2' ? (isFreeItemAura ? 0 : 30) : undefined),
-          stats: officialStats.length > 0 ? officialStats : [`15% more ${primaryDamageType} Damage`],
+          stats:
+            officialStats.length > 0
+              ? officialStats
+              : game === 'poe2'
+                ? []
+                : [`15% more ${primaryDamageType} Damage`],
         }
       : isAttack
         ? {
@@ -695,36 +702,22 @@ export function registerGemsData(game: GameId, payload: CompactGemsPayload): Gem
     seenKeys.add(key);
     const official = payloadByKey.get(key);
     if (!official) return g;
+    const synth = synthesizeGemDefinition(game, official);
     const altIds = mergeAltIds(
       g.altIds,
       official.altIds,
       official.id !== g.id ? official.id : undefined,
     );
-    const skillTypes = hydrateStringList(official.stypes);
-    const minionSkillTypes = hydrateStringList(official.mstypes);
-    const requireSkillTypes = hydrateStringList(official.reqTypes);
-    const addSkillTypes = hydrateStringList(official.addTypes);
-    const excludeSkillTypes = hydrateStringList(official.excTypes);
-    const compiledMods = hydrateCompiledMods(official.cmods);
-    const qualityCompiledMods = hydrateCompiledMods(official.qmods);
-    const skillData = hydrateSkillData(official.sdata);
-    const hydratedMinionBase = hydrateMinionBase(official.mb);
-    const ls = hydrateLevelScaling(official.ls);
-    const hydratedParts = hydrateSkillParts(official.parts);
     return {
-      ...g,
+      ...synth,
+      id: g.id,
+      name: {
+        en: synth.name.en,
+        zh: official.zh ?? g.name.zh ?? synth.name.en,
+        ...(g.name.zhTw ? { zhTw: g.name.zhTw } : {}),
+      },
+      isAuraOrBuff: g.isAuraOrBuff ?? synth.isAuraOrBuff,
       ...(altIds ? { altIds } : {}),
-      ...(skillTypes && !g.skillTypes ? { skillTypes } : {}),
-      ...(minionSkillTypes && !g.minionSkillTypes ? { minionSkillTypes } : {}),
-      ...(requireSkillTypes && !g.requireSkillTypes ? { requireSkillTypes } : {}),
-      ...(addSkillTypes && !g.addSkillTypes ? { addSkillTypes } : {}),
-      ...(excludeSkillTypes && !g.excludeSkillTypes ? { excludeSkillTypes } : {}),
-      ...(compiledMods && !g.compiledMods ? { compiledMods } : {}),
-      ...(qualityCompiledMods && !g.qualityCompiledMods ? { qualityCompiledMods } : {}),
-      ...(skillData && !g.skillData ? { skillData } : {}),
-      ...(hydratedMinionBase ? { minionBase: hydratedMinionBase } : {}),
-      ...(ls && !g.levelScaling ? { levelScaling: ls } : {}),
-      ...(hydratedParts && !g.parts ? { parts: hydratedParts } : {}),
     };
   });
 
@@ -761,7 +754,57 @@ export const OFFICIAL_TIMELESS_JEWELS_FILES: Record<GameId, string> = {
 export const OFFICIAL_POE2_RUNES_FILE = 'poe2-runes.json';
 
 const timelessJewelStore: Partial<Record<GameId, TimelessJewelDataset | null>> = {};
+const timelessLutBufferStore: Record<string, Uint8Array> = {};
 let poe2RunesStore: Poe2RunesDataset | null = null;
+
+function normalizeLutKey(file: string): string {
+  return file.trim().replace(/^\/+/, '').replace(/^data\/+/i, '');
+}
+
+/** Registers an inflated raw binary LUT buffer (e.g. `timeless/poe1-lethal-pride.bin`) in memory. */
+export function registerTimelessLutBuffer(file: string, rawBytes: Uint8Array): void {
+  const key = normalizeLutKey(file);
+  if (key) {
+    timelessLutBufferStore[key] = rawBytes;
+  }
+}
+
+/** Returns a previously registered raw binary Timeless Jewel LUT buffer, or `null`. */
+export function getTimelessLutBuffer(file: string): Uint8Array | null {
+  return timelessLutBufferStore[normalizeLutKey(file)] ?? null;
+}
+
+/**
+ * Lazily fetches and inflates a `deflate-raw` compressed Timeless Jewel LUT shard
+ * (e.g. `timeless/poe1-lethal-pride.bin`) using Web `DecompressionStream('deflate-raw')`.
+ */
+export async function loadTimelessLutBuffer(
+  file: string,
+  basePath = '/data',
+): Promise<Uint8Array | null> {
+  const key = normalizeLutKey(file);
+  if (timelessLutBufferStore[key]) return timelessLutBufferStore[key]!;
+  if (typeof fetch !== 'function') return null;
+  try {
+    const url = `${basePath.replace(/\/+$/, '')}/${key}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    if (typeof DecompressionStream === 'function' && res.body) {
+      const ds = new DecompressionStream('deflate-raw');
+      const inflatedStream = res.body.pipeThrough(ds);
+      const ab = await new Response(inflatedStream).arrayBuffer();
+      const bytes = new Uint8Array(ab);
+      timelessLutBufferStore[key] = bytes;
+      return bytes;
+    }
+    const ab = await res.arrayBuffer();
+    const bytes = new Uint8Array(ab);
+    timelessLutBufferStore[key] = bytes;
+    return bytes;
+  } catch {
+    return null;
+  }
+}
 
 /** Registers optional Timeless Jewel dataset in memory for a game. */
 export function registerTimelessJewelData(game: GameId, data: unknown): void {

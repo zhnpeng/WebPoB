@@ -303,6 +303,13 @@ function matchPrePeelStructural(line: string, source: string): Mod[] | null {
   if (/^Ignore all Movement Penalties from Armour$/i.test(line)) {
     return [makeMod('NoArmourMovePenalty', 'FLAG', true, source, 0, 0, [])];
   }
+  if (/^You have your maximum Fortification$/i.test(line)) {
+    return [
+      makeMod('AlwaysFortified', 'FLAG', true, source, 0, 0, []),
+      makeMod('Condition:Fortified', 'FLAG', true, source, 0, 0, []),
+      makeMod('Condition:HaveMaximumFortification', 'FLAG', true, source, 0, 0, []),
+    ];
+  }
   if (/^(?:Curses you inflict|[A-Za-z ']+?) can affect Hexproof Enemies$/i.test(line)) {
     return [makeMod('IgnoreHexproof', 'FLAG', true, source, 0, KeywordFlag.Curse, [])];
   }
@@ -326,7 +333,7 @@ function matchPrePeelStructural(line: string, source: string): Mod[] | null {
   // Standalone Keystone names (e.g. Unique items granting a Keystone directly)
   const STANDALONE_KEYSTONES: Readonly<Record<string, readonly string[]>> = {
     'eldritch battery': ['EldritchBattery'],
-    'unwavering stance': ['UnwaveringStance', 'StunImmune'],
+    'unwavering stance': ['UnwaveringStance', 'CannotEvade', 'StunImmune'],
     'iron reflexes': ['IronReflexes'],
     'chaos inoculation': ['ChaosInoculation', 'ChaosImmune'],
     'mind over matter': ['MindOverMatter'],
@@ -342,8 +349,8 @@ function matchPrePeelStructural(line: string, source: string): Mod[] | null {
     'iron will': ['IronWill'],
     'iron grip': ['IronGrip'],
     'elemental equilibrium': ['ElementalEquilibrium'],
-    'elemental overload': ['ElementalOverload'],
-    'perfect agony': ['PerfectAgony'],
+    'elemental overload': ['ElementalOverload', 'NoCritExtraDamage', 'NoCritAilments'],
+    'perfect agony': ['PerfectAgony', 'NoCritExtraDamage', 'NonCritsCannotInflictAilments'],
     'crimson dance': ['CrimsonDance'],
     'wicked ward': ['WickedWard'],
     'glancing blows': ['GlancingBlows'],
@@ -353,8 +360,8 @@ function matchPrePeelStructural(line: string, source: string): Mod[] | null {
     'ghost dance': ['GhostDance'],
     'lethe shade': ['LetheShade'],
     'eternal youth': ['EternalYouth'],
-    magebane: ['Magebane'],
-    'precise technique': ['PreciseTechnique'],
+    magebane: ['Magebane', 'NoDexEvasionBonus'],
+    'precise technique': ['PreciseTechnique', 'NeverCrit'],
     'divine shield': ['DivineShield'],
     'versatile combatant': ['VersatileCombatant'],
     'supreme ego': ['SupremeEgo'],
@@ -365,14 +372,25 @@ function matchPrePeelStructural(line: string, source: string): Mod[] | null {
   const ksFlags = STANDALONE_KEYSTONES[line.toLowerCase()];
   if (ksFlags) {
     const mods = ksFlags.map((f) => makeMod(f, 'FLAG', true, source, 0, 0, []));
-    if (line.toLowerCase() === 'chaos inoculation') {
+    const lowerKs = line.toLowerCase();
+    if (lowerKs === 'chaos inoculation') {
       mods.unshift(makeMod('Life', 'OVERRIDE', 1, source, 0, 0, []));
-    } else if (line.toLowerCase() === 'corrupted soul') {
+    } else if (lowerKs === 'corrupted soul') {
       mods.unshift(makeMod('LifeAsExtraES', 'BASE', 15, source, 0, 0, []));
-    } else if (line.toLowerCase() === 'divine flesh') {
+    } else if (lowerKs === 'divine flesh') {
       mods.unshift(
         makeMod('ChaosResistMax', 'BASE', 5, source, 0, 0, []),
         makeMod('EleTakenAsChaos', 'BASE', 50, source, 0, 0, []),
+      );
+    } else if (lowerKs === 'elemental overload') {
+      mods.push(makeMod('ElementalDamage', 'MORE', 40, source, 0, 0, []));
+    } else if (lowerKs === 'precise technique') {
+      mods.push(makeMod('PreciseTechniqueMorePct', 'BASE', 40, source, 0, 0, []));
+    } else if (lowerKs === 'magebane') {
+      mods.push(
+        makeMod('SpellSuppressionChance', 'BASE', 1, source, 0, 0, [
+          { type: 'PerStat', stat: 'Dex', div: 15 },
+        ]),
       );
     }
     return mods;
