@@ -935,6 +935,35 @@ describe('Mechanism-Layer Regression Suite — Round 2 (Upstream PoB spec/System
         'poe2',
       )!;
       expect(catRing.explicits).toEqual(['+120 to Armour', '+50 to Evasion Rating']);
+
+      // 7. Wave 4O-B: PoE 1 Horn/Ambusher/Paw weapon bases & post-Implicits stray Runic Ward summary guard
+      expect(
+        parseItemText("Rarity: RARE\nFoe Thirst\nFaun's Horn\nImplicits: 0\n+20 to Intelligence", 'w2', 'poe1')?.slotType,
+      ).toBe('Weapon 1');
+      expect(
+        parseItemText('Rarity: RARE\nRapture Edge\nAmbusher\nImplicits: 0\n20% increased Attack Speed', 'w3', 'poe1')?.slotType,
+      ).toBe('Weapon 1');
+      expect(
+        parseItemText("Rarity: RARE\nBlood Grip\nHellion's Paw\nImplicits: 0\n+20 to Dexterity", 'w4', 'poe1')?.slotType,
+      ).toBe('Weapon 1');
+      const strayWardGloves = parseItemText(
+        [
+          'Rarity: UNIQUE',
+          'Lochtonial Caress',
+          'Runeforged Fists of Stone',
+          'Quality: 20',
+          'Implicits: 3',
+          'Has +2 to Evasion Rating per player level',
+          'Has +1 to maximum Energy Shield per player level',
+          'Has +1 to maximum Runic Ward per player level',
+          'Runic Ward: 106',
+        ].join('\n'),
+        'g2',
+        'poe2',
+      )!;
+      expect(strayWardGloves.slotType).toBe('Gloves');
+      expect(strayWardGloves.armourStats?.ward).toBeUndefined();
+      expect(strayWardGloves.explicits).toEqual([]);
     });
 
     it('gems.ts strips singular Metadata/Items/Gem/, resolves PoE 2 aliases/companions, blocks fuzzy support hijacks, and treeLoader hydrates full KeywordFlag/ModFlag', () => {

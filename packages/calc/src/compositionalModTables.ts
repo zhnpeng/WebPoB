@@ -970,6 +970,10 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
     }),
   },
   {
+    regex: /(?:\s*,\s*|\s+)(?:for every|for each|per)\s+(\d+)\s+(?:player\s+)?Levels?$/i,
+    apply: (m) => ({ tags: [{ type: 'PerStat', stat: 'Level', div: Number(m[1]) }] }),
+  },
+  {
     regex: /(?:\s*,\s*|\s+)(?:for each|per)\s+(?:player\s+)?Level$/i,
     apply: () => ({ tags: [{ type: 'Multiplier', var: 'Level' }] }),
   },
@@ -1105,6 +1109,14 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
         },
       ],
     }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)if\s+you\s+have\s+at\s+least\s+(\d+)\s+(Strength|Dexterity|Intelligence)$/i,
+    apply: (m) => {
+      const attr = m[2]!.toLowerCase();
+      const stat = attr === 'strength' ? 'Str' : attr === 'dexterity' ? 'Dex' : 'Int';
+      return { tags: [{ type: 'Condition', var: `StatThreshold:${stat}:${m[1]}` }] };
+    },
   },
   {
     regex: /(?:\s*,\s*|\s+)if\s+you\s+have\s+at\s+least\s+(\d+)\s+([A-Za-z ]+?)\s+Master(?:y|ies)\s+allocated$/i,
@@ -1388,6 +1400,10 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
   {
     regex: /(?:\s*,\s*|\s+)for\s+each\s+type\s+of\s+Elemental\s+Ailment\s+on\s+(?:the\s+)?Enemy$/i,
     apply: () => ({ tags: [{ type: 'Multiplier', var: 'ElementalAilmentTypesOnEnemy' }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)while\s+a\s+(?:Rare\s+or\s+)?Unique\s+Enemy\s+is\s+(?:Nearby|in\s+your\s+Presence)$/i,
+    apply: () => ({ tags: [{ type: 'Condition', var: 'EnemyRareOrUnique' }] }),
   },
   {
     regex: /(?:\s*,\s*|\s+)while\s+your\s+Companion\s+is\s+in\s+your\s+Presence$/i,
@@ -1771,6 +1787,8 @@ export const MOD_NAME_TABLE: Record<string, ModNameTarget> = {
   'mana regeneration': { names: ['ManaRegen'] },
   'life and mana regeneration rate': { names: ['LifeRegen', 'ManaRegen'] },
   'energy shield regeneration rate': { names: ['EnergyShieldRegen'] },
+  'ward regeneration rate': { names: ['WardRegen'] },
+  'runic ward regeneration rate': { names: ['WardRegen'] },
   'energy shield recharge rate': { names: ['EnergyShieldRecharge'] },
   'start of energy shield recharge': { names: ['EnergyShieldRechargeFaster'] },
   'restoration of ward': { names: ['WardRechargeFaster'] },
@@ -2244,6 +2262,7 @@ export const MOD_NAME_TABLE: Record<string, ModNameTarget> = {
   'curse magnitudes': { names: ['CurseEffect'] },
   'effect of curses': { names: ['CurseEffect'] },
   'effect of your curses': { names: ['CurseEffect'] },
+  'effect of curses on them': { names: ['CurseEffect'] },
   'effect of curses on you': { names: ['CurseEffectOnSelf'] },
   'effect of your marks': { names: ['MarkEffect'] },
   'effect of your mark skills': { names: ['MarkEffect'] },
@@ -2534,6 +2553,7 @@ export function remapStatNameForScope(
       return statName.startsWith('Enemy') ? `${statName}Dealt` : `Enemy${statName}Dealt`;
     }
     if (statName === 'BaseCritChance' || statName === 'CritChance') return 'EnemyCritChance';
+    if (statName === 'CurseEffect') return 'CurseEffect';
     return statName.startsWith('Enemy') ? statName : `Enemy${statName}`;
   }
 

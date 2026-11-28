@@ -45,14 +45,14 @@ const SLOT_KEYWORDS: Array<{ pattern: RegExp; slot: EquipmentSlotId | 'Any'; wea
   { pattern: /\b(?:helmet|circlet|crown|tiara|helm|mask|hood|cap|burgonet|pelt|bascinet|sallet|coif|visage|casque|tricorne|cage|greathelm|barbute|guise|veil|diadem|hat|skullcap)\b|头盔|头环|王冠|冠冕|头冠|帽|面具|兜帽/i, slot: 'Helmet' },
   { pattern: /\b(?:shield|buckler|focus|quiver|targe|aegis)\b|盾|法器|箭袋/i, slot: 'Weapon 2' },
   // Weapons (strict English word boundaries so "Daggerfoot Shoes" or "Ornate Ringmail" never collide)
-  { pattern: /\bwands?\b|法杖|魔杖/i, slot: 'Weapon 1', weaponType: 'Wand', twoHanded: false },
+  { pattern: /\b(?:wands?|horns?)\b|法杖|魔杖/i, slot: 'Weapon 1', weaponType: 'Wand', twoHanded: false },
   { pattern: /\bquartersta(?:ff|ves)\b|细杖/i, slot: 'Weapon 1', weaponType: 'Quarterstaff', twoHanded: true },
   { pattern: /\b(?:staff|staves|warstaff|warstaves|runic fork|lathi|gnarled branch)\b|长杖|符文之叉/i, slot: 'Weapon 1', weaponType: 'Staff', twoHanded: true },
   { pattern: /\bcrossbows?\b|\barbalests?\b|战弩|十字弓|弩/i, slot: 'Weapon 1', weaponType: 'Crossbow', twoHanded: true },
   { pattern: /\b(?:bows?|longbow|shortbow|recurve)\b|长弓|弓/i, slot: 'Weapon 1', weaponType: 'Bow', twoHanded: true },
   { pattern: /\bspears?\b|\bglaives?\b|\bpikes?\b|\blances?\b|\bharpoons?\b|\btridents?\b|\bpartisans?\b|战矛|长矛/i, slot: 'Weapon 1', weaponType: 'Sword', twoHanded: false },
-  { pattern: /\b(?:daggers?|kris|sai|poignard|stiletto|dirk|skean|knife)\b|匕首/i, slot: 'Weapon 1', weaponType: 'Dagger', twoHanded: false },
-  { pattern: /\b(?:claws?|katar|talon|awl|gouger)\b|爪/i, slot: 'Weapon 1', weaponType: 'Claw', twoHanded: false },
+  { pattern: /\b(?:daggers?|ambushers?|kris|sai|poignard|stiletto|dirk|skean|knife)\b|匕首/i, slot: 'Weapon 1', weaponType: 'Dagger', twoHanded: false },
+  { pattern: /\b(?:claws?|paws?|katar|talon|awl|gouger)\b|爪/i, slot: 'Weapon 1', weaponType: 'Claw', twoHanded: false },
   { pattern: /\b(?:two[\s-]hand(?:ed)? sword|greatsword|claymore|bastard sword|exquisite blade)\b|双手剑/i, slot: 'Weapon 1', weaponType: 'Sword', twoHanded: true },
   { pattern: /\b(?:swords?|rapier|foil|estoc|sabre|cutlass|scimitar|gladius|falchion|blade)\b|剑/i, slot: 'Weapon 1', weaponType: 'Sword', twoHanded: false },
   { pattern: /\b(?:two[\s-]hand(?:ed)? axe|greataxe|chopper|labrys|fleshripper|poleaxe|halberd|bardiche)\b|双手斧/i, slot: 'Weapon 1', weaponType: 'Axe', twoHanded: true },
@@ -384,35 +384,46 @@ export function parseItemText(
       continue;
     }
 
-    // Defensive base stats
+    // Defensive base stats (header properties before `Implicits:` only; skip stray post-Implicits
+    // summary lines such as `Runic Ward: 106` on Runeforged Fists of Stone so they do not double-count)
     const armMatch = line.match(/^(?:Armour|护甲值|护甲)\s*[:：]\s*(\d+)/i);
     if (armMatch) {
-      armourStats.armour = Number(armMatch[1]);
-      hasArmourStats = true;
+      if (!afterImplicitsMarker) {
+        armourStats.armour = Number(armMatch[1]);
+        hasArmourStats = true;
+      }
       continue;
     }
     const evaMatch = line.match(/^(?:Evasion Rating|Evasion|闪避值|闪避)\s*[:：]\s*(\d+)/i);
     if (evaMatch) {
-      armourStats.evasion = Number(evaMatch[1]);
-      hasArmourStats = true;
+      if (!afterImplicitsMarker) {
+        armourStats.evasion = Number(evaMatch[1]);
+        hasArmourStats = true;
+      }
       continue;
     }
     const esMatch = line.match(/^(?:Energy Shield|能量护盾)\s*[:：]\s*(\d+)/i);
     if (esMatch) {
-      armourStats.energyShield = Number(esMatch[1]);
-      hasArmourStats = true;
+      if (!afterImplicitsMarker) {
+        armourStats.energyShield = Number(esMatch[1]);
+        hasArmourStats = true;
+      }
       continue;
     }
     const wardMatch = line.match(/^(?:Runic Ward|Ward|符文结界|结界)\s*[:：]\s*(\d+)/i);
     if (wardMatch) {
-      armourStats.ward = Number(wardMatch[1]);
-      hasArmourStats = true;
+      if (!afterImplicitsMarker) {
+        armourStats.ward = Number(wardMatch[1]);
+        hasArmourStats = true;
+      }
       continue;
     }
     const blkMatch = line.match(/^(?:Chance to Block|Block Chance|格挡几率|格挡率)\s*[:：]\s*(\d+)%/i);
     if (blkMatch) {
-      armourStats.blockChance = Number(blkMatch[1]);
-      hasArmourStats = true;
+      if (!afterImplicitsMarker) {
+        armourStats.blockChance = Number(blkMatch[1]);
+        hasArmourStats = true;
+      }
       continue;
     }
     const spiritPropMatch = line.match(/^(?:Spirit|精魂)\s*[:：]\s*\+?(\d+)/i);

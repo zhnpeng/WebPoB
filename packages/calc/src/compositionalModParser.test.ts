@@ -829,6 +829,56 @@ describe('Stage 2 & 3: Weapons, Skills, Elements, Conversions, Flat Damage, Pene
         tags: [{ type: 'Condition', var: 'EnemyMarked' }],
       }),
     ]);
+
+    // Wave 4O-B 63-build bug-regression corpus patterns
+    expect(parseModCompositional('-1 to Spirit per 2 Levels', 'item')).toEqual([
+      expect.objectContaining({
+        name: 'Spirit',
+        type: 'BASE',
+        value: -1,
+        tags: [{ type: 'PerStat', stat: 'Level', div: 2 }],
+      }),
+    ]);
+    expect(
+      parseModCompositional('88% increased Damage with Poison if you have at least 300 Dexterity', 'item'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'DotDamage',
+        type: 'INC',
+        value: 88,
+        keywordFlags: KeywordFlag.Poison,
+        tags: [{ type: 'Condition', var: 'StatThreshold:Dex:300' }],
+      }),
+    ]);
+    expect(
+      parseModCompositional('Regenerate 200 Energy Shield per second while a Rare or Unique Enemy is Nearby', 'item'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'EnergyShieldRegen',
+        type: 'BASE',
+        value: 200,
+        tags: [{ type: 'Condition', var: 'EnemyRareOrUnique' }],
+      }),
+    ]);
+    expect(
+      parseModCompositional("20% increased Runic Ward Regeneration Rate if you've dealt a Critical Hit Recently", 'item'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'WardRegen',
+        type: 'INC',
+        value: 20,
+        tags: [{ type: 'Condition', var: 'CritRecently' }],
+      }),
+    ]);
+    expect(
+      parseModCompositional('Nearby Enemies have 18% increased Effect of Curses on them', 'custom'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'CurseEffect',
+        type: 'INC',
+        value: 18,
+      }),
+    ]);
   });
 });
 
