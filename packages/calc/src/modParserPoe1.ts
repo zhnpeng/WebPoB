@@ -2132,7 +2132,7 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
         tags: [
           {
             type: 'Multiplier' as const,
-            var: /mine/i.test(m[2]!) ? 'MinesDetonatedRecently' : 'TrapsTriggeredRecently',
+            var: /mine/i.test(m[2]!) ? 'MineDetonatedRecently' : 'TrapTriggeredRecently',
             limit: Math.round(Number(m[3]) / Math.max(0.01, Number(m[1]))),
           },
         ],
@@ -2148,29 +2148,29 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
       },
     ],
   },
-  // Wave 5D: Mine/Warcry/Impale/Minion/Spider high-frequency PoE 1 rules
+  // Wave 5D / 6L: Mine/Warcry/Impale/Minion/Spider high-frequency PoE 1 rules
   {
-    pattern: /^(\d+)% increased Critical Strike Chance for each Mine Detonated(?: Recently, up to (\d+)%)?$/i,
+    pattern: /^(\d+)% increased Critical Strike Chance for each Mine Detonated(?: Recently, up to \+?(\d+)%)?$/i,
     build: (m, src) => {
       const v = Number(m[1]);
       const lim = m[2] ? Math.round(Number(m[2]) / Math.max(1, v)) : 10;
       return [
         {
           ...mkMod('CritChance', 'INC', v, src),
-          tags: [{ type: 'Multiplier' as const, var: 'MinesDetonatedRecently', limit: lim }],
+          tags: [{ type: 'Multiplier' as const, var: 'MineDetonatedRecently', limit: lim }],
         },
       ];
     },
   },
   {
-    pattern: /^\+(\d+)% to Critical Strike Multiplier for each Mine Detonated(?: Recently, up to (\d+)%)?$/i,
+    pattern: /^\+(\d+)% to Critical Strike Multiplier for each Mine Detonated(?: Recently, up to \+?(\d+)%)?$/i,
     build: (m, src) => {
       const v = Number(m[1]);
       const lim = m[2] ? Math.round(Number(m[2]) / Math.max(1, v)) : 10;
       return [
         {
           ...mkMod('CritMultiplier', 'BASE', v, src),
-          tags: [{ type: 'Multiplier' as const, var: 'MinesDetonatedRecently', limit: lim }],
+          tags: [{ type: 'Multiplier' as const, var: 'MineDetonatedRecently', limit: lim }],
         },
       ];
     },
@@ -2703,6 +2703,35 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
   {
     pattern: /^([+-]\d+) to Level of Socketed Support Gems$/i,
     build: (m, src) => [mkMod('SocketedGemLevel:support', 'BASE', Number(m[1]), src)],
+  },
+  // Wave 6L: poe1-regression-bugs sweep (Storm Secret HoT frequency, Cannot Block, Max-Rage Exposure, Socketed Spell Crit Multi, Per-Golem Buff Effect)
+  {
+    pattern: /^Herald of Thunder's Storms Hit Enemies with (\d+)% increased Frequency$/i,
+    build: (m, src) => [mkMod('HeraldOfThunderHitFrequency', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Cannot Block$/i,
+    build: (_, src) => [
+      mkMod('CannotBlockAttacks', 'FLAG', true, src),
+      mkMod('CannotBlockSpells', 'FLAG', true, src),
+    ],
+  },
+  {
+    pattern: /^Nearby Enemies have (Fire|Cold|Lightning) Exposure while at maximum Rage$/i,
+    build: (m, src) => [
+      {
+        ...mkMod(`${capFirst(m[1]!)}Exposure`, 'BASE', -10, src),
+        tags: [{ type: 'Condition' as const, var: 'AtMaxRage' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Socketed Spells have \+(\d+)% to Critical Strike Multiplier$/i,
+    build: (m, src) => [mkMod('SocketedCritMultiplier', 'BASE', Number(m[1]), src, ModFlag.Spell)],
+  },
+  {
+    pattern: /^(\d+)% increased Effect of the Buff granted by your (Stone|Chaos|Flame|Ice|Lightning|Carrion) Golems$/i,
+    build: (m, src) => [mkMod(`GolemBuffEffect:${capFirst(m[2]!)}`, 'INC', Number(m[1]), src)],
   },
 ];
 

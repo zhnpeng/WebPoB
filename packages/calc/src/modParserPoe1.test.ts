@@ -1424,7 +1424,7 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
         name: 'LifeRegenPercent',
         type: 'BASE',
         value: 2,
-        tags: [{ type: 'Multiplier', var: 'MinesDetonatedRecently', limit: 5 }],
+        tags: [{ type: 'Multiplier', var: 'MineDetonatedRecently', limit: 5 }],
       }),
     ]);
     expect(
@@ -1453,7 +1453,7 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
         name: 'CritChance',
         type: 'INC',
         value: 10,
-        tags: [{ type: 'Multiplier', var: 'MinesDetonatedRecently', limit: 10 }],
+        tags: [{ type: 'Multiplier', var: 'MineDetonatedRecently', limit: 10 }],
       }),
     ]);
     expect(parseModLine('Warcries Exert 1 additional Attack', 'Tree: Measured Fury')).toEqual([
@@ -1787,6 +1787,42 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
     ]);
     expect(parseModLine('25% of Physical Damage from Hits taken as fire', 'Custom')).toEqual([
       expect.objectContaining({ name: 'PhysicalDamageTakenAsFire', type: 'BASE', value: 25 }),
+    ]);
+  });
+
+  it('Wave 6L: Successive Detonations MineDetonatedRecently singular var + poe1-regression-bugs rules', () => {
+    expect(
+      parseModLine('+4% to Critical Strike Multiplier for each Mine Detonated Recently, up to +40%', 'Tree: Successive Detonations'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'CritMultiplier',
+        type: 'BASE',
+        value: 4,
+        tags: [{ type: 'Multiplier', var: 'MineDetonatedRecently', limit: 10 }],
+      }),
+    ]);
+    expect(
+      parseModLine("Herald of Thunder's Storms Hit Enemies with 50% increased Frequency", 'Item: Storm Secret'),
+    ).toEqual([
+      expect.objectContaining({ name: 'HeraldOfThunderHitFrequency', type: 'INC', value: 50 }),
+    ]);
+    expect(parseModLine('Cannot Block', 'Item')).toEqual([
+      expect.objectContaining({ name: 'CannotBlockAttacks', type: 'FLAG', value: true }),
+      expect.objectContaining({ name: 'CannotBlockSpells', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Nearby Enemies have Fire Exposure while at maximum Rage', 'Item')).toEqual([
+      expect.objectContaining({
+        name: 'FireExposure',
+        type: 'BASE',
+        value: -10,
+        tags: [{ type: 'Condition', var: 'AtMaxRage' }],
+      }),
+    ]);
+    expect(parseModLine('Socketed Spells have +50% to Critical Strike Multiplier', 'Item')).toEqual([
+      expect.objectContaining({ name: 'SocketedCritMultiplier', type: 'BASE', value: 50 }),
+    ]);
+    expect(parseModLine('36% increased Effect of the Buff granted by your Stone Golems', 'Item')).toEqual([
+      expect.objectContaining({ name: 'GolemBuffEffect:Stone', type: 'INC', value: 36 }),
     ]);
   });
 });
