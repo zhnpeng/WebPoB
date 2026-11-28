@@ -1564,4 +1564,63 @@ describe('evaluatePoe2UnbakedSocketedRunes', () => {
       '+120 to maximum Energy Shield',
     ]);
   });
+
+  it('resolves Militant Faith 150-Devotion notable threshold lines when Devotion >= 150 and suppresses when < 150', () => {
+    const nodes: PassiveTreeData['nodes'] = {
+      1: mkNode(1, 'Jewel Socket', 'jewel', 0, 0),
+      100: mkNode(100, 'Notable Target', 'notable', 300, 0, ['20% increased Damage']),
+    };
+    const activeHigh = new Set<number>([1, 100]);
+    for (let i = 2; i <= 16; i++) {
+      nodes[i] = mkNode(i, `Str ${i}`, 'small', 100 + i * 20, 0, ['+10 to Strength']);
+      activeHigh.add(i);
+    }
+    const tree: PassiveTreeData = {
+      game: 'poe1',
+      version: '3_28',
+      nodes,
+      groups: {},
+      classStartNodeIds: {},
+      bounds: { minX: -2000, maxX: 2000, minY: -2000, maxY: 2000 },
+    };
+    const mf = mkItem({
+      id: 'mf-150',
+      name: 'Militant Faith',
+      baseName: 'Timeless Jewel',
+      rarity: 'UNIQUE',
+      explicits: ['Carved to glorify 4904 new faithful converted by High Templar Dominus'],
+    });
+    const lutLookup = {
+      lookupNode: (_jt: string, _seed: number, nodeId: number) =>
+        nodeId === 100
+          ? {
+              mode: 'replace' as const,
+              stats: [
+                '+5 to Devotion',
+                'Gain 5% of Maximum Mana as Extra Maximum Energy Shield while you have at least 150 Devotion',
+                '+1% to all maximum Resistances if you have at least 150 Devotion',
+              ],
+            }
+          : null,
+    };
+
+    // 15 small travel nodes * 10 + 5 from notable = 155 Devotion >= 150 -> threshold lines unlocked
+    const resHigh = evaluateTimelessJewels([{ nodeId: 1, jewel: mf }], tree, activeHigh, {
+      game: 'poe1',
+      lutLookup,
+    });
+    const highLines = resHigh.addedStatLines.flatMap((e) => e.lines);
+    expect(highLines).toContain('Gain 5% of Maximum Mana as Extra Maximum Energy Shield');
+    expect(highLines).toContain('+1% to all maximum Resistances');
+
+    // Only 5 small travel nodes * 10 + 5 = 55 Devotion < 150 -> threshold lines suppressed
+    const activeLow = new Set<number>([1, 2, 3, 4, 5, 6, 100]);
+    const resLow = evaluateTimelessJewels([{ nodeId: 1, jewel: mf }], tree, activeLow, {
+      game: 'poe1',
+      lutLookup,
+    });
+    const lowLines = resLow.addedStatLines.flatMap((e) => e.lines);
+    expect(lowLines).not.toContain('Gain 5% of Maximum Mana as Extra Maximum Energy Shield');
+    expect(lowLines).not.toContain('+1% to all maximum Resistances');
+  });
 });

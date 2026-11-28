@@ -1286,6 +1286,27 @@ export function evaluateTimelessJewels(
       }
 
       totalDevotion += jewelDevotion;
+      // Evaluate Militant Faith notable Devotion-threshold conditions
+      // (e.g. "Gain 5% of Maximum Mana as Extra Maximum Energy Shield while you have at least 150 Devotion",
+      // "+1% to all maximum Resistances if you have at least 150 Devotion",
+      // "15% of Physical Damage Converted to Fire/Cold/Lightning Damage while you have at least 150 Devotion").
+      if (lutLines.length > 0) {
+        const resolvedLutLines: string[] = [];
+        for (const rawLut of lutLines) {
+          const mThreshold = stripPobTags(rawLut).match(
+            /^(.+?)\s+(?:while|if)\s+you\s+have\s+at\s+least\s+(\d+)\s+Devotion$/i,
+          );
+          if (mThreshold) {
+            if (jewelDevotion >= Number(mThreshold[2])) {
+              resolvedLutLines.push(mThreshold[1]!.trim());
+            }
+          } else {
+            resolvedLutLines.push(rawLut);
+          }
+        }
+        lutLines.length = 0;
+        lutLines.push(...resolvedLutLines);
+      }
       if (jewelDevotion > 0) {
         addedMods.push(mkMod('Devotion', 'BASE', jewelDevotion, jewelSrc));
         const devotionStatLines: string[] = [];
