@@ -2571,5 +2571,47 @@ describe('Mechanism-Layer Regression Suite (PoE 1 & PoE 2)', () => {
       // Maligaro overrides Critical Damage Bonus to 250% => total Crit Multiplier = 350% (ignores +100% INC)
       expect(out.offence.critMultiplier).toBe(350);
     });
+
+    it('gates Elemental Overload +40% MORE Elemental Damage on CritInPast8Sec (does not inflate when false)', () => {
+      const base = createSamplePoe1Build();
+      const sceptre: Item = {
+        id: 'eo_sceptre',
+        name: 'Test Oscillating Sceptre',
+        baseName: 'Oscillating Sceptre',
+        rarity: 'RARE',
+        slotType: 'Weapon 1',
+        quality: 0,
+        sockets: '',
+        implicits: ['Elemental Overload'],
+        explicits: [],
+      };
+      const eoBuild: Build = {
+        ...base,
+        items: { ...base.items, [sceptre.id]: sceptre },
+        equipped: { ...base.equipped, 'Weapon 1': sceptre.id },
+        skills: [
+          {
+            id: 'sg_arc_eo',
+            label: 'Arc',
+            enabled: true,
+            gems: [{ instanceId: 'g1', gemId: 'poe1_arc', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_arc_eo',
+        config: {
+          ...base.config,
+          rawInputs: { ...base.config.rawInputs, conditionCritInPast8Sec: true },
+        },
+      };
+      const outActive = calculateBuild(eoBuild);
+      const outInactive = calculateBuild({
+        ...eoBuild,
+        config: {
+          ...eoBuild.config,
+          rawInputs: { ...eoBuild.config.rawInputs, conditionCritInPast8Sec: false },
+        },
+      });
+      expect(outActive.offence.averageHit / outInactive.offence.averageHit).toBeCloseTo(1.4, 2);
+    });
   });
 });

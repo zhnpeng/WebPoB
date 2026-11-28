@@ -7711,7 +7711,7 @@ function computeGroupOffence(
       source: 'Intimidated (Rage Mastery)',
     });
   }
-  // PoE 1 Oscillating Sceptre / Keystone Elemental Overload (+40% MORE Elemental Hit & Ailment Damage, NoCritExtraDamage)
+  // PoE 1 Oscillating Sceptre / Keystone Elemental Overload (NoCritExtraDamage before crit calc; +40% MORE gated on CritInPast8Sec at line 10410)
   if (
     build.game === 'poe1' &&
     skillDb.flag('ElementalOverload') &&
@@ -7724,42 +7724,6 @@ function computeGroupOffence(
         value: true,
         flags: 0,
         keywordFlags: 0,
-        source: 'Elemental Overload',
-      });
-    }
-    const alreadyHasEoHit = skillDb
-      .calcStat('ElementalDamage', flags, kwFlags)
-      .sources.some(
-        (s) =>
-          s.type === 'MORE' &&
-          Number(s.value) === 40 &&
-          /elemental overload|custom|tree|keystone/i.test(s.source),
-      );
-    if (!alreadyHasEoHit) {
-      skillDb.addMod({
-        name: 'ElementalDamage',
-        type: 'MORE',
-        value: 40,
-        flags: ModFlag.Hit,
-        keywordFlags: 0,
-        source: 'Elemental Overload',
-      });
-    }
-    const alreadyHasEoAilment = skillDb
-      .calcStat('ElementalDamage', ModFlag.Ailment | ModFlag.Dot, KeywordFlag.Ailment)
-      .sources.some(
-        (s) =>
-          s.type === 'MORE' &&
-          Number(s.value) === 40 &&
-          /elemental overload|custom|tree|keystone/i.test(s.source),
-      );
-    if (!alreadyHasEoAilment) {
-      skillDb.addMod({
-        name: 'ElementalDamage',
-        type: 'MORE',
-        value: 40,
-        flags: 0,
-        keywordFlags: KeywordFlag.Ailment,
         source: 'Elemental Overload',
       });
     }
@@ -10407,6 +10371,72 @@ function computeGroupOffence(
       : build.config.rawInputs?.conditionCritInPast8Sec === true)
   ) {
     skillDb.setCondition('CritInPast8Sec', true);
+  }
+  // PoE 1 Oscillating Sceptre / Foulborn Xoph's Blood / Keystone Elemental Overload:
+  // +40% MORE Elemental Hit & Ailment Damage ONLY when CritInPast8Sec is active (and deduped against tree/amulet/item sources).
+  // If an unconditional +40% MORE ElementalDamage was emitted by parser despite !CritInPast8Sec (e.g. NeverCrit / Resolute Technique / conditionCritInPast8Sec=false), neutralize it.
+  if (build.game === 'poe1' && skillDb.flag('ElementalOverload')) {
+    const eoDisabled = neverCrit || build.config.rawInputs?.conditionCritInPast8Sec === false;
+    const eoActive = !eoDisabled && Boolean(skillDb.getEvalContext().conditions.CritInPast8Sec);
+    const alreadyHasEoHit = skillDb
+      .calcStat('ElementalDamage', flags, kwFlags)
+      .sources.some(
+        (s) =>
+          s.type === 'MORE' &&
+          Number(s.value) === 40 &&
+          /elemental overload|custom|tree|keystone|amulet|item/i.test(s.source),
+      );
+    const alreadyHasEoAilment = skillDb
+      .calcStat('ElementalDamage', ModFlag.Ailment | ModFlag.Dot, KeywordFlag.Ailment)
+      .sources.some(
+        (s) =>
+          s.type === 'MORE' &&
+          Number(s.value) === 40 &&
+          /elemental overload|custom|tree|keystone|amulet|item/i.test(s.source),
+      );
+    if (eoActive) {
+      if (!alreadyHasEoHit) {
+        skillDb.addMod({
+          name: 'ElementalDamage',
+          type: 'MORE',
+          value: 40,
+          flags: ModFlag.Hit,
+          keywordFlags: 0,
+          source: 'Elemental Overload',
+        });
+      }
+      if (!alreadyHasEoAilment) {
+        skillDb.addMod({
+          name: 'ElementalDamage',
+          type: 'MORE',
+          value: 40,
+          flags: 0,
+          keywordFlags: KeywordFlag.Ailment,
+          source: 'Elemental Overload',
+        });
+      }
+    } else if (eoDisabled) {
+      if (alreadyHasEoHit) {
+        skillDb.addMod({
+          name: 'ElementalDamage',
+          type: 'MORE',
+          value: (1 / 1.4 - 1) * 100,
+          flags: ModFlag.Hit,
+          keywordFlags: 0,
+          source: 'Elemental Overload (Inactive: !CritInPast8Sec)',
+        });
+      }
+      if (alreadyHasEoAilment) {
+        skillDb.addMod({
+          name: 'ElementalDamage',
+          type: 'MORE',
+          value: (1 / 1.4 - 1) * 100,
+          flags: 0,
+          keywordFlags: KeywordFlag.Ailment,
+          source: 'Elemental Overload (Inactive: !CritInPast8Sec)',
+        });
+      }
+    }
   }
 
   // Double & Triple Damage including On-Crit chances (PoB1 CalcOffence.lua:3321-3330)
