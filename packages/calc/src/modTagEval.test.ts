@@ -1555,5 +1555,57 @@ describe('parseConditionalSuffix', () => {
         cappedCtx,
       ),
     ).toEqual({ active: true, scale: 59 });
+    // Unset limitVar (resolves to 0) must NOT clamp the multiplier to 0
+    expect(
+      evaluateModTags(
+        makeMod({
+          value: 15,
+          tags: [
+            {
+              type: 'Multiplier',
+              var: 'SigilOfPowerStage',
+              limitVar: 'SigilOfPowerMaxStages',
+            } as unknown as ModTag,
+          ],
+        }),
+        { ...ctx, multipliers: { ...ctx.multipliers, SigilOfPowerStage: 3 } },
+      ),
+    ).toEqual({ active: true, scale: 3 });
+    // Negative limitVar with negative mod value (e.g. Inexorable Critical II -10% capped at -50%)
+    // must act as a negative total floor, never clamping mult to -50 when multiplier is 0.
+    const negCapCtx: ModEvalContext = {
+      ...ctx,
+      multipliers: { ...ctx.multipliers, SecondsSinceInevitableCrit: 0, InevitableCritMultCap: -50 },
+    };
+    expect(
+      evaluateModTags(
+        makeMod({
+          value: -10,
+          tags: [
+            {
+              type: 'Multiplier',
+              var: 'SecondsSinceInevitableCrit',
+              limitVar: 'InevitableCritMultCap',
+            } as unknown as ModTag,
+          ],
+        }),
+        negCapCtx,
+      ),
+    ).toEqual({ active: true, scale: 0 });
+    expect(
+      evaluateModTags(
+        makeMod({
+          value: -10,
+          tags: [
+            {
+              type: 'Multiplier',
+              var: 'SecondsSinceInevitableCrit',
+              limitVar: 'InevitableCritMultCap',
+            } as unknown as ModTag,
+          ],
+        }),
+        { ...negCapCtx, multipliers: { ...negCapCtx.multipliers, SecondsSinceInevitableCrit: 10 } },
+      ),
+    ).toEqual({ active: true, scale: 5 });
   });
 });

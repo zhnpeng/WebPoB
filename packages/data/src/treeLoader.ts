@@ -570,13 +570,14 @@ function hydrateCompiledMods(
                 rt.div > 0 &&
                 rt.var
               ) {
-                // engine.ts already pre-divides PoE 2 Trinity ResonanceCount (/30) and
-                // Blood Sacrament ChannelledLifeReservedPerStage (/10); strip `div` on the
-                // hydrated Multiplier tag so modTagEval does not double-divide until engine.ts
-                // removes pre-division (raw poe{1,2}-gems.json still preserves upstream `div`).
+                // engine.ts already pre-divides PoE 2 Trinity ResonanceCount (/30),
+                // Blood Sacrament ChannelledLifeReservedPerStage (/10), and ShockEffect (/5);
+                // strip `div` on the hydrated Multiplier tag so modTagEval does not double-divide
+                // until engine.ts removes pre-division (raw poe{1,2}-gems.json still preserves upstream `div`).
                 if (
                   (rt.var === 'ResonanceCount' && rt.div === 30) ||
-                  (rt.var === 'ChannelledLifeReservedPerStage' && rt.div === 10)
+                  (rt.var === 'ChannelledLifeReservedPerStage' && rt.div === 10) ||
+                  (rt.var === 'ShockEffect' && rt.div === 5)
                 ) {
                   return {
                     type: 'Multiplier' as const,

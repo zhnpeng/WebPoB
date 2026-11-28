@@ -790,11 +790,15 @@ export function evaluateModTags(mod: Mod, ctx?: ModEvalContext): ModTagEvalResul
         // PoE 1 Focused Channelling (`ChannellingTime = 2.5`, `limit = 60, limitTotal = true`).
         const useNoFloor = runtimeLimit.noFloor === true || tag.var === 'ChannellingTime';
         let mult = useNoFloor ? scaledRaw : Math.floor(scaledRaw + 0.0001);
+        const resolvedLimitVar =
+          runtimeLimit.limitVar && ctx
+            ? resolveThresholdValue(runtimeLimit.limitVar, ctx, false)
+            : 0;
         const effLimit =
           tag.limit !== undefined
             ? tag.limit
-            : runtimeLimit.limitVar && ctx
-              ? resolveThresholdValue(runtimeLimit.limitVar, ctx, false)
+            : runtimeLimit.limitVar && resolvedLimitVar !== 0
+              ? resolvedLimitVar
               : undefined;
         // Bridge legacy PoE 1/2 cmods whose `limitTotal = true` was not yet exported in gems JSON
         const useLimitTotal =
@@ -804,7 +808,12 @@ export function evaluateModTags(mod: Mod, ctx?: ModEvalContext): ModTagEvalResul
             (tag.var === 'IncisionConsumedRecently' ||
               tag.var === 'SuperchargedSlamStage' ||
               tag.var === 'ChannellingTime'));
-        if (effLimit !== undefined && !useLimitTotal && !runtimeLimit.limitNegTotal) {
+        // Negative limit / limitVar paired with a negative mod value (e.g. Controlled Blaze -3% capped at -78%,
+        // Inexorable Critical II -10% capped at -50%) is a total-value floor, never a negative stack count cap.
+        const isNegTotalLimit =
+          runtimeLimit.limitNegTotal === true ||
+          (effLimit !== undefined && effLimit < 0 && typeof mod.value === 'number' && mod.value < 0);
+        if (effLimit !== undefined && effLimit >= 0 && !useLimitTotal && !isNegTotalLimit) {
           mult = Math.min(mult, effLimit);
         }
         scale *= mult;
@@ -816,7 +825,7 @@ export function evaluateModTags(mod: Mod, ctx?: ModEvalContext): ModTagEvalResul
           if (useLimitTotal && curTotal > effLimit) {
             scale = effLimit / mod.value;
             offset = 0;
-          } else if (runtimeLimit.limitNegTotal && curTotal < effLimit) {
+          } else if (isNegTotalLimit && curTotal < effLimit) {
             scale = effLimit / mod.value;
             offset = 0;
           }
