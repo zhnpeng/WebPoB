@@ -368,6 +368,17 @@ describe('offenceUpgrade — 4. computeSkillSpecialDamage', () => {
     });
     expect(splittingSteelEE.flatAddedDamage.Lightning?.min).toBe(0);
     expect(splittingSteelEE.flatAddedDamage.Lightning?.max).toBe(4000);
+
+    // Blight of Contagion & Blight of Atrophy default to maxStages=6 DoT multiplier
+    const blightContagion = computeSkillSpecialDamage('Blight of Contagion', 'poe1', {
+      gemLevel: 20,
+    });
+    expect(blightContagion.dotMoreMult).toBe(6);
+    const blightAtrophy = computeSkillSpecialDamage('Blight of Atrophy', 'poe1', {
+      gemLevel: 20,
+      stages: 4,
+    });
+    expect(blightAtrophy.dotMoreMult).toBe(4);
   });
 });
 

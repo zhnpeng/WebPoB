@@ -1339,4 +1339,27 @@ describe('parseConditionalSuffix', () => {
     expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'AtMaxEnduranceCharges' }] }), ctx).active).toBe(true);
     expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'AtMaxRage' }] }), ctx).active).toBe(true);
   });
+
+  it('derives Leeching from Life/ES/Mana leech, InflictedExposureRecently from EnemyExposure, and AtCloseRange from explicit distance<=15 (Wave 6A)', () => {
+    const ctxLeech = createEmptyEvalContext();
+    ctxLeech.conditions.LeechingEnergyShield = true;
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'Leeching' }] }), ctxLeech).active).toBe(true);
+
+    const ctxExp = createEmptyEvalContext();
+    ctxExp.conditions.EnemyFireExposure = true;
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'InflictedExposureRecently' }] }), ctxExp).active,
+    ).toBe(true);
+    ctxExp.conditions.CanApplyFireExposure = false;
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'InflictedExposureRecently' }] }), ctxExp).active,
+    ).toBe(false);
+
+    const ctxClose = createEmptyEvalContext();
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'AtCloseRange' }] }), ctxClose).active).toBe(false);
+    ctxClose.conditions.MeleeProximity = true;
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'AtCloseRange' }] }), ctxClose).active).toBe(false);
+    ctxClose.stats.EnemyDistance = 10;
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'AtCloseRange' }] }), ctxClose).active).toBe(true);
+  });
 });

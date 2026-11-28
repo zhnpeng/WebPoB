@@ -430,6 +430,26 @@ function evalSingleConditionVar(varExpr: string, ctx?: ModEvalContext): boolean 
     const max = ctx.multipliers.RageMax ?? ctx.multipliers.MaxRage ?? 0;
     return cur > 0 && max > 0 && cur >= max;
   }
+  if (varExpr === 'Leeching') {
+    return Boolean(
+      ctx.conditions.LeechingLife ||
+        ctx.conditions.LeechingEnergyShield ||
+        ctx.conditions.LeechingMana,
+    );
+  }
+  if (varExpr === 'InflictedExposureRecently') {
+    return evalSingleConditionVar('EnemyExposure', ctx);
+  }
+  if (varExpr === 'AtCloseRange') {
+    const explicitDist =
+      ctx.stats.SkillDistance ??
+      ctx.stats.EnemyDistance ??
+      ctx.stats.ProjectileDistance ??
+      ctx.multipliers.SkillDistance ??
+      ctx.multipliers.EnemyDistance ??
+      ctx.multipliers.ProjectileDistance;
+    return typeof explicitDist === 'number' && Number.isFinite(explicitDist) && explicitDist <= 15;
+  }
   return false;
 }
 

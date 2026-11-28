@@ -831,8 +831,13 @@ export function computeSkillSpecialDamage(
         } else if (key === 'corrupting fever') {
           const stages = clamp(Math.floor(opts.stages ?? 10), 1, dotProfile.maxStages ?? 10);
           res.dotMoreMult = stages; // +100% more DoT per stack after first -> 10x at 10 stacks
-        } else if (key === 'blight') {
-          const stages = clamp(Math.floor(opts.stages ?? 20), 1, dotProfile.maxStages ?? 20);
+        } else if (
+          key === 'blight' ||
+          key === 'blight of contagion' ||
+          key === 'blight of atrophy'
+        ) {
+          const maxStages = dotProfile.maxStages ?? 20;
+          const stages = clamp(Math.floor(opts.stages ?? maxStages), 1, maxStages);
           res.dotMoreMult = stages;
         }
       }
