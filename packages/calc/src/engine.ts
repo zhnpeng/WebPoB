@@ -925,6 +925,16 @@ function calculateBuildSingleWeaponSet(build: Build): CalcOutput {
           db.addMod({ name: 'MarkedEnemyDamageTaken', type: 'BASE', value: Number(mMarkPrey[1]), flags: 0, keywordFlags: 0, source: nodeSrc });
           continue;
         }
+        // PoE 1 Dual Wield Mastery & Consecrated Ground Accuracy (`CalcSetup.lua:648`, `CalcPerform.lua:823`)
+        if (/^Inherent Attack Speed bonus from Dual Wielding is Doubled$/i.test(cleanSt)) {
+          db.addMod({ name: 'DoubledInherentDualWieldingSpeed', type: 'FLAG', value: true, flags: 0, keywordFlags: 0, source: nodeSrc });
+          continue;
+        }
+        const mConsAcc = cleanSt.match(/^Consecrated Ground you create grants (\d+)% increased Accuracy Rating/i);
+        if (mConsAcc) {
+          db.addMod({ name: 'ConsecratedGroundAlsoAccuracy', type: 'INC', value: Number(mConsAcc[1]), flags: 0, keywordFlags: 0, source: nodeSrc });
+          continue;
+        }
       }
     } else if (build.game === 'poe2') {
       const nodeSrc = `Tree: ${tattooOverride?.name ?? node.name.en}`;
@@ -1272,13 +1282,20 @@ function calculateBuildSingleWeaponSet(build: Build): CalcOutput {
       offFitsOneHand,
   );
   if (isDualWielding && build.game === 'poe1') {
+    const hasDoubledDwSpeed =
+      db.flag('DoubledInherentDualWieldingSpeed') ||
+      Object.entries(build.tree.masteryEffects ?? {}).some(([nodeIdStr, effId]) => {
+        const mNode = tree.nodes[Number(nodeIdStr)];
+        const eff = mNode?.masteryEffects?.find((e) => e.id === Number(effId));
+        return Boolean(eff?.stats.some((st) => /Inherent Attack Speed bonus from Dual Wielding is Doubled/i.test(st)));
+      });
     db.addMod({
       name: 'Speed',
       type: 'MORE',
-      value: 10,
+      value: hasDoubledDwSpeed ? 20 : 10,
       flags: ModFlag.Attack,
       keywordFlags: 0,
-      source: 'Dual Wielding',
+      source: hasDoubledDwSpeed ? 'Dual Wielding (Doubled)' : 'Dual Wielding',
     });
     db.addMod({
       name: 'BlockChance',
@@ -3815,8 +3832,38 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
   db.setCondition('EnemyShocked', Boolean(cfg.enemyShocked));
   db.setCondition('EnemyChilled', Boolean(cfg.enemyChilled));
   db.setCondition('EnemyTaunted', Boolean(cfg.enemyTaunted));
+  const anyEleAilmentOnEnemy = Boolean(
+    cfg.enemyShocked ||
+      cfg.enemyChilled ||
+      cfg.rawInputs?.conditionEnemyShocked ||
+      cfg.rawInputs?.conditionEnemyChilled ||
+      cfg.rawInputs?.conditionEnemyIgnited ||
+      cfg.rawInputs?.conditionEnemyFrozen ||
+      cfg.rawInputs?.conditionEnemyBurning,
+  );
+  if (anyEleAilmentOnEnemy) {
+    db.setCondition('EnemyAffectedByElementalAilment', true);
+  }
   db.setCondition('AffectedByHerald', hasActiveHerald);
-  db.setCondition('OnConsecratedGround', Boolean(flaskEval.grantsConsecratedGround));
+  const onConsGround = Boolean(flaskEval.grantsConsecratedGround || cfg.rawInputs?.conditionOnConsecratedGround);
+  db.setCondition('OnConsecratedGround', onConsGround);
+  if (build.game === 'poe1' && onConsGround) {
+    const consAccBase = db.sum('INC', 'ConsecratedGroundAlsoAccuracy');
+    if (consAccBase > 0) {
+      const consEffMult = Math.max(0, 1 + db.sum('INC', 'ConsecratedGroundEffect') / 100);
+      const consAccInc = Math.floor(consAccBase * consEffMult + 1e-9);
+      if (consAccInc > 0) {
+        db.addMod({
+          name: 'Accuracy',
+          type: 'INC',
+          value: consAccInc,
+          flags: 0,
+          keywordFlags: 0,
+          source: 'Consecrated Ground',
+        });
+      }
+    }
+  }
   db.setMultiplier('Herald', activeHeraldCount);
   db.setMultiplier('AuraAffectingSelf', activeAuraCount);
   db.setMultiplier('AuraOrHeraldAffectingSelf', activeAuraCount + activeHeraldCount);
@@ -4721,6 +4768,45 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     const extraLifeResPct = Math.max(0, db.sum('BASE', 'ExtraLifeReserved'));
     if (extraLifeResPct > 0) {
       totalLifeReservedFlat += Math.ceil(life * (extraLifeResPct / 100) - 1e-9);
+    }
+    // PoE 2 LifeReservePercentPerSpirit supports (e.g. Atziri's Communion: reserves 0.66% Life per Spirit reserved by linked skill)
+    if (build.game === 'poe2') {
+      const resEffDiv = Math.max(0.1, 1 + lifeResEff / 100);
+      for (const grp of build.skills) {
+        if (!grp.enabled) continue;
+        let pctPerSpirit = 0;
+        let groupSpiritBase = 0;
+        let hasBlasphemy = false;
+        let blasphemyCurseCount = 0;
+        for (const gm of grp.gems) {
+          if (!gm.enabled) continue;
+          const gd = getGemById('poe2', gm.gemId);
+          if (!gd) continue;
+          const cmods = resolveGemLevelEntry(gd, gm.level)?.compiledMods ?? gd.compiledMods ?? [];
+          for (const cm of cmods) {
+            if (cm.name === 'LifeReservePercentPerSpirit' && typeof cm.value === 'number' && cm.value > 0) {
+              pctPerSpirit += cm.value;
+            }
+          }
+          if (gd.id === 'poe2_blasphemy' || gd.name.en.trim().toLowerCase() === 'blasphemy') {
+            hasBlasphemy = true;
+          } else if (gd.category === 'active' && gd.tags.some((t) => t.toLowerCase() === 'curse')) {
+            blasphemyCurseCount += 1;
+          }
+          if (typeof gd.spiritReservation === 'number' && gd.spiritReservation > 0) {
+            groupSpiritBase += gd.spiritReservation;
+          }
+        }
+        if (pctPerSpirit > 0) {
+          if (hasBlasphemy && blasphemyCurseCount > 0) {
+            groupSpiritBase = Math.max(groupSpiritBase, blasphemyCurseCount * 60);
+          }
+          if (groupSpiritBase > 0) {
+            const effLifePct = Math.max(0, (groupSpiritBase * pctPerSpirit) / resEffDiv);
+            totalLifeReservedFlat += Math.ceil(life * (effLifePct / 100) - 1e-9);
+          }
+        }
+      }
     }
   }
   const lifeUnreserved = Math.max(0, life - totalLifeReservedFlat);
@@ -6158,6 +6244,19 @@ function computeGroupOffence(
       activeCandidates.push({ inst: gemInst, def });
     } else if (def.category === 'support') {
       supportCandidates.push({ gem: def, instance: gemInst, enabled: true });
+      // PoE 1 support gems that also grant a triggered active skill (e.g. Shockwave Support, Void Shockwave Support)
+      if (build.game === 'poe1' && def.tags.includes('grants_active_skill')) {
+        const grantedActiveId =
+          def.id === 'poe1_supportshockwave'
+            ? 'poe1_supportbluntweaponshockwave'
+            : def.id === 'poe1_supportvoidshockwave'
+              ? 'poe1_triggeredsupportvoidshockwave'
+              : undefined;
+        const grantedDef = grantedActiveId ? getGemById('poe1', grantedActiveId) : undefined;
+        if (grantedDef) {
+          activeCandidates.push({ inst: gemInst, def: grantedDef });
+        }
+      }
     }
   }
   // Merge The Squire off-hand supports into Weapon 1 skill groups
@@ -6633,6 +6732,21 @@ function computeGroupOffence(
         const adjustedSupCmods =
           build.game === 'poe2'
             ? baseAdjustedSupCmods.filter((cm) => {
+                // Avoid double-applying target='player' support buffs (e.g. Ice Bite I/II) already propagated via applyAuraAndBuffSkills
+                if (
+                  cm.target === 'player' &&
+                  typeof cm.value === 'number' &&
+                  skillDb
+                    .calcStat(cm.name, cm.flags ?? 0, cm.keywordFlags ?? 0)
+                    .sources.some(
+                      (s) =>
+                        s.type === cm.type &&
+                        Number(s.value) === cm.value &&
+                        s.source.toLowerCase().includes(lower),
+                    )
+                ) {
+                  return false;
+                }
                 for (const tg of cm.tags ?? []) {
                   if (tg.type === 'Condition' && typeof tg.var === 'string' && tg.var.startsWith('MultiplierThreshold:')) {
                     const parts = tg.var.split(':');
@@ -10300,16 +10414,20 @@ function computeGroupOffence(
       ? flags | ModFlag.Melee
       : flags;
   const speedInc =
-    skillDb.sum('INC', 'Speed', speedQueryFlags, kwFlags) +
-    (isMineSkill ? skillDb.sum('INC', 'MineLayingSpeed', speedQueryFlags, kwFlags) : 0) +
+    (build.game === 'poe1' && isMineSkill
+      ? skillDb.sum('INC', 'MineLayingSpeed', speedQueryFlags, kwFlags)
+      : skillDb.sum('INC', 'Speed', speedQueryFlags, kwFlags) +
+        (isMineSkill ? skillDb.sum('INC', 'MineLayingSpeed', speedQueryFlags, kwFlags) : 0)) +
     specialSkillDmg.hitRateIncPct;
   const isPoe2Flicker = build.game === 'poe2' && activeNameLower === 'flicker strike';
   const skillTimeDiv = isAttack
     ? Math.max(0.1, skillDb.more('SkillAttackTime', speedQueryFlags, kwFlags))
     : 1;
   const speedMore =
-    (skillDb.more('Speed', speedQueryFlags, kwFlags) / skillTimeDiv) *
-    (isMineSkill ? skillDb.more('MineLayingSpeed', speedQueryFlags, kwFlags) : 1) *
+    (build.game === 'poe1' && isMineSkill
+      ? skillDb.more('MineLayingSpeed', speedQueryFlags, kwFlags)
+      : (skillDb.more('Speed', speedQueryFlags, kwFlags) / skillTimeDiv) *
+        (isMineSkill ? skillDb.more('MineLayingSpeed', speedQueryFlags, kwFlags) : 1)) *
     (isPoe2Flicker ? 1 : specialSkillDmg.hitRateMoreMult);
   const combinedSpeedMult =
     build.game === 'poe2'

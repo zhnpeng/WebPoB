@@ -1167,5 +1167,171 @@ describe('Mechanism-Layer Regression Suite (PoE 1 & PoE 2)', () => {
       // 20% * 1.50 = 30% Shock (1.30x vs 1.20x without skill magnitude)
       expect(outFulmShocked.offence.averageHit / outFulmNoShock.offence.averageHit).toBeCloseTo(1.3, 2);
     });
+
+    it("PoE 2 Atziri's Communion (LifeReservePercentPerSpirit) on Blasphemy reserves Life into Low Life and activates Execute III", () => {
+      const rawBase = createSamplePoe2Build();
+      const base: Build = {
+        ...rawBase,
+        config: { ...rawBase.config, enemyShocked: false, shockValue: 0, conditionLowLife: false, rawInputs: {} },
+      };
+      const mainExecGroup = {
+        id: 'sg_exec',
+        label: 'Spark Execute III',
+        enabled: true,
+        weaponSets: [1, 2] as Array<1 | 2>,
+        gems: [
+          { instanceId: 'sp1', gemId: 'poe2_spark', level: 20, quality: 0, enabled: true },
+          { instanceId: 'ex3', gemId: 'poe2_executesupportthree', level: 1, quality: 0, enabled: true },
+        ],
+      };
+      const blasphemyCommunion = {
+        id: 'sg_blasp_comm',
+        label: 'Blasphemy Atziri Communion',
+        enabled: true,
+        weaponSets: [1, 2] as Array<1 | 2>,
+        gems: [
+          { instanceId: 'bl1', gemId: 'poe2_blasphemy', level: 20, quality: 0, enabled: true },
+          { instanceId: 'tc1', gemId: 'poe2_temporalchains', level: 20, quality: 0, enabled: true },
+          { instanceId: 'en1', gemId: 'poe2_enfeeble', level: 20, quality: 0, enabled: true },
+          { instanceId: 'ac1', gemId: 'poe2_atziriscommunionsupport', level: 1, quality: 0, enabled: true },
+        ],
+      };
+      const outFullLife = calculateBuild({ ...base, skills: [mainExecGroup], mainSkillGroupId: mainExecGroup.id });
+      const outLowLife = calculateBuild({
+        ...base,
+        skills: [mainExecGroup, blasphemyCommunion],
+        mainSkillGroupId: mainExecGroup.id,
+      });
+      // 2 Curses in Blasphemy (120 Spirit) * 0.66% = 79.2% Life reserved -> <=35% Unreserved -> Low Life -> Execute III (+30% MORE)
+      expect(outLowLife.defence.lifeUnreserved).toBeLessThan(outLowLife.defence.life * 0.35);
+      expect(outLowLife.offence.averageHit / outFullLife.offence.averageHit).toBeCloseTo(1.3, 2);
+    });
+
+    it('PoE 2 Ice Bite II target=player buff is not double-counted when linked to the main attack', () => {
+      const rawBase = createSamplePoe2Build();
+      const bow = makeWeapon({
+        id: 'reg_ib_bow',
+        name: 'Plain Bow',
+        baseName: 'Dualstring Bow',
+        weaponStats: { weaponType: 'Bow', twoHanded: true, physicalMin: 100, physicalMax: 100, attacksPerSecond: 1.5, critChance: 5 },
+      });
+      const base: Build = {
+        ...rawBase,
+        items: { ...rawBase.items, [bow.id]: bow },
+        equipped: { ...rawBase.equipped, 'Weapon 1': bow.id },
+        config: {
+          ...rawBase.config,
+          enemyShocked: false,
+          shockValue: 0,
+          enemyColdResist: 0,
+          enemyFireResist: 0,
+          enemyLightningResist: 0,
+          rawInputs: { conditionFrozenEnemyRecently: true },
+        },
+      };
+      delete base.equipped['Weapon 2'];
+      const iceShotPlain = {
+        id: 'sg_is_plain',
+        label: 'Ice Shot',
+        enabled: true,
+        weaponSets: [1, 2] as Array<1 | 2>,
+        gems: [{ instanceId: 'is1', gemId: 'poe2_iceshot', level: 20, quality: 0, enabled: true }],
+      };
+      const iceShotIceBite = {
+        ...iceShotPlain,
+        gems: [
+          ...iceShotPlain.gems,
+          { instanceId: 'ib2', gemId: 'poe2_icebitesupporttwo', level: 1, quality: 0, enabled: true },
+        ],
+      };
+      const outPlain = calculateBuild({ ...base, skills: [iceShotPlain], mainSkillGroupId: iceShotPlain.id });
+      const outIb2 = calculateBuild({ ...base, skills: [iceShotIceBite], mainSkillGroupId: iceShotIceBite.id });
+      // Ice Shot converts 80% Phys->Cold; Ice Bite II adds +30% Damage as Extra Cold ONCE (0.80 -> 1.10 = 1.375x, NOT 1.40/0.80 = 1.75x)
+      expect(outIb2.offence.damageByType.Cold.average / outPlain.offence.damageByType.Cold.average).toBeCloseTo(1.375, 2);
+    });
+
+    it('PoE 2 EnemyAffectedByElementalAilment activates conditional hit damage when enemy is Shocked', () => {
+      const rawBase = createSamplePoe2Build();
+      const noShock: Build = {
+        ...rawBase,
+        config: {
+          ...rawBase.config,
+          enemyShocked: false,
+          shockValue: 0,
+          customMods: '100% increased Damage with Hits against Enemies affected by Elemental Ailments',
+          rawInputs: {},
+        },
+      };
+      const withShockNoMod: Build = {
+        ...rawBase,
+        config: { ...rawBase.config, enemyShocked: true, shockValue: 20, customMods: '', rawInputs: {} },
+      };
+      const withShockAndMod: Build = {
+        ...withShockNoMod,
+        config: {
+          ...withShockNoMod.config,
+          customMods: '100% increased Damage with Hits against Enemies affected by Elemental Ailments',
+        },
+      };
+      const outNoShock = calculateBuild(noShock);
+      const outShockNoMod = calculateBuild(withShockNoMod);
+      const outShockAndMod = calculateBuild(withShockAndMod);
+      expect(outShockAndMod.offence.averageHit).toBeGreaterThan(outShockNoMod.offence.averageHit * 1.1);
+      expect(outShockNoMod.offence.averageHit).toBeGreaterThan(outNoShock.offence.averageHit * 1.15);
+    });
+
+    it('PoE 1 Mine skills use MineLayingSpeed (ignoring Attack/Cast Speed) and support-granted Void Shockwave registers as active candidate', () => {
+      const base = createSamplePoe1Build();
+      const mineGroup = {
+        id: 'sg_mine_spd',
+        label: 'Exsanguinate Mine',
+        enabled: true,
+        gems: [
+          { instanceId: 'ex1', gemId: 'poe1_exsanguinate', level: 20, quality: 0, enabled: true },
+          { instanceId: 'hm1', gemId: 'poe1_supporthighimpactmine', level: 20, quality: 0, enabled: true },
+        ],
+      };
+      const minePlain: Build = {
+        ...base,
+        skills: [mineGroup],
+        mainSkillGroupId: mineGroup.id,
+        config: { ...base.config, customMods: '' },
+      };
+      const mineWithCastSpeed: Build = {
+        ...minePlain,
+        config: { ...minePlain.config, customMods: '100% increased Cast Speed' },
+      };
+      const outMinePlain = calculateBuild(minePlain);
+      const outMineCastSpd = calculateBuild(mineWithCastSpeed);
+      // Cast Speed must NOT inflate PoE 1 Mine Throwing Speed
+      expect(outMineCastSpd.offence.speed).toBeCloseTo(outMinePlain.offence.speed, 2);
+
+      // Cyclone + Shockwave Support + Void Shockwave Support with mainActiveSkillIndex=3 selects Void Shockwave
+      const bigStaff = makeWeapon({
+        id: 'reg_vs_staff',
+        name: 'Test Staff',
+        baseName: 'Eclipse Staff',
+        weaponStats: { weaponType: 'Staff', twoHanded: true, physicalMin: 300, physicalMax: 500, attacksPerSecond: 1.3, critChance: 6 },
+      });
+      const cycVsGroup = {
+        id: 'sg_cyc_vs',
+        label: 'Cyclone Void Shockwave',
+        enabled: true,
+        mainActiveSkillIndex: 3,
+        gems: [
+          { instanceId: 'cy1', gemId: 'poe1_cyclone', level: 20, quality: 20, enabled: true },
+          { instanceId: 'sw1', gemId: 'poe1_supportshockwave', level: 20, quality: 0, enabled: true },
+          { instanceId: 'vsw1', gemId: 'poe1_supportvoidshockwave', level: 3, quality: 0, enabled: true },
+        ],
+      };
+      const outVsw = calculateBuild({
+        ...base,
+        items: { ...base.items, [bigStaff.id]: bigStaff },
+        equipped: { ...base.equipped, 'Weapon 1': bigStaff.id },
+        skills: [cycVsGroup],
+        mainSkillGroupId: cycVsGroup.id,
+      });
+      expect(outVsw.offence.mainSkillName.en).toBe('Void Shockwave');
+    });
   });
 });
