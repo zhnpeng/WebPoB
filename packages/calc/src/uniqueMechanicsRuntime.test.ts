@@ -1435,4 +1435,84 @@ describe('uniqueMechanicsRuntime — 5. Pool-Conversion Keystones & Faithguard',
     // 10000 / 200 = 50% Attack Damage INC (strictly once, NOT 100%!)
     expect(persevDb.sum('INC', 'Damage', ModFlag.Attack)).toBe(50);
   });
+
+  it("evaluates Badge/Replica Badge of the Brotherhood, Wilma's Requital, and Kalandra's Touch reflection of The Taming", () => {
+    // 1. Badge of the Brotherhood flag + Replica Badge of the Brotherhood MaxEnduranceCharges sync
+    const preDb = new ModDB();
+    preDb.addMod({ name: 'MaxFrenzyCharges', type: 'BASE', value: 4, flags: 0, keywordFlags: 0, source: 'Tree' }); // 3 + 4 = 7 max
+    const badge = makeItem({
+      id: 'am-badge',
+      name: 'Badge of the Brotherhood',
+      baseName: 'Turquoise Amulet',
+      slotType: 'Amulet',
+      explicits: ['Your Maximum Frenzy Charges is equal to your Maximum Power Charges'],
+    });
+    const replicaBadge = makeItem({
+      id: 'am-rbadge',
+      name: 'Replica Badge of the Brotherhood',
+      baseName: 'Turquoise Amulet',
+      slotType: 'Ring 1',
+      explicits: ['Your Maximum Endurance Charges is equal to your Maximum Frenzy Charges'],
+    });
+    evaluatePreStatBuildEnablingUniques({
+      db: preDb,
+      equippedItems: [
+        { slot: 'Amulet', item: badge },
+        { slot: 'Ring 1', item: replicaBadge },
+      ],
+      game: 'poe1',
+    });
+    expect(preDb.flag('BadgeOfTheBrotherhood')).toBe(true);
+    expect(3 + preDb.sum('BASE', 'MaxEnduranceCharges')).toBe(7);
+
+    // 2. Wilma's Requital mirrors Spell Cast Speed INC (including Onslaught Cast Speed!) to Attack Speed
+    const postDb = new ModDB();
+    postDb.setCondition('EnemyIgnited', true);
+    postDb.setCondition('EnemyShocked', true);
+    postDb.addMod({ name: 'Speed', type: 'INC', value: 30, flags: ModFlag.Spell, keywordFlags: 0, source: 'Ring Cast Speed' });
+    postDb.addMod({ name: 'Speed', type: 'INC', value: 20, flags: ModFlag.Attack, keywordFlags: 0, source: 'Onslaught' });
+    postDb.addMod({ name: 'Speed', type: 'INC', value: 20, flags: ModFlag.Spell, keywordFlags: 0, source: 'Onslaught' });
+    const wilma = makeItem({
+      id: 'helm-wilma',
+      name: "Wilma's Requital",
+      baseName: 'Solaris Circlet',
+      slotType: 'Helmet',
+      explicits: ['Increases and Reductions to Cast Speed apply to Attack Speed'],
+    });
+    const taming = makeItem({
+      id: 'r1-tam',
+      name: 'The Taming',
+      baseName: 'Prismatic Ring',
+      slotType: 'Ring 1',
+      explicits: ['40% increased Elemental Damage with Hits and Ailments for', 'each type of Elemental Ailment on Enemy'],
+    });
+    const kalandra = makeItem({
+      id: 'r2-kal',
+      name: "Kalandra's Touch",
+      baseName: 'Ring',
+      slotType: 'Ring 2',
+      explicits: ['Reflects your other Ring'],
+    });
+    evaluatePostPoolBuildEnablingUniques({
+      db: postDb,
+      equippedItems: [
+        { slot: 'Helmet', item: wilma },
+        { slot: 'Ring 1', item: taming },
+        { slot: 'Ring 2', item: kalandra },
+      ],
+      str: 100,
+      dex: 100,
+      int: 100,
+      life: 4000,
+      mana: 500,
+      energyShield: 0,
+      armour: 1000,
+      evasion: 1000,
+    });
+    // Ring Cast Speed (30) + Onslaught Attack (20) + Onslaught Cast mirrored by Wilma's (20) = 70% Attack Speed INC
+    expect(postDb.sum('INC', 'Speed', ModFlag.Attack)).toBe(70);
+    // The Taming (40 * 2 = 80) + Kalandra's Touch reflection (80) = 160 Elemental Damage INC with Hits & Ailments
+    expect(postDb.sum('INC', 'ElementalDamage', ModFlag.Hit)).toBe(160);
+    expect(postDb.sum('INC', 'ElementalDamage', ModFlag.Ailment)).toBe(160);
+  });
 });

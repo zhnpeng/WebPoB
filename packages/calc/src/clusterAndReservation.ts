@@ -2884,8 +2884,8 @@ export function evaluateAurasAndWatchersEye(
           (build.game === 'poe2' || (playerDb.getEvalContext().multipliers.SigilOfPowerStage ?? 0) > 0);
         if (
           isSigilOfPowerBuff &&
-          build.game === 'poe2' &&
-          hasStatSource(playerDb, 'Damage', 'MORE', 'Sigil of Power')
+          (hasStatSource(playerDb, 'Damage', 'MORE', 'Sigil of Power') ||
+            hasStatSource(playerDb, 'LightningMin', 'BASE', 'Sigil of Power'))
         ) {
           continue;
         }
@@ -3104,6 +3104,21 @@ export function evaluateAurasAndWatchersEye(
         playerDb.addMod(mkMod('MovementSpeed', 'INC', onslaughtVal, "Replica Farrul's Fur (Onslaught)"));
         playerDb.setCondition('Onslaught', true);
       }
+    }
+  }
+
+  // Soul Eater (Coiling Whisper / Headhunter / config multiplierSoulEater: +5% Attack & Cast Speed per stack, max 45)
+  if (
+    build.game === 'poe1' &&
+    typeof build.config.rawInputs?.multiplierSoulEater === 'number' &&
+    build.config.rawInputs.multiplierSoulEater > 0 &&
+    !hasStatSource(playerDb, 'Speed', 'INC', 'Soul Eater')
+  ) {
+    const seStacks = Math.min(45, Math.max(0, Math.floor(build.config.rawInputs.multiplierSoulEater)));
+    if (seStacks > 0) {
+      const seSrc = `Soul Eater (${seStacks} stacks)`;
+      playerDb.addMod(mkMod('Speed', 'INC', seStacks * 5, seSrc, ModFlag.Attack));
+      playerDb.addMod(mkMod('Speed', 'INC', seStacks * 5, seSrc, ModFlag.Spell));
     }
   }
 

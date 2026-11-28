@@ -1182,7 +1182,7 @@ function joinWrappedItemLines(lines: readonly string[]): string[] {
     let cur = lines[i]!;
     while (
       i + 1 < lines.length &&
-      /\b(?:for|with|and|of|to|on|while|if|per|from|in|or|when|your|apply|dealing)$/i.test(cur) &&
+      /\b(?:for|with|and|of|to|on|while|if|per|from|in|or|when|your|apply|dealing|melee|spell|attack|weapon)$/i.test(cur) &&
       !/^(?:Left|Right) ring slot:/i.test(lines[i + 1]!)
     ) {
       i += 1;
@@ -1539,6 +1539,27 @@ export function evaluatePreStatBuildEnablingUniques(
         const val = steps * Number(mQualEle[1]);
         if (val > 0 && !hasStatSource(db, 'ElementalDamage', 'INC', src, val)) {
           db.addMod(mkMod('ElementalDamage', 'INC', val, src));
+          appliedSources.push(src);
+        }
+        continue;
+      }
+
+      // 14. Badge of the Brotherhood / Replica Badge of the Brotherhood
+      if (/^Your Maximum Frenzy Charges is equal to your Maximum Power Charges$/i.test(line)) {
+        if (!db.flag('BadgeOfTheBrotherhood')) {
+          db.addMod(mkMod('BadgeOfTheBrotherhood', 'FLAG', true, src));
+          appliedSources.push(src);
+        }
+        continue;
+      }
+      if (/^Your Maximum Endurance Charges is equal to your Maximum Frenzy Charges$/i.test(line)) {
+        if (!hasStatSource(db, 'MaxEnduranceCharges', 'BASE', src)) {
+          const maxFrenzy = 3 + db.sum('BASE', 'MaxFrenzyCharges');
+          const maxEndurance = 3 + db.sum('BASE', 'MaxEnduranceCharges');
+          const delta = maxFrenzy - maxEndurance;
+          if (delta !== 0) {
+            db.addMod(mkMod('MaxEnduranceCharges', 'BASE', delta, src));
+          }
           appliedSources.push(src);
         }
         continue;
@@ -2230,6 +2251,66 @@ export function evaluatePostPoolBuildEnablingUniques(
           appliedSources.push(`${src} (Tailwind)`);
         }
         continue;
+      }
+
+      // 16. Wilma's Requital ("Increases and Reductions to Cast Speed apply to Attack Speed")
+      if (/^Increases and Reductions to Cast Speed apply to Attack Speed$/i.test(line)) {
+        if (!hasStatSource(db, 'Speed', 'INC', "Wilma's Requital")) {
+          const castSpeedMods = getRawModsForStat(db, 'Speed').filter(
+            (m) =>
+              m.type === 'INC' &&
+              typeof m.value === 'number' &&
+              (m.flags & ModFlag.Spell) !== 0 &&
+              (m.flags & ModFlag.Attack) === 0,
+          );
+          for (const cm of castSpeedMods) {
+            db.addMod({
+              ...cm,
+              flags: (cm.flags & ~ModFlag.Spell) | ModFlag.Attack,
+              source: `${cm.source} (Wilma's Requital)`,
+            });
+          }
+          if (castSpeedMods.length > 0) {
+            appliedSources.push(`${src} (Wilma's Requital)`);
+          }
+        }
+        continue;
+      }
+    }
+
+    // Kalandra's Touch reflection for post-pool ring uniques (e.g. The Taming wrapped line, Enmity's Embrace)
+    if (isKalandrasTouch(item) && (slot === 'Ring 1' || slot === 'Ring 2')) {
+      const oppSlot = slot === 'Ring 1' ? 'Ring 2' : 'Ring 1';
+      const oppEntry = ctx.equippedItems.find((e) => e.slot === oppSlot);
+      if (oppEntry && !isKalandrasTouch(oppEntry.item)) {
+        const oppLines = joinWrappedItemLines(collectCleanItemLines(oppEntry.item));
+        const refSrc = `Item (${slot}): Kalandra's Touch (Reflected ${oppEntry.item.name})`;
+        for (const rLine of oppLines) {
+          const mTamingRef = rLine.match(
+            /^(\d+)% increased Elemental Damage with Hits and Ailments for each type of Elemental Ailment on Enemy$/i,
+          );
+          if (mTamingRef && !hasStatSource(db, 'ElementalDamage', 'INC', refSrc)) {
+            const conds = db.getEvalContext().conditions;
+            let eleAilmentCount = 0;
+            for (const key of [
+              'EnemyIgnited',
+              'EnemyChilled',
+              'EnemyFrozen',
+              'EnemyShocked',
+              'EnemyScorched',
+              'EnemyBrittle',
+              'EnemySapped',
+            ]) {
+              if (conds[key]) eleAilmentCount += 1;
+            }
+            const bonus = Number(mTamingRef[1]) * eleAilmentCount;
+            if (bonus > 0) {
+              db.addMod(mkMod('ElementalDamage', 'INC', bonus, refSrc, ModFlag.Hit));
+              db.addMod(mkMod('ElementalDamage', 'INC', bonus, refSrc, ModFlag.Ailment));
+              appliedSources.push(refSrc);
+            }
+          }
+        }
       }
     }
 

@@ -1713,4 +1713,69 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     });
     expect(singleMarkRes.enemyDb.sum('BASE', 'SelfCritMultiplier')).toBe(77);
   });
+
+  it('applies PoE 1 Soul Eater (multiplierSoulEater, capped at 45) and skips PoE 1 Sigil of Power when LightningMin is already injected', () => {
+    const sigilPoe1Def: GemDefinition = {
+      id: 'poe1_sigilofpower',
+      name: { en: 'Sigil of Power', zh: '力量法印' },
+      category: 'active',
+      game: 'poe1',
+      color: 'blue',
+      tags: ['area', 'duration', 'spell', 'lightning'],
+      modFlags: 0,
+      keywordFlags: KeywordFlag.Spell | KeywordFlag.Lightning,
+      stats: [],
+      compiledMods: [
+        {
+          name: 'LightningMin',
+          type: 'BASE',
+          value: 40,
+          flags: 0,
+          keywordFlags: 0,
+          target: 'player',
+          tags: [{ type: 'Multiplier', var: 'SigilOfPowerStage' }],
+        },
+      ],
+    };
+    const db = new ModDB();
+    db.setMultiplier('SigilOfPowerStage', 4);
+    // Simulate engine.ts:1991 already injecting Sigil of Power LightningMin
+    db.addMod({
+      name: 'LightningMin',
+      type: 'BASE',
+      value: 160,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Skill: Sigil of Power (4 stages)',
+    });
+    const build = mkBuild({
+      game: 'poe1',
+      config: {
+        ...mkBuild().config,
+        rawInputs: {
+          sigilOfPowerStages: 4,
+          multiplierSoulEater: 45,
+        },
+      },
+      skills: [
+        {
+          id: 'sg-sigil-poe1',
+          label: 'Sigil',
+          enabled: true,
+          gems: [{ instanceId: 's1', gemId: 'poe1_sigilofpower', level: 20, quality: 0, enabled: true }],
+        },
+      ],
+    });
+    evaluateAurasAndWatchersEye({
+      build,
+      playerDb: db,
+      getGemByIdFn: (_g, id) => (id === 'poe1_sigilofpower' ? sigilPoe1Def : undefined),
+      maxMana: 1000,
+    });
+    // Sigil of Power must NOT double-count (stays 160, NOT 320!)
+    expect(db.sum('BASE', 'LightningMin')).toBe(160);
+    // Soul Eater 45 stacks -> +225% Attack and Cast Speed
+    expect(db.sum('INC', 'Speed', ModFlag.Attack)).toBe(225);
+    expect(db.sum('INC', 'Speed', ModFlag.Spell)).toBe(225);
+  });
 });
