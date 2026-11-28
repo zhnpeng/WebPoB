@@ -438,4 +438,55 @@ describe('localItem — resolveItemEffectiveStats', () => {
     const wRes = resolveItemEffectiveStats(rangeWeapon, 'poe1');
     expect(wRes.globalImplicits).toEqual([]);
   });
+
+  it('applies Tailoring / Tempering Orb Explicit Modifier magnitudes on unbaked crafted armour and weapons without double-scaling trade items', () => {
+    const craftedRegalia: Item = {
+      id: 'tailored-regalia',
+      name: 'Tailored Regalia',
+      baseName: 'Synthetic Regalia',
+      rarity: 'RARE',
+      slotType: 'Body Armour',
+      quality: 20,
+      localStatsPrecomputed: false,
+      armourStats: { energyShield: 300 },
+      implicits: ['{crafted}12% increased Explicit Defence Modifier magnitudes'],
+      explicits: ['+100 to maximum Energy Shield', '150% increased Energy Shield'],
+      rawText: 'Rarity: RARE\nTailored Regalia\nSynthetic Regalia\nCrafted: true\nQuality: 20',
+    };
+    const resArmour = resolveItemEffectiveStats(craftedRegalia, 'poe1');
+    // +100 -> +112, 150% -> 168%; (300 + 112) * 2.68 * 1.2 = 1324.992 -> 1325
+    expect(resArmour.armourStats?.energyShield).toBe(1325);
+
+    const craftedAxe = mkWeapon({
+      name: 'Tempered Axe',
+      baseName: 'Synthetic Axe',
+      quality: 20,
+      weaponStats: {
+        weaponType: 'Axe',
+        twoHanded: true,
+        physicalMin: 100,
+        physicalMax: 200,
+        critChance: 5,
+        attacksPerSecond: 1.2,
+      },
+      implicits: ['{crafted}8% increased Explicit Physical Modifier magnitudes'],
+      explicits: ['100% increased Physical Damage', 'Adds 50 to 100 Physical Damage'],
+      rawText: 'Rarity: RARE\nTempered Axe\nSynthetic Axe\nCrafted: true\nQuality: 20',
+    });
+    const resWeapon = resolveItemEffectiveStats(craftedAxe, 'poe1');
+    // 100% -> 108%, 50..100 -> 54..108; min = round((100+54)*2.08*1.2) = 384, max = round((200+108)*2.08*1.2) = 769
+    expect(resWeapon.weaponStats?.physicalMin).toBe(384);
+    expect(resWeapon.weaponStats?.physicalMax).toBe(769);
+
+    // Trade-sourced item with Unique ID (already baked) must NOT be double-scaled
+    const tradeAxe = mkWeapon({
+      ...craftedAxe,
+      id: 'trade-axe',
+      rawText: 'Rarity: RARE\nTempered Axe\nSynthetic Axe\nUnique ID: deadbeef\nQuality: 20',
+    });
+    const resTrade = resolveItemEffectiveStats(tradeAxe, 'poe1');
+    // (100+50)*2.0*1.2 = 360, (200+100)*2.0*1.2 = 720
+    expect(resTrade.weaponStats?.physicalMin).toBe(360);
+    expect(resTrade.weaponStats?.physicalMax).toBe(720);
+  });
 });

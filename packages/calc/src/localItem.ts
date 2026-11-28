@@ -617,6 +617,81 @@ function unlockSocketedIdolBondedLines(
 const ARMOUR_BASE_NAME_RE =
   /\b(?:shield|buckler|focus|targe|cuirass|plate|robe|garb|vestment|vestments|jacket|doublet|brigandine|coat|tunic|mail|regalia|raiment|mantle|garment|helmet|helm|crown|tiara|circlet|cap|hood|mask|burgonet|bascinet|greathelm|gloves|gauntlets|mitts|bracers|wraps|cuffs|boots|greaves|sandals|shoes|slippers|sabatons|leggings)\b/i;
 
+interface ExplicitMagnitudeScales {
+  defencePct: number;
+  physicalPct: number;
+  elementalPct: number;
+  speedPct: number;
+  criticalPct: number;
+}
+
+/**
+ * Parses Heist Tailoring / Tempering Orb & custom explicit modifier magnitude enchants
+ * (PoB `Classes/Item.lua:1292-1318`, e.g. `8% increased Explicit Defence Modifier magnitudes`,
+ * `15% increased Explicit Physical Modifier magnitudes`).
+ */
+function extractExplicitMagnitudeScales(lines: readonly string[]): ExplicitMagnitudeScales {
+  const scales: ExplicitMagnitudeScales = {
+    defencePct: 0,
+    physicalPct: 0,
+    elementalPct: 0,
+    speedPct: 0,
+    criticalPct: 0,
+  };
+  for (const raw of lines) {
+    const clean = normalizeStatLineToEn(raw.replace(/\{[^}]*\}/g, '').trim());
+    if (!clean) continue;
+    const m = clean.match(
+      /^(\d+)%\s+(increased|reduced)\s+Explicit(?:\s+(.+?))?\s+Modifier\s+magnitudes$/i,
+    );
+    if (!m) continue;
+    const delta = (m[2]!.toLowerCase() === 'reduced' ? -1 : 1) * Number(m[1]);
+    const tagStr = (m[3] ?? '').trim().toLowerCase();
+    if (!tagStr) {
+      scales.defencePct += delta;
+      scales.physicalPct += delta;
+      scales.elementalPct += delta;
+      scales.speedPct += delta;
+      scales.criticalPct += delta;
+      continue;
+    }
+    if (/\bdefence\b/.test(tagStr)) scales.defencePct += delta;
+    if (/\bphysical\b|\battack\b/.test(tagStr)) scales.physicalPct += delta;
+    if (/\belemental\b|\battack\b/.test(tagStr)) scales.elementalPct += delta;
+    if (/\bspeed\b|\battack\b/.test(tagStr)) scales.speedPct += delta;
+    if (/\bcritical\b/.test(tagStr)) scales.criticalPct += delta;
+  }
+  return scales;
+}
+
+function scaleLocalExplicitLine(
+  rawLine: string,
+  scales: ExplicitMagnitudeScales,
+  kind: 'armour' | 'weapon',
+): string {
+  const clean = normalizeStatLineToEn(rawLine.replace(/\{[^}]*\}/g, '').trim());
+  if (!clean) return rawLine;
+  let pct = 0;
+  if (kind === 'armour') {
+    if (/\b(?:Armour|Evasion|Energy Shield|Ward|Defences)\b/i.test(clean)) {
+      pct = scales.defencePct;
+    }
+  } else {
+    if (/\bPhysical\b/i.test(clean)) {
+      pct = scales.physicalPct;
+    } else if (/\b(?:Fire|Cold|Lightning)\b/i.test(clean)) {
+      pct = scales.elementalPct;
+    } else if (/\bAttack Speed\b/i.test(clean)) {
+      pct = scales.speedPct;
+    } else if (/\bCritical\b/i.test(clean)) {
+      pct = scales.criticalPct;
+    }
+  }
+  if (pct === 0) return rawLine;
+  const mult = Math.max(0, 1 + pct / 100);
+  return scaleRuneLineByEffect(clean, mult);
+}
+
 /**
  * Resolves Path of Building-authentic Local Armour & Local Weapon stats
  * (PoE 1 3.25+/3.30 & PoE 2 0.5 multiplicative quality formula) and returns
@@ -685,6 +760,18 @@ export function resolveItemEffectiveStats(
     return scaleRuneLineByEffect(mGrant[1]!.trim(), steps);
   };
 
+  // PoB `Classes/Item.lua:503-506`: trade-sourced / precomputed items (`Unique ID:` without `Crafted: true`)
+  // already have Tailoring / Tempering Orb explicit magnitude scaling baked into explicit numbers.
+  // For unbaked / PoB-crafted items (`!localStatsPrecomputed`), scale local explicit lines before accumulating.
+  const canApplyExplicitMagnitude =
+    !item.localStatsPrecomputed &&
+    (!item.rawText ||
+      /^\s*Crafted\s*:\s*true/im.test(item.rawText) ||
+      !/^\s*Unique ID\s*:/im.test(item.rawText));
+  const explicitMagScales = canApplyExplicitMagnitude
+    ? extractExplicitMagnitudeScales([...effectiveImplicits, ...effectiveExplicits])
+    : null;
+
   if (isArmour) {
     const baseBlockFromDb = getBaseItemStats(item.baseName, 0, game)?.armour?.blockChance;
     const isShield =
@@ -711,7 +798,10 @@ export function resolveItemEffectiveStats(
       }
     }
     for (const line of effectiveExplicits) {
-      if (!tryConsumeLocalArmourMod(line, acc, opts?.allowBonded, isShield)) {
+      const scaledLine = explicitMagScales
+        ? scaleLocalExplicitLine(line, explicitMagScales, 'armour')
+        : line;
+      if (!tryConsumeLocalArmourMod(scaledLine, acc, opts?.allowBonded, isShield)) {
         const expanded = expandQualityGrant(line);
         if (expanded) globalExplicits.push(expanded);
       }
@@ -803,7 +893,10 @@ export function resolveItemEffectiveStats(
     }
   }
   for (const line of effectiveExplicits) {
-    if (!tryConsumeLocalWeaponMod(line, acc, opts?.allowBonded, item.quality)) {
+    const scaledLine = explicitMagScales
+      ? scaleLocalExplicitLine(line, explicitMagScales, 'weapon')
+      : line;
+    if (!tryConsumeLocalWeaponMod(scaledLine, acc, opts?.allowBonded, item.quality)) {
       const expanded = expandQualityGrant(line);
       if (expanded) globalExplicits.push(expanded);
     }
