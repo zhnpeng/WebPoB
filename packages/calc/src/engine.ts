@@ -858,8 +858,24 @@ function calculateBuildSingleWeaponSet(build: Build): CalcOutput {
           db.addMod({ name: 'MarkedEnemyDamageTaken', type: 'BASE', value: Number(mMarkPrey[1]), flags: 0, keywordFlags: 0, source: nodeSrc });
           continue;
         }
+        // Pathfinder: Master Distiller legacy 3.25/3.26 Diamond Flask crit chance wording
+        const mMdDiamondCrit = cleanSt.match(
+          /^If Diamond Flask Charges are consumed,\s*(\d+)% increased Critical Strike Chance$/i,
+        );
+        if (mMdDiamondCrit && !parsedNodeMods.some((m) => m.name === 'CritChance')) {
+          db.addMod({
+            name: 'CritChance',
+            type: 'INC',
+            value: Number(mMdDiamondCrit[1]),
+            flags: 0,
+            keywordFlags: 0,
+            source: nodeSrc,
+            tags: [{ type: 'Condition', var: 'UsedDiamondFlaskRecently' }],
+          });
+          continue;
+        }
         // PoE 1 Dual Wield Mastery & Consecrated Ground Accuracy (`CalcSetup.lua:648`, `CalcPerform.lua:823`)
-        if (/^Inherent Attack Speed bonus from Dual Wielding is Doubled$/i.test(cleanSt)) {
+        if (/^Inherent Attack Speed bonus from Dual Wielding is Doubled/i.test(cleanSt)) {
           db.addMod({ name: 'DoubledInherentDualWieldingSpeed', type: 'FLAG', value: true, flags: 0, keywordFlags: 0, source: nodeSrc });
           continue;
         }
@@ -1216,13 +1232,24 @@ function calculateBuildSingleWeaponSet(build: Build): CalcOutput {
   );
   if (isDualWielding && build.game === 'poe1') {
     const hasDoubledDwBonuses = db.flag('DualWieldBonusesDoubled');
+    const bothClaws =
+      mainWeaponResolved?.weaponType === 'Claw' &&
+      offWeaponResolved?.weaponType === 'Claw';
+    const matchesDoubledDwMastery = (st: string): boolean => {
+      if (!/Inherent Attack Speed bonus from Dual Wielding is Doubled/i.test(st)) return false;
+      if (/while wielding two Claws/i.test(st)) return bothClaws;
+      return true;
+    };
     const hasDoubledDwSpeed =
       hasDoubledDwBonuses ||
       db.flag('DoubledInherentDualWieldingSpeed') ||
-      Object.entries(build.tree.masteryEffects ?? {}).some(([nodeIdStr, effId]) => {
+      Object.entries(build.tree.masteryEffects ?? {}).some(([nodeIdStr, effVal]) => {
+        if (typeof effVal === 'string' && matchesDoubledDwMastery(effVal)) {
+          return true;
+        }
         const mNode = tree.nodes[Number(nodeIdStr)];
-        const eff = mNode?.masteryEffects?.find((e) => e.id === Number(effId));
-        return Boolean(eff?.stats.some((st) => /Inherent Attack Speed bonus from Dual Wielding is Doubled/i.test(st)));
+        const eff = mNode?.masteryEffects?.find((e) => e.id === Number(effVal));
+        return Boolean(eff?.stats.some(matchesDoubledDwMastery));
       });
     db.addMod({
       name: 'Speed',
@@ -4215,6 +4242,9 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
       ? Math.floor(rageEffOverride + 1e-9)
       : Math.floor(chargesAndRage.rage * rageEffScale + 1e-9);
   db.setMultiplier('RageEffect', effRageEffect);
+  if (build.game === 'poe2' && effRageEffect > chargesAndRage.rage) {
+    db.setStat('Rage', effRageEffect);
+  }
   if (chargesAndRage.maxRage > 0 && chargesAndRage.rage >= chargesAndRage.maxRage) {
     db.setCondition('HaveMaximumRage', true);
   }
@@ -6433,6 +6463,13 @@ function computeGroupOffence(
       skillTypeMap['Attack'] = true;
       skillTypeMap['attack'] = true;
     }
+    if (
+      Boolean((chosen as { fromVaalGem?: boolean }).fromVaalGem && /^Vaal\s+/i.test(activeDef.name.en)) ||
+      effectiveSkillTypeSet.has('vaal')
+    ) {
+      skillTypeMap['Vaal'] = true;
+      skillTypeMap['vaal'] = true;
+    }
 
     // PoE 1 slot-scoped `Socketed Gems / Socketed Skills / Socketed Vaal Skills` modifiers
     // (Elder/Shaper/Essence pseudo-links, Triumvirate Authority, etc.)
@@ -7398,6 +7435,8 @@ function computeGroupOffence(
         const newRageMore = Math.floor(curRage * Math.max(0, 1 + totalRageEffInc / 100) + 1e-9);
         const deltaRageMore = newRageMore - prevRageMore;
         if (deltaRageMore > 0) {
+          skillDb.setMultiplier('RageEffect', newRageMore);
+          skillDb.setStat('Rage', newRageMore);
           skillDb.addMod({
             name: 'Damage',
             type: 'MORE',
@@ -9966,7 +10005,12 @@ function computeGroupOffence(
       const pulseDmgFrac = activeSkillData.pulseDamage / 100;
       const pulseInt = activeSkillData.pulseInterval;
       const partIdx = resolvedPartStats?.partIndex ?? chosenActiveInst?.skillPart ?? 1;
-      if (partIdx === 2) {
+      const partNameLower = (resolvedPartStats?.partName ?? activeDef.parts?.[partIdx - 1]?.name ?? '').toLowerCase();
+      const isStrongerPulsePart =
+        partNameLower.includes('stronger') || (!partNameLower && partIdx === 3);
+      const isNormalPulsePart =
+        partNameLower.includes('normal') || (!partNameLower && partIdx === 2);
+      if (isStrongerPulsePart) {
         // Stronger Pulse: guaranteed crit + full pulseDamage MORE
         if (!neverCrit && !hasDiamondShrine) {
           critChance = 100;
@@ -9980,7 +10024,7 @@ function computeGroupOffence(
           keywordFlags: KeywordFlag.Hit | KeywordFlag.Ailment,
           source: 'Stronger Pulse Damage',
         });
-      } else {
+      } else if (!isNormalPulsePart) {
         // Part 1 ("Average DPS"): exact PoB1 weighted average across (interval - 1) normal pulses + 1 guaranteed-crit stronger pulse
         const cm = noCritExtra || neverCrit ? 1 : Math.max(1, critMultiplier / 100);
         const preC = neverCrit ? 0 : Math.min(1, Math.max(0, preBifurcateCrit / 100));

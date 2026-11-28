@@ -1531,4 +1531,141 @@ describe('Mechanism-Layer Regression Suite (PoE 1 & PoE 2)', () => {
       expect(outAnimalOnly.offence.speed).toBeGreaterThan(outHuman.offence.speed * 1.2);
     });
   });
+
+  describe('Wave 4W: PoE 2 RageEffect->Rage stat sync & PoE 1 Claw Dual-Wield Mastery', () => {
+    it('scales PoE 2 PerStat:Rage (Bestial Rage) by effective RageEffect', () => {
+      const base = createSamplePoe2Build();
+      const maul = makeWeapon({
+        id: 'poe2_maul_1',
+        name: 'Test Maul',
+        baseName: 'Anvil Maul',
+        slotType: 'Weapon 1',
+        weaponStats: {
+          weaponType: 'Mace',
+          twoHanded: true,
+          physicalMin: 200,
+          physicalMax: 400,
+          attacksPerSecond: 1.2,
+          critChance: 5,
+        },
+      });
+      const attackBase: Build = {
+        ...base,
+        items: { ...base.items, [maul.id]: maul },
+        equipped: { ...base.equipped, 'Weapon 1': maul.id },
+        skills: [
+          {
+            id: 'sg_phys_atk',
+            label: 'Phys Attack',
+            enabled: true,
+            weaponSets: [1, 2],
+            gems: [{ instanceId: 'g1', gemId: 'poe2_leapslam', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_phys_atk',
+      };
+      const plain: Build = {
+        ...attackBase,
+        config: {
+          ...attackBase.config,
+          rage: 60,
+          customMods: [
+            '+30 to Maximum Rage',
+            'Every 10 Rage also grants 12% increased Physical Damage',
+          ].join('\n'),
+        },
+      };
+      const withRageEff: Build = {
+        ...plain,
+        config: {
+          ...plain.config,
+          customMods: [
+            '+30 to Maximum Rage',
+            '50% increased Rage Effect',
+            'Every 10 Rage also grants 12% increased Physical Damage',
+          ].join('\n'),
+        },
+      };
+      const outPlain = calculateBuild(plain);
+      const outScaled = calculateBuild(withRageEff);
+      // 60 Rage with +50% Rage Effect -> 90 effective Rage -> 1.90/1.60 = 1.1875x MORE Attack + +36% INC Physical (108% vs 72%)
+      expect(outScaled.offence.averageHit).toBeGreaterThan(outPlain.offence.averageHit * 1.22);
+    });
+
+    it('applies PoE 1 Claw Mastery doubled dual-wield attack speed (20% MORE) only when dual-wielding two Claws', () => {
+      const base = createSamplePoe1Build();
+      const claw1 = makeWeapon({
+        id: 'claw_1',
+        name: 'Left Claw',
+        baseName: 'Imperial Claw',
+        slotType: 'Weapon 1',
+        weaponStats: {
+          weaponType: 'Claw',
+          twoHanded: false,
+          physicalMin: 100,
+          physicalMax: 200,
+          attacksPerSecond: 1.6,
+          critChance: 6,
+        },
+      });
+      const claw2 = makeWeapon({
+        id: 'claw_2',
+        name: 'Right Claw',
+        baseName: 'Imperial Claw',
+        slotType: 'Weapon 2',
+        weaponStats: {
+          weaponType: 'Claw',
+          twoHanded: false,
+          physicalMin: 100,
+          physicalMax: 200,
+          attacksPerSecond: 1.6,
+          critChance: 6,
+        },
+      });
+      const sword2 = makeWeapon({
+        id: 'sword_2',
+        name: 'Off Sword',
+        baseName: 'Jewelled Foil',
+        slotType: 'Weapon 2',
+        weaponStats: {
+          weaponType: 'Sword',
+          twoHanded: false,
+          physicalMin: 100,
+          physicalMax: 200,
+          attacksPerSecond: 1.6,
+          critChance: 6,
+        },
+      });
+      const masteryText = 'Inherent Attack Speed bonus from Dual Wielding is doubled while wielding two Claws';
+      const dualClawBase: Build = {
+        ...base,
+        items: { ...base.items, [claw1.id]: claw1, [claw2.id]: claw2, [sword2.id]: sword2 },
+        equipped: { ...base.equipped, 'Weapon 1': claw1.id, 'Weapon 2': claw2.id },
+        skills: [
+          {
+            id: 'sg_attack',
+            label: 'Attack',
+            enabled: true,
+            gems: [{ instanceId: 'g1', gemId: 'poe1_cyclone', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_attack',
+        tree: { ...base.tree, masteryEffects: {} },
+      };
+      const outNoMastery = calculateBuild(dualClawBase);
+      const outTwoClawsMastery = calculateBuild({
+        ...dualClawBase,
+        tree: { ...dualClawBase.tree, masteryEffects: { 19050: masteryText } },
+      });
+      const outClawAndSwordMastery = calculateBuild({
+        ...dualClawBase,
+        equipped: { ...dualClawBase.equipped, 'Weapon 2': sword2.id },
+        tree: { ...dualClawBase.tree, masteryEffects: { 19050: masteryText } },
+      });
+      // 1.20 / 1.10 = 1.0909x Attack Speed when wielding two Claws with Claw Mastery
+      expect(outTwoClawsMastery.offence.speed / outNoMastery.offence.speed).toBeCloseTo(1.2 / 1.1, 2);
+      // Mixed Claw + Sword must NOT receive the doubled Claw-only dual-wield bonus
+      expect(outClawAndSwordMastery.offence.speed / outNoMastery.offence.speed).toBeCloseTo(1.0, 2);
+    });
+  });
 });
