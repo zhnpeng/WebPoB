@@ -1965,13 +1965,20 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     });
     expect(spellDb.sum('BASE', 'DamageGainAsCold')).toBe(0);
 
-    // 2. Ice Bite I + Ice Bite II across two Attack groups -> deduplicated to single Ice Bite II (30, NOT 55!)
+    // 2. Ice Bite I + Ice Bite II across two SECONDARY Attack groups -> deduplicated to single Ice Bite II (30, NOT 55!)
     const atkDb = new ModDB();
     atkDb.setCondition('FrozenEnemyRecently', true);
     evaluateAurasAndWatchersEye({
       build: mkBuild({
         game: 'poe2',
+        mainSkillGroupId: 'sg-main',
         skills: [
+          {
+            id: 'sg-main',
+            label: 'Main',
+            enabled: true,
+            gems: [{ instanceId: 'm1', gemId: 'poe2_iceshot', level: 20, quality: 0, enabled: true }],
+          },
           {
             id: 'sg-atk1',
             label: 'Attack 1',
@@ -1997,6 +2004,31 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
       maxMana: 1000,
     });
     expect(atkDb.sum('BASE', 'DamageGainAsCold')).toBe(30);
+
+    // 2b. Ice Bite II on the MAIN skill group -> skipped in playerDb so engine.ts does NOT double-count it (0 in playerDb)
+    const mainIbDb = new ModDB();
+    mainIbDb.setCondition('FrozenEnemyRecently', true);
+    evaluateAurasAndWatchersEye({
+      build: mkBuild({
+        game: 'poe2',
+        mainSkillGroupId: 'sg-main',
+        skills: [
+          {
+            id: 'sg-main',
+            label: 'Main',
+            enabled: true,
+            gems: [
+              { instanceId: 'm1', gemId: 'poe2_iceshot', level: 20, quality: 0, enabled: true },
+              { instanceId: 'm2', gemId: 'poe2_icebitesupporttwo', level: 1, quality: 0, enabled: true },
+            ],
+          },
+        ],
+      }),
+      playerDb: mainIbDb,
+      getGemByIdFn: gemLookup,
+      maxMana: 1000,
+    });
+    expect(mainIbDb.sum('BASE', 'DamageGainAsCold')).toBe(0);
 
     // 3. PoE 1 Summon Spectral Tiger synthesized from Huntleader passive node 35011 (default 5 tigers -> +35% Speed, +125% Crit)
     const tigerDb = new ModDB();

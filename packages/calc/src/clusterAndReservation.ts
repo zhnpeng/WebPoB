@@ -2446,7 +2446,10 @@ export function evaluateAurasAndWatchersEye(
   const mainGroupIndex = resolvedMainIdx >= 0 ? resolvedMainIdx : 0;
   // PoE 2 `Ice Bite I/II` GlobalEffect support buff:
   // Only applies when linked to an Attack/Warcry active skill (never spells like Orb of Storms / Ice Nova),
-  // and never stacks across multiple skill groups (keep single highest tier).
+  // never stacks across multiple skill groups (keep single highest tier), and must NOT re-inject into
+  // `playerDb` when already socketed on the main active skill group (where engine.ts already injects it
+  // into `skillDb`, otherwise Attack skills like Ice Shot double-count +30% -> +60% DamageGainAsCold!).
+  let poe2IceBiteOnMain = false;
   let poe2IceBiteBest: { def: GemDefinition; effLevel: number; tier: number } | null = null;
   const poe2PersistentSupFamilyBest = new Map<string, { def: GemDefinition; effLevel: number; tier: number }>();
   const resolvePoe2PersistentSupFamily = (
@@ -2631,20 +2634,24 @@ export function evaluateAurasAndWatchersEye(
             }
           }
         } else if (supNameL === 'ice bite' || supNameL === 'ice bite i' || supNameL === 'ice bite ii') {
-          const groupHasAttackOrWarcry = group.gems.some((g) => {
-            if (!g.enabled) return false;
-            const gd = lookupGem('poe2', g.gemId);
-            if (!gd || gd.category !== 'active') return false;
-            return gd.tags.some((t) => /^(attack|warcry)$/i.test(t));
-          });
-          if (groupHasAttackOrWarcry) {
-            const tier = supNameL === 'ice bite ii' ? 2 : 1;
-            if (
-              !poe2IceBiteBest ||
-              tier > poe2IceBiteBest.tier ||
-              (tier === poe2IceBiteBest.tier && effSupLevel > poe2IceBiteBest.effLevel)
-            ) {
-              poe2IceBiteBest = { def: supDef, effLevel: effSupLevel, tier };
+          if (groupIdx === mainGroupIndex) {
+            poe2IceBiteOnMain = true;
+          } else {
+            const groupHasAttackOrWarcry = group.gems.some((g) => {
+              if (!g.enabled) return false;
+              const gd = lookupGem('poe2', g.gemId);
+              if (!gd || gd.category !== 'active') return false;
+              return gd.tags.some((t) => /^(attack|warcry)$/i.test(t));
+            });
+            if (groupHasAttackOrWarcry) {
+              const tier = supNameL === 'ice bite ii' ? 2 : 1;
+              if (
+                !poe2IceBiteBest ||
+                tier > poe2IceBiteBest.tier ||
+                (tier === poe2IceBiteBest.tier && effSupLevel > poe2IceBiteBest.effLevel)
+              ) {
+                poe2IceBiteBest = { def: supDef, effLevel: effSupLevel, tier };
+              }
             }
           }
         } else if (resolvePoe2PersistentSupFamily(supNameL)) {
@@ -3127,9 +3134,10 @@ export function evaluateAurasAndWatchersEye(
     }
   }
 
-  // Inject deduplicated PoE 2 Ice Bite & persistent support buffs (one highest-tier entry per family).
+  // Inject deduplicated PoE 2 Ice Bite & persistent support buffs (one highest-tier entry per family;
+  // skip Ice Bite when already socketed on the main active skill group so engine.ts never double-counts it).
   if (build.game === 'poe2') {
-    if (poe2IceBiteBest) {
+    if (poe2IceBiteBest && !poe2IceBiteOnMain) {
       const globalSupCmods = resolveAuraLevelCompiledMods(poe2IceBiteBest.def, poe2IceBiteBest.effLevel);
       if (globalSupCmods && globalSupCmods.length > 0) {
         const pMods = globalSupCmods.filter((m) => m.target === 'player');
