@@ -2137,4 +2137,131 @@ describe('Mechanism-Layer Regression Suite (PoE 1 & PoE 2)', () => {
       expect(outCycGc.offence.averageHit).toBeCloseTo(outCycPlain.offence.averageHit, 1);
     });
   });
+
+  describe('Wave 5E: Dual-Wield Per-Hand Crit, Hybrid Attack+Minion Routing & Additive Quality MORE', () => {
+    it('computes PoE 1 dual-wield crit separately per hand (clamping <= 100% per hand before averaging)', () => {
+      const base = createSamplePoe1Build();
+      const claw = makeWeapon({
+        id: 'dw_claw',
+        name: 'Crit Claw',
+        baseName: 'Imperial Claw',
+        slotType: 'Weapon 1',
+        weaponStats: {
+          weaponType: 'Claw',
+          twoHanded: false,
+          physicalMin: 100,
+          physicalMax: 200,
+          attacksPerSecond: 1.6,
+          critChance: 10,
+        },
+      });
+      const dagger = makeWeapon({
+        id: 'dw_dagger',
+        name: 'Low Crit Dagger',
+        baseName: 'Ambusher',
+        slotType: 'Weapon 2',
+        weaponStats: {
+          weaponType: 'Dagger',
+          twoHanded: false,
+          physicalMin: 100,
+          physicalMax: 200,
+          attacksPerSecond: 1.6,
+          critChance: 6,
+        },
+      });
+      const dwBuild: Build = {
+        ...base,
+        items: { ...base.items, [claw.id]: claw, [dagger.id]: dagger },
+        equipped: { ...base.equipped, 'Weapon 1': claw.id, 'Weapon 2': dagger.id },
+        skills: [
+          {
+            id: 'sg_dw_crit',
+            label: 'Dual Wield Crit',
+            enabled: true,
+            gems: [{ instanceId: 'g_cy', gemId: 'poe1_cyclone', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_dw_crit',
+        config: {
+          ...base.config,
+          enemyEvasion: 0,
+          customMods: [
+            "Your hits can't be Evaded",
+            '1100% increased Critical Strike Chance with Claws',
+            '400% increased Global Critical Strike Chance',
+          ].join('\n'),
+        },
+      };
+      const outNoClawCrit = calculateBuild({
+        ...dwBuild,
+        config: {
+          ...dwBuild.config,
+          customMods: [
+            "Your hits can't be Evaded",
+            '400% increased Global Critical Strike Chance',
+          ].join('\n'),
+        },
+      });
+      const outWithClawCrit = calculateBuild(dwBuild);
+      // With +1100% Claw Crit, MH Claw clamps at 100% while OH Dagger stays unchanged (NOT inflated by Claw Crit).
+      // So total crit rises to `(100 + ohCrit) / 2` (~70.7%), strictly below 100% and strictly above the unbuffed dual-wield crit.
+      expect(outWithClawCrit.offence.critChance).toBeGreaterThan(outNoClawCrit.offence.critChance + 15);
+      expect(outWithClawCrit.offence.critChance).toBeLessThan(80);
+    });
+
+    it('routes Dominating Blow of Inspiring to player melee attack and scales by ImprovedMinionDamageAppliesToPlayer', () => {
+      const base = createSamplePoe1Build();
+      const mace = makeWeapon({
+        id: 'db_mace',
+        name: 'Test Mace',
+        baseName: 'Behemoth Mace',
+        slotType: 'Weapon 1',
+        weaponStats: {
+          weaponType: 'Mace',
+          twoHanded: false,
+          physicalMin: 100,
+          physicalMax: 200,
+          attacksPerSecond: 1.5,
+          critChance: 5,
+        },
+      });
+      const common: Build = {
+        ...base,
+        items: { ...base.items, [mace.id]: mace },
+        equipped: { ...base.equipped, 'Weapon 1': mace.id },
+        skills: [
+          {
+            id: 'sg_db',
+            label: 'Dominating Blow of Inspiring',
+            enabled: true,
+            gems: [
+              {
+                instanceId: 'g_db',
+                gemId: 'poe1_dominatingblowaltx',
+                level: 20,
+                quality: 20,
+                enabled: true,
+              },
+            ],
+          },
+        ],
+        mainSkillGroupId: 'sg_db',
+        config: {
+          ...base.config,
+          enemyArmour: 0,
+        },
+      };
+      const outPlain = calculateBuild(common);
+      const outWithMinionInc = calculateBuild({
+        ...common,
+        config: {
+          ...common.config,
+          customMods: '100% increased Minion Damage',
+        },
+      });
+      expect(outPlain.offence.averageHit).toBeGreaterThan(0);
+      // Dominating Blow of Inspiring Q20 applies 300% of Minion Damage INC (+300% INC Damage)
+      expect(outWithMinionInc.offence.averageHit).toBeGreaterThan(outPlain.offence.averageHit * 2.5);
+    });
+  });
 });

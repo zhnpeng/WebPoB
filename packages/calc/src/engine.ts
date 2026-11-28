@@ -6306,14 +6306,9 @@ function computeGroupOffence(
             const v = Math.trunc(qm.value * effectiveQuality + Math.sign(qm.value) * 1e-9);
             if (v === 0) return null;
             // Upstream PoB sums qualityStats into matching same-gem constantStats/levelStats before converting to MORE
-            // (e.g. Viper Strike of the Mamba: 200% + 60% = 260% MORE = 3.60x; Molten Strike: -60% + 10% = -50% MORE = 0.50x!)
-            if (
-              build.game === 'poe1' &&
-              sourcePrefix === 'Skill' &&
-              qm.type === 'MORE' &&
-              v > 0 &&
-              (!qm.tags || qm.tags.length === 0)
-            ) {
+            // (applies across PoE 1 & PoE 2, Skill & Support gems, positive & negative quality deltas, with matching tags).
+            if (qm.type === 'MORE') {
+              const qmTagsKey = JSON.stringify(qm.tags ?? []);
               const matchingBase = baseCmods.find(
                 (bm) =>
                   bm.name === qm.name &&
@@ -6321,9 +6316,10 @@ function computeGroupOffence(
                   typeof bm.value === 'number' &&
                   bm.value !== 0 &&
                   100 + bm.value > 0 &&
+                  100 + bm.value + v > 0 &&
                   ((bm.flags ?? 0) === (qm.flags ?? 0) || def.id === 'poe1_moltenstrike') &&
                   ((bm.keywordFlags ?? 0) === (qm.keywordFlags ?? 0) || def.id === 'poe1_moltenstrike') &&
-                  (!bm.tags || bm.tags.length === 0),
+                  JSON.stringify(bm.tags ?? []) === qmTagsKey,
               );
               if (matchingBase && typeof matchingBase.value === 'number') {
                 const effRelMore = ((100 + matchingBase.value + v) / (100 + matchingBase.value) - 1) * 100;
@@ -7018,7 +7014,7 @@ function computeGroupOffence(
           { game: build.game },
         );
       }
-      applyGemQualityStats(def, effSupQuality, 'Support', supSock.qualBonus);
+      applyGemQualityStats(def, effSupQuality, 'Support', supSock.qualBonus, supCmods);
     }
     if (build.game === 'poe1' && slotItem && spellTotemEffLevel === undefined) {
       for (const rawL of [...slotItem.implicits, ...slotItem.explicits]) {
@@ -7213,7 +7209,8 @@ function computeGroupOffence(
   };
   const activeSkillData: Record<string, number | boolean | string> | undefined =
     Object.keys(mergedActiveSkillData).length > 0 ? mergedActiveSkillData : undefined;
-  const isMinion = Boolean(activeDef.minionBase);
+  // Hybrid Attack+Minion skills (e.g. Dominating Blow / of Inspiring) default to Player Melee Attack in PoB1 (`CalcOffence.lua`)
+  const isMinion = Boolean(activeDef.minionBase) && (activeDef.modFlags & ModFlag.Attack) === 0;
 
   // Full PoE 1 & PoE 2 Minion Offence Delegation (`minionDb` + `enemyDb` + `Data/Minions.lua`)
   if (isMinion && activeDef.minionBase) {
@@ -8600,6 +8597,36 @@ function computeGroupOffence(
         keywordFlags: 0,
         source: `General's Cry (Lv.${gcLv})`,
       });
+    }
+  }
+
+  // PoE 1 Minion Damage Applies to Player (Dominating Blow of Inspiring `250% + 2.5%*Q`, The Scourge, etc.)
+  if (
+    build.game === 'poe1' &&
+    (skillDb.flag('MinionDamageAppliesToPlayer', flags, kwFlags) ||
+      skillDb.sum('BASE', 'ImprovedMinionDamageAppliesToPlayer', flags, kwFlags) > 0 ||
+      skillDb.sum('BASE', 'MinionDamageAppliesToPlayerPct', flags, kwFlags) > 0)
+  ) {
+    const minionDmgInc = groupMinionDb.sum('INC', 'Damage');
+    if (minionDmgInc !== 0) {
+      const convPct = Math.max(
+        100,
+        skillDb.sum('BASE', 'ImprovedMinionDamageAppliesToPlayer', flags, kwFlags),
+        skillDb.sum('BASE', 'MinionDamageAppliesToPlayerPct', flags, kwFlags),
+      );
+      // Spiritual Aid already mirrored 100% of Minion Damage INC into playerDb during routing
+      const alreadyPct = skillDb.flag('SpiritualAid') ? 100 : 0;
+      const deltaPct = Math.trunc((minionDmgInc * Math.max(0, convPct - alreadyPct)) / 100);
+      if (deltaPct !== 0) {
+        skillDb.addMod({
+          name: 'Damage',
+          type: 'INC',
+          value: deltaPct,
+          flags: 0,
+          keywordFlags: 0,
+          source: `Minion Damage Applies to Player (${convPct}%)`,
+        });
+      }
     }
   }
 
@@ -10164,11 +10191,48 @@ function computeGroupOffence(
     effectiveCritMultiplier =
       neverCrit || noCritExtra ? 1 : 1 + (critChance / 100) * Math.max(0, poe2Crit.critMultiplierPct / 100 - 1);
   } else {
-    const preLuckyCrit = neverCrit
-      ? 0
-      : hasDiamondShrine
-        ? 100
-        : Math.min(100, baseCrit * (1 + critInc / 100) * critMore);
+    let preLuckyCrit: number;
+    if (neverCrit) {
+      preLuckyCrit = 0;
+    } else if (hasDiamondShrine) {
+      preLuckyCrit = 100;
+    } else if (
+      isAttack &&
+      isDualWield &&
+      mainWeaponStats &&
+      offWeaponStats &&
+      weaponCritOverride === null &&
+      offHandSetMin === undefined &&
+      !isUnarmedConcoction
+    ) {
+      // Upstream PoB1 CalcOffence.lua: dual-wield computes MH & OH crit separately (each with its own weapon-type flags & <=100% clamp), then averages.
+      const baseNonWepFlags = flags & ~weaponModFlags;
+      const mhFlags = baseNonWepFlags | weaponTypeToModFlags(mainWeaponStats.weaponType, mainWeaponStats.twoHanded);
+      const ohFlags = baseNonWepFlags | weaponTypeToModFlags(offWeaponStats.weaponType, offWeaponStats.twoHanded);
+      const mhBaseCrit =
+        mainWeaponStats.critChance +
+        enemyCritBonus +
+        skillDb.sum('BASE', ['BaseCritChance', 'CritChance'], mhFlags, kwFlags);
+      const ohBaseCrit =
+        offWeaponStats.critChance +
+        enemyCritBonus +
+        skillDb.sum('BASE', ['BaseCritChance', 'CritChance'], ohFlags, kwFlags);
+      const mhCrit = Math.min(
+        100,
+        mhBaseCrit *
+          (1 + skillDb.sum('INC', 'CritChance', mhFlags, kwFlags) / 100) *
+          skillDb.more('CritChance', mhFlags, kwFlags),
+      );
+      const ohCrit = Math.min(
+        100,
+        ohBaseCrit *
+          (1 + skillDb.sum('INC', 'CritChance', ohFlags, kwFlags) / 100) *
+          skillDb.more('CritChance', ohFlags, kwFlags),
+      );
+      preLuckyCrit = (mhCrit + ohCrit) / 2;
+    } else {
+      preLuckyCrit = Math.min(100, baseCrit * (1 + critInc / 100) * critMore);
+    }
     const isUnexcitingCrit = skillDb.flag('Unexciting', flags, kwFlags);
     const isLuckyCrit =
       skillDb.flag('CritChanceIsLucky', flags, kwFlags) ||
