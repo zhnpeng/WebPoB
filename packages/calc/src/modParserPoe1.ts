@@ -2659,6 +2659,35 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
     pattern: /^Your Linked Minions take (\d+)% less Damage$/i,
     build: (m, src) => [mkMod('LinkedMinionDamageTaken', 'MORE', -Number(m[1]), src)],
   },
+  // Wave 6I: Phrecia 3_28_alternate Ascendancy rules (Paladin Absolution, Whisperer breathe deep, Illicit Gains, Private Tuition, Bring the Battle)
+  {
+    pattern: /^(\d+)% increased Effect of Non-Curse Auras from your Skills while you have a Linked Target$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('AuraEffect', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'HaveLinkedTarget' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Non-instant Mana Recovery from Flasks is also Recovered as Life$/i,
+    build: (_, src) => [mkMod('ManaFlaskRecoveryAppliesToLife', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Cannot be (Ignited|Shocked|Frozen|Chilled) if (Strength|Dexterity|Intelligence) is higher than (Strength|Dexterity|Intelligence)$/i,
+    build: (m, src) => {
+      const ailment = m[1]![0]!.toUpperCase() + m[1]!.slice(1).toLowerCase();
+      return [mkMod(`Conditional${ailment}Immune`, 'FLAG', true, src)];
+    },
+  },
+  {
+    pattern: /^Enemies Taunted by you deal (\d+)% less Damage with Hits and Ailments against other targets$/i,
+    build: (m, src) => [mkMod('TauntedEnemyLessDamageOtherTargets', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Curses are inflicted on you instead of Linked targets$/i,
+    build: (_, src) => [mkMod('CursesRedirectedFromLinkedTarget', 'FLAG', true, src)],
+  },
 ];
 
 /**

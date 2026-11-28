@@ -514,5 +514,33 @@ Bismuth Flask
     const roundTripped = xmlToBuild(reserialized);
     expect(roundTripped.skills[0]!.gems[0]!.stageCount).toBe(6);
     expect((roundTripped.skills[0]!.gems[0] as unknown as { corrupted?: boolean }).corrupted).toBe(true);
+
+    // Wave 6I: Out-of-order multi-ConfigSet / SkillSet / ItemSet IDs ("3", "1", "2") select strictly by active ID
+    const multiSetXml = `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding>
+  <Build className="Witch" ascendClassName="Elementalist" level="95" mainSocketGroup="1" />
+  <Tree activeSpec="1"><Spec title="Default" nodes="1" /></Tree>
+  <Skills activeSkillSet="2">
+    <SkillSet id="3" title="Late"><Skill enabled="true"><Gem nameSpec="Fireball" level="20" quality="0" enabled="true" /></Skill></SkillSet>
+    <SkillSet id="1" title="Early"><Skill enabled="true"><Gem nameSpec="Cyclone" level="20" quality="0" enabled="true" /></Skill></SkillSet>
+    <SkillSet id="2" title="Mid"><Skill enabled="true"><Gem nameSpec="Arc" level="21" quality="20" enabled="true" /></Skill></SkillSet>
+  </Skills>
+  <Items activeItemSet="2">
+    <Item id="1">Rarity: RARE\nTest Amulet\nOnyx Amulet\n+10 to all Attributes</Item>
+    <ItemSet id="3" title="Late" />
+    <ItemSet id="1" title="Early" />
+    <ItemSet id="2" title="Mid"><Slot name="Amulet" itemId="1" /></ItemSet>
+  </Items>
+  <Config activeConfigSet="2">
+    <ConfigSet id="3" title="Late"><Input name="customMods" string="99% more Damage" /></ConfigSet>
+    <ConfigSet id="1" title="Early"><Input name="customMods" string="10% more Damage" /></ConfigSet>
+    <ConfigSet id="2" title="Mid"><Input name="customMods" string="25% more Damage" /></ConfigSet>
+  </Config>
+</PathOfBuilding>`;
+    const multiBuild = xmlToBuild(multiSetXml);
+    expect(multiBuild.activeSkillSetIndex).toBe(2);
+    expect(multiBuild.activeItemSetIndex).toBe(2);
+    expect(multiBuild.equipped.Amulet).toBeDefined();
+    expect(multiBuild.config.customMods).toBe('25% more Damage');
   });
 });

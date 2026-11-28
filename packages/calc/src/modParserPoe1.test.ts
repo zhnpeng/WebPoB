@@ -1728,4 +1728,31 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       expect.objectContaining({ name: 'LinkedMinionDamageTaken', type: 'MORE', value: -67 }),
     ]);
   });
+
+  it('Wave 6I: Phrecia 3_28_alternate Ascendancy rules', () => {
+    expect(
+      parseModLine('40% increased Effect of Non-Curse Auras from your Skills while you have a Linked Target', 'Tree: Absolution'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'AuraEffect',
+        type: 'INC',
+        value: 40,
+        tags: [{ type: 'Condition', var: 'HaveLinkedTarget' }],
+      }),
+    ]);
+    expect(parseModLine('Non-instant Mana Recovery from Flasks is also Recovered as Life', 'Tree: breathe deep')).toEqual([
+      expect.objectContaining({ name: 'ManaFlaskRecoveryAppliesToLife', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Cannot be Ignited if Strength is higher than Dexterity', 'Tree: Illicit Gains')).toEqual([
+      expect.objectContaining({ name: 'ConditionalIgnitedImmune', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Cannot be Shocked if Intelligence is higher than Strength', 'Tree: Private Tuition')).toEqual([
+      expect.objectContaining({ name: 'ConditionalShockedImmune', type: 'FLAG', value: true }),
+    ]);
+    expect(
+      parseModLine('Enemies Taunted by you deal 20% less Damage with Hits and Ailments against other targets', 'Tree: Bring the Battle'),
+    ).toEqual([
+      expect.objectContaining({ name: 'TauntedEnemyLessDamageOtherTargets', type: 'BASE', value: 20 }),
+    ]);
+  });
 });
