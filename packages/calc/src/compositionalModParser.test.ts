@@ -1090,5 +1090,16 @@ describe('Real-World Corpus Coverage (parseModLine + parseModCompositional fallb
         tags: [{ type: 'Condition', var: 'AtMaxFrenzyCharges' }],
       }),
     ]);
+
+    // Wave 4W Scorch / Brittle / Sap ailment effect modifiers
+    expect(parseModCompositional('48% increased Effect of Scorch', 'item')).toEqual([
+      expect.objectContaining({ name: 'EnemyScorchEffect', type: 'INC', value: 48 }),
+    ]);
+    expect(parseModCompositional('30% increased Effect of Brittle you inflict', 'tree')).toEqual([
+      expect.objectContaining({ name: 'EnemyBrittleEffect', type: 'INC', value: 30 }),
+    ]);
+    expect(parseModCompositional('25% increased Effect of Sap', 'tree')).toEqual([
+      expect.objectContaining({ name: 'EnemySapEffect', type: 'INC', value: 25 }),
+    ]);
   });
 });

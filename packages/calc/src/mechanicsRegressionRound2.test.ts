@@ -1531,5 +1531,50 @@ describe('Mechanism-Layer Regression Suite — Round 2 (Upstream PoB spec/System
         '47% reduced Ignite Duration on Enemies',
       ]);
     });
+
+    it('matches upstream ModDB.lua OverrideInternal first-active, multi-name Flag/Override, and per-bucket MORE rounding in calcStat (Wave 4W)', () => {
+      const db = new ModDB();
+      // First active OVERRIDE wins (upstream ModDB.lua:239-243)
+      db.addMod({
+        name: 'WeaponBaseCritChance',
+        type: 'OVERRIDE',
+        value: 8,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'First Override',
+      });
+      db.addMod({
+        name: 'WeaponBaseCritChance',
+        type: 'OVERRIDE',
+        value: 5,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Second Override',
+      });
+      expect(db.override('WeaponBaseCritChance')).toBe(8);
+      expect(db.override(['NonExistentStat', 'WeaponBaseCritChance'])).toBe(8);
+      expect(db.calcStat('WeaponBaseCritChance').total).toBe(8);
+
+      // Multi-name flag() support (upstream ModStore.lua:190)
+      db.addMod({
+        name: 'CannotShock',
+        type: 'FLAG',
+        value: true,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Skill',
+      });
+      expect(db.flag(['CannotFreeze', 'CannotShock'])).toBe(true);
+      expect(db.flag(['CannotFreeze', 'CannotChill'])).toBe(false);
+
+      // calcStat() rounds each stat bucket MORE multiplier to 2 decimal places (upstream ModDB.lua:197)
+      db.addMod({ name: 'EnergyShield', type: 'BASE', value: 1000, flags: 0, keywordFlags: 0, source: 'Base' });
+      db.addMod({ name: 'EnergyShield', type: 'MORE', value: 15, flags: 0, keywordFlags: 0, source: 'More A' });
+      db.addMod({ name: 'EnergyShield', type: 'MORE', value: 15, flags: 0, keywordFlags: 0, source: 'More B' });
+      // 1.15 * 1.15 = 1.3225 -> rounded to 1.32 per bucket (matching ModDB.more())
+      const es = db.calcStat('EnergyShield');
+      expect(es.moreMultiplier).toBe(1.32);
+      expect(es.total).toBe(1320);
+    });
   });
 });
