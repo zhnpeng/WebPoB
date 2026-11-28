@@ -1017,4 +1017,39 @@ describe('equipmentAndFlasks — Special Meta Unique Gear Mechanics', () => {
     expect(resNode.activeSlots).toEqual(['Flask 2']);
     expect(resNode.modLines).not.toContain('+1500 to Armour');
   });
+
+  it('skips stale PoE 2 Equipment Jewel Sockets whose index exceeds the parent item J socket count', () => {
+    const gloves = makeItem({
+      id: 'gloves-1j',
+      name: 'Pandemonium Talons',
+      baseName: 'Wrapped Bracers',
+      slotType: 'Gloves',
+      sockets: 'S J',
+    });
+    const jewel1 = makeItem({
+      id: 'j1',
+      name: 'Active Jewel',
+      baseName: 'Emerald',
+      slotType: 'Any',
+      explicits: ['7% increased Attack Speed'],
+    });
+    const jewel2 = makeItem({
+      id: 'j2',
+      name: 'Empyrean Glisten',
+      baseName: 'Emerald',
+      slotType: 'Any',
+      explicits: ['7% increased Attack Speed', '7% increased Attack Speed with Quarterstaves'],
+    });
+    const build = makeMinimalBuild({
+      game: 'poe2',
+      items: { 'gloves-1j': gloves, j1: jewel1, j2: jewel2 },
+      equipped: {
+        Gloves: 'gloves-1j',
+        'Gloves Jewel Socket 1': 'j1',
+        'Gloves Jewel Socket 2': 'j2',
+      } as unknown as Build['equipped'],
+    });
+    const extra = collectExtraSocketedEquipment(build);
+    expect(extra.map((e) => e.slot)).toEqual(['Gloves Jewel Socket 1']);
+  });
 });

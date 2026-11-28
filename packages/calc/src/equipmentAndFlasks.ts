@@ -871,8 +871,19 @@ export function collectExtraSocketedEquipment(build: Build): ExtraSocketedEquipm
     const mEquipJewel = slot.match(EQUIP_JEWEL_SOCKET_RE);
     if (mEquipJewel) {
       const parentSlot = mEquipJewel[1]!;
+      const socketIdx = Number(mEquipJewel[2]);
       const parentId = equippedMap[parentSlot];
       const parentItem = parentId ? build.items[parentId] : undefined;
+      if (parentItem) {
+        const socketStr =
+          parentItem.sockets ||
+          parentItem.rawText?.match(/^Sockets:\s*(.+)$/im)?.[1] ||
+          '';
+        if (socketStr) {
+          const jewelSocketCount = (socketStr.match(/J/gi) ?? []).length;
+          if (socketIdx > jewelSocketCount) continue;
+        }
+      }
       const effectPct = extractSocketedAbyssalJewelEffectPct(parentItem);
       const effectMult = 1 + effectPct / 100;
       result.push({ slot, item, effectMult });
