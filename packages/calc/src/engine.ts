@@ -5017,9 +5017,10 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     if (ov !== null) return Math.round(ov);
     return Math.round(db.sum('BASE', stat) * Math.max(0, 1 + db.sum('INC', stat) / 100) * db.more(stat));
   };
-  const fireRaw = evalSignedResist('FireResist');
-  const coldRaw = evalSignedResist('ColdResist');
-  const lightningRaw = evalSignedResist('LightningResist');
+  const zeroEleRes = db.flag('ZeroElementalResistances');
+  const fireRaw = zeroEleRes ? 0 : evalSignedResist('FireResist');
+  const coldRaw = zeroEleRes ? 0 : evalSignedResist('ColdResist');
+  const lightningRaw = zeroEleRes ? 0 : evalSignedResist('LightningResist');
   const chaosImmune = db.flag('ChaosImmune') || poolConvRes.chaosInoculation;
   const chaosRaw = chaosImmune ? 100 : evalSignedResist('ChaosResist');
   db.setStat('UncappedFireResist', fireRaw);
@@ -10105,9 +10106,9 @@ function computeGroupOffence(
     skillDb.flag('ElementalOverload', flags, kwFlags) ||
     isPoe1PerfectAgony;
   const hasDiamondShrine = skillDb.flag('DiamondShrineCrit');
-  const enemyCritBonus = groupEnemyDb.sum('BASE', 'SelfCritChance', flags, kwFlags);
+  const enemyCritBonus = groupEnemyDb.sum('BASE', ['SelfCritChance', 'CritChance'], flags, kwFlags);
   let flatBaseCrit = skillDb.sum('BASE', ['BaseCritChance', 'CritChance'], flags, kwFlags);
-  const enemyCritMulti = groupEnemyDb.sum('BASE', 'SelfCritMultiplier', flags, kwFlags);
+  const enemyCritMulti = groupEnemyDb.sum('BASE', ['SelfCritMultiplier', 'CritMultiplier'], flags, kwFlags);
   const weaponCritOverride = skillDb.override('WeaponBaseCritChance', flags, kwFlags);
   let spellCritOverride =
     skillDb.override('SpellBaseCritOverride', flags, kwFlags) ??
@@ -10201,7 +10202,9 @@ function computeGroupOffence(
       skillDb.more('CritMultiplier', flags, kwFlags) *
       (1 + paLowLifeMore / 100) *
       (1 + paFullLifeMore / 100);
-    const overridePoe2Bonus = skillDb.override('CritDamageBonusOverride', flags, kwFlags);
+    const overridePoe2Bonus =
+      skillDb.override('CritDamageBonusOverride', flags, kwFlags) ??
+      skillDb.override('CritMultiplier', flags, kwFlags);
     const hasInevitable = skillDb.flag('InevitableCriticalHits', flags, kwFlags);
     const poe2Crit = computePoe2CritMultiplier({
       baseCritChance: hasDiamondShrine ? 100 : baseCrit,

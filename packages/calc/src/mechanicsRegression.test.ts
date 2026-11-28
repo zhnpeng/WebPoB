@@ -2536,5 +2536,40 @@ describe('Mechanism-Layer Regression Suite (PoE 1 & PoE 2)', () => {
       expect(plainImpale).toBeGreaterThan(0);
       expect(intimImpale).toBeCloseTo(plainImpale, 1);
     });
+
+    it('overrides PoE 2 Critical Damage Bonus via CritDamageBonusOverride (Maligaro\'s Virtuosity)', () => {
+      const base = createSamplePoe2Build();
+      const gloves: Item = {
+        id: 'g_maligaro_test',
+        name: "Maligaro's Virtuosity",
+        baseName: 'Fine Bracers',
+        rarity: 'UNIQUE',
+        slotType: 'Gloves',
+        quality: 0,
+        sockets: '',
+        implicits: [],
+        explicits: ['Your Critical Damage Bonus is 250%'],
+      };
+      const out = calculateBuild({
+        ...base,
+        items: { ...base.items, [gloves.id]: gloves },
+        equipped: { ...base.equipped, Gloves: gloves.id },
+        skills: [
+          {
+            id: 'sg_spark',
+            label: 'Spark',
+            enabled: true,
+            gems: [{ instanceId: 'g1', gemId: 'poe2_spark', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_spark',
+        config: {
+          ...base.config,
+          customMods: '100% increased Critical Damage Bonus',
+        },
+      });
+      // Maligaro overrides Critical Damage Bonus to 250% => total Crit Multiplier = 350% (ignores +100% INC)
+      expect(out.offence.critMultiplier).toBe(350);
+    });
   });
 });
