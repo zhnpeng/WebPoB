@@ -1247,4 +1247,45 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       parseModLine('Defences from Equipped Body Armour are doubled if it has no Socketed Gems', 'Tree: Oath of the Maji'),
     ).toEqual([expect.objectContaining({ name: 'OathOfTheMajiBodyArmour', type: 'FLAG', value: true })]);
   });
+
+  it('Wave 4X: Vaal Skills (Soul Catcher/Yaomac), Roiling Tempest, Luminary & Crit Ailment DoT Multi', () => {
+    expect(parseModLine('112% increased Damage with Vaal Skills', 'Item: Yaomac')).toEqual([
+      expect.objectContaining({
+        name: 'Damage',
+        type: 'INC',
+        value: 112,
+        tags: [{ type: 'SkillType', skillType: 'Vaal' }],
+      }),
+    ]);
+    expect(
+      parseModLine('60% increased Critical Strike Chance with Vaal Skills during effect', 'Item: Soul Catcher'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'CritChance',
+        type: 'INC',
+        value: 60,
+        tags: [{ type: 'SkillType', skillType: 'Vaal' }],
+      }),
+    ]);
+    expect(parseModLine('25% more Maximum Lightning Damage', 'Tree: Roiling Tempest')).toEqual([
+      expect.objectContaining({ name: 'LightningMaxDamage', type: 'MORE', value: 25 }),
+    ]);
+    expect(parseModLine('50% less Minimum Lightning Damage', 'Tree: Roiling Tempest')).toEqual([
+      expect.objectContaining({ name: 'LightningMinDamage', type: 'MORE', value: -50 }),
+    ]);
+    expect(parseModLine('Cannot deal non-Lightning Damage', 'Tree: Roiling Tempest')).toHaveLength(4);
+    expect(
+      parseModLine('Your Mercenary has 50% increased effect of Non-Curse Auras from Skills', 'Tree: Bestowed Knighthood'),
+    ).toEqual([expect.objectContaining({ name: 'MercenaryAuraEffect', type: 'INC', value: 50 })]);
+    expect(
+      parseModLine('+25% to Damage over Time Multiplier for Ailments from Critical Strikes', 'Tree: Dire Torment'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'DotMultiplier',
+        type: 'BASE',
+        value: 25,
+        tags: [{ type: 'Condition', var: 'Crit' }],
+      }),
+    ]);
+  });
 });

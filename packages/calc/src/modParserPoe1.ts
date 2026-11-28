@@ -1831,6 +1831,69 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
       },
     ],
   },
+  // Wave 4X: Vaal Skills (Yaomac's Accord / Soul Catcher), Roiling Tempest, Luminary, Critical Ailment DoT Multi
+  {
+    pattern: /^(\d+)% increased Damage with Vaal Skills(?: during effect)?$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'INC', Number(m[1]), src),
+        tags: [{ type: 'SkillType' as const, skillType: 'Vaal' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased Critical Strike Chance with Vaal Skills(?: during effect)?$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritChance', 'INC', Number(m[1]), src),
+        tags: [{ type: 'SkillType' as const, skillType: 'Vaal' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased (Attack and Cast |Attack |Cast )?Speed with Vaal Skills(?: during effect)?$/i,
+    build: (m, src) => {
+      const scope = (m[2] ?? '').trim().toLowerCase();
+      const flags =
+        scope === 'attack'
+          ? ModFlag.Attack
+          : scope === 'cast'
+            ? ModFlag.Spell
+            : ModFlag.Attack | ModFlag.Spell;
+      return [
+        {
+          ...mkMod('Speed', 'INC', Number(m[1]), src, flags),
+          tags: [{ type: 'SkillType' as const, skillType: 'Vaal' }],
+        },
+      ];
+    },
+  },
+  {
+    pattern: /^Cannot deal non-(Physical|Fire|Cold|Lightning|Chaos) Damage$/i,
+    build: (m, src) => {
+      const keep = capFirst(m[1]!);
+      return (['Physical', 'Fire', 'Cold', 'Lightning', 'Chaos'] as const)
+        .filter((dt) => dt !== keep)
+        .map((dt) => mkMod(`DealNo${dt}`, 'FLAG', true, src));
+    },
+  },
+  {
+    pattern: /^Your Mercenary has (\d+)% increased effect of Non-Curse Auras from Skills$/i,
+    build: (m, src) => [mkMod('MercenaryAuraEffect', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Your Mercenary and their Minions deal (\d+)% increased Damage$/i,
+    build: (m, src) => [mkMod('MercenaryDamage', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^\+(\d+)% to Damage over Time Multiplier for Ailments from Critical Strikes$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('DotMultiplier', 'BASE', Number(m[1]), src, ModFlag.Dot, KeywordFlag.Ailment),
+        tags: [{ type: 'Condition' as const, var: 'Crit' }],
+      },
+    ],
+  },
 ];
 
 /**
