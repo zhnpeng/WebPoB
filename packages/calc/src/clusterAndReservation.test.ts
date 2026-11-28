@@ -3203,4 +3203,48 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     expect(pDb.getEvalContext().multipliers.VirulenceStack).toBe(60);
     expect(mDb.getEvalContext().multipliers.VirulenceStack).toBe(60);
   });
+
+  it('defers The Apostate ES-to-Life injection when ConvertArmourESToLife is already set in db (preventing double-conversion with engine.ts)', () => {
+    const db = new ModDB();
+    db.addMod({ name: 'Life', type: 'BASE', value: 1000, flags: 0, keywordFlags: 0, source: 'Base' });
+    db.addMod({ name: 'ConvertArmourESToLife', type: 'FLAG', value: true, flags: 0, keywordFlags: 0, source: 'Body Armour' });
+    const res = applyPoolZeroingAndKeystoneRules({
+      game: 'poe1',
+      db,
+      allocatedNodes: [],
+      equippedItems: [
+        {
+          slot: 'Body Armour',
+          item: {
+            id: 'apostate',
+            name: 'The Apostate',
+            baseName: 'Cabalist Regalia',
+            rarity: 'UNIQUE',
+            slotType: 'Body Armour',
+            quality: 0,
+            implicits: [],
+            explicits: ['Gain Maximum Life instead of Maximum Energy Shield from Equipped Armour Items'],
+            rawText: '',
+          },
+        },
+        {
+          slot: 'Helmet',
+          item: {
+            id: 'helm',
+            name: 'Hubris Circlet',
+            baseName: 'Hubris Circlet',
+            rarity: 'RARE',
+            slotType: 'Helmet',
+            quality: 20,
+            implicits: [],
+            explicits: ['+50 to maximum Energy Shield'],
+            rawText: 'Energy Shield: 300',
+          },
+        },
+      ],
+    });
+    expect(res.theApostate).toBe(true);
+    // Deferred to engine.ts:4818 -> db Life remains 1000 here (no duplicate Life BASE added)
+    expect(db.calcStat('Life').total).toBe(1000);
+  });
 });

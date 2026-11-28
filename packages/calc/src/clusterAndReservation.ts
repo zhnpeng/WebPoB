@@ -1769,10 +1769,11 @@ export function applyPoolZeroingAndKeystoneRules(
 
   if (theApostate) {
     const src = 'Unique: The Apostate';
+    const alreadyHasConvertFlag = db.flag('ConvertArmourESToLife');
     if (!db.flag('TheApostate')) {
       db.addMod(mkMod('TheApostate', 'FLAG', true, src));
     }
-    if (!db.flag('ConvertArmourESToLife')) {
+    if (!alreadyHasConvertFlag) {
       db.addMod(mkMod('ConvertArmourESToLife', 'FLAG', true, src));
     }
     if (ctx.armourItemsEnergyShield !== undefined) {
@@ -1786,7 +1787,13 @@ export function applyPoolZeroingAndKeystoneRules(
       }
       apostateConvertedArmourEs = Math.max(0, Math.round(sum));
     }
+    // When `ConvertArmourESToLife` is already in `db` (parsed from The Apostate by engine.ts gear
+    // loading) and no explicit `armourItemsEnergyShield` override was passed, engine.ts performs the
+    // exact local-armour ES -> Life conversion once at pool evaluation — do not double-add here.
+    const deferToEngineConvert =
+      alreadyHasConvertFlag && ctx.armourItemsEnergyShield === undefined;
     if (
+      !deferToEngineConvert &&
       apostateConvertedArmourEs > 0 &&
       !hasStatSource(db, 'Life', 'BASE', 'the apostate')
     ) {
