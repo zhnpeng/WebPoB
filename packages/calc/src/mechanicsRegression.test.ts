@@ -1333,5 +1333,104 @@ describe('Mechanism-Layer Regression Suite (PoE 1 & PoE 2)', () => {
       });
       expect(outVsw.offence.mainSkillName.en).toBe('Void Shockwave');
     });
+
+    it('PoE 1 SocketedIn item mods apply once only in matching slot, and Gladiator Determined Survivor overrides Shield Block & doubles Dual Wield bonuses', () => {
+      const base = createSamplePoe1Build();
+      const plainHelm: Item = {
+        id: 'reg_plain_helm',
+        name: 'Plain Crown',
+        baseName: 'Hubris Circlet',
+        rarity: 'RARE',
+        slotType: 'Helmet',
+        quality: 0,
+        implicits: [],
+        explicits: [],
+      };
+      const elderHelm: Item = {
+        ...plainHelm,
+        id: 'reg_elder_helm',
+        name: 'Elder Crown',
+        explicits: ['Socketed Skills deal 30% more Elemental Damage'],
+      };
+      const mainGrp = base.skills.find((s) => s.id === base.mainSkillGroupId) ?? base.skills[0]!;
+      const helmGrp = { ...mainGrp, slot: 'Helmet' as const };
+      const bodyGrp = { ...mainGrp, slot: 'Body Armour' as const };
+
+      const outPlain = calculateBuild({
+        ...base,
+        items: { ...base.items, [plainHelm.id]: plainHelm },
+        equipped: { ...base.equipped, Helmet: plainHelm.id },
+        skills: [helmGrp],
+        mainSkillGroupId: helmGrp.id,
+      });
+      const outElderInHelm = calculateBuild({
+        ...base,
+        items: { ...base.items, [elderHelm.id]: elderHelm },
+        equipped: { ...base.equipped, Helmet: elderHelm.id },
+        skills: [helmGrp],
+        mainSkillGroupId: helmGrp.id,
+      });
+      const outElderInBody = calculateBuild({
+        ...base,
+        items: { ...base.items, [elderHelm.id]: elderHelm },
+        equipped: { ...base.equipped, Helmet: elderHelm.id },
+        skills: [bodyGrp],
+        mainSkillGroupId: bodyGrp.id,
+      });
+      // Exact 1.30x in matching slot (never double-counted to 1.69x) and 1.00x in other slots
+      expect(outElderInHelm.offence.averageHit / outPlain.offence.averageHit).toBeCloseTo(1.3, 2);
+      expect(outElderInBody.offence.averageHit / outPlain.offence.averageHit).toBeCloseTo(1.0, 2);
+
+      // Gladiator Determined Survivor: Base Chance to Block from Equipped Shield is 50%
+      const lowBlockShield: Item = {
+        id: 'reg_low_shield',
+        name: 'Small Buckler',
+        baseName: 'Goathide Buckler',
+        rarity: 'RARE',
+        slotType: 'Weapon 2',
+        quality: 0,
+        armourStats: { armour: 0, evasion: 100, energyShield: 0, blockChance: 22 },
+        implicits: [],
+        explicits: [],
+      };
+      const shieldBase: Build = {
+        ...base,
+        items: { ...base.items, [lowBlockShield.id]: lowBlockShield },
+        equipped: { ...base.equipped, 'Weapon 2': lowBlockShield.id },
+      };
+      const outNormalBlock = calculateBuild(shieldBase);
+      const outOverrideBlock = calculateBuild(
+        withCustomMods(shieldBase, "Gain 50% Chance to Block from Equipped Shield instead of the Shield's value"),
+      );
+      expect(outOverrideBlock.defence.blockChance).toBeGreaterThanOrEqual(outNormalBlock.defence.blockChance + 25);
+    });
+
+    it('PoE 2 BlockChanceMax OVERRIDE (Turtle Charm) and ConsumedPowerChargeRecently gating on non-Flicker skills', () => {
+      const rawBase = createSamplePoe2Build();
+      const shield: Item = {
+        id: 'reg_p2_shield',
+        name: 'Tower Shield',
+        baseName: 'Splintered Tower Shield',
+        rarity: 'RARE',
+        slotType: 'Weapon 2',
+        quality: 0,
+        armourStats: { armour: 200, evasion: 0, energyShield: 0, blockChance: 40 },
+        implicits: [],
+        explicits: ['+50% to Chance to Block'],
+      };
+      const baseWithShield: Build = {
+        ...rawBase,
+        items: { ...rawBase.items, [shield.id]: shield },
+        equipped: { ...rawBase.equipped, 'Weapon 2': shield.id },
+        config: {
+          ...rawBase.config,
+          customMods: 'Maximum Block chance is 75%',
+        },
+      };
+      const outDefaultMax = calculateBuild(baseWithShield);
+      const outTurtleMax = calculateBuild(withCustomMods(baseWithShield, 'Maximum Block chance is 35%'));
+      expect(outDefaultMax.defence.blockChance).toBeGreaterThan(35);
+      expect(outTurtleMax.defence.blockChance).toBeLessThanOrEqual(35);
+    });
   });
 });

@@ -1282,7 +1282,9 @@ function calculateBuildSingleWeaponSet(build: Build): CalcOutput {
       offFitsOneHand,
   );
   if (isDualWielding && build.game === 'poe1') {
+    const hasDoubledDwBonuses = db.flag('DualWieldBonusesDoubled');
     const hasDoubledDwSpeed =
+      hasDoubledDwBonuses ||
       db.flag('DoubledInherentDualWieldingSpeed') ||
       Object.entries(build.tree.masteryEffects ?? {}).some(([nodeIdStr, effId]) => {
         const mNode = tree.nodes[Number(nodeIdStr)];
@@ -1300,10 +1302,10 @@ function calculateBuildSingleWeaponSet(build: Build): CalcOutput {
     db.addMod({
       name: 'BlockChance',
       type: 'BASE',
-      value: 20,
+      value: hasDoubledDwBonuses ? 40 : 20,
       flags: 0,
       keywordFlags: 0,
-      source: 'Dual Wielding',
+      source: hasDoubledDwBonuses ? 'Dual Wielding (Doubled)' : 'Dual Wielding',
     });
   }
 
@@ -1832,8 +1834,8 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
         }
       }
     }
-    const globalImpMods = parsedImpMods.filter((m) => !m.tags?.some((t) => t.type === 'SocketedIn'));
-    const globalExpMods = parsedExpMods.filter((m) => !m.tags?.some((t) => t.type === 'SocketedIn'));
+    const globalImpMods = parsedImpMods.filter((m) => !m.tags?.some((t) => t.type === 'SocketedIn' && !t.slotName));
+    const globalExpMods = parsedExpMods.filter((m) => !m.tags?.some((t) => t.type === 'SocketedIn' && !t.slotName));
     db.addMods(globalImpMods);
     db.addMods(globalExpMods);
     if (build.game === 'poe1') {
@@ -2145,6 +2147,8 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
   const flaskEval = evaluateActiveFlasks(build, db.sum('INC', 'FlaskEffect'), {
     ironFlaskEffectPct: db.sum('INC', 'IronFlaskEffect'),
     tinctureEffectPct: db.sum('INC', 'TinctureEffect'),
+    disableUtilityFlasks:
+      db.flag('DisableUtilityFlasks') || db.flag('UtilityFlasksDoNotApplyToPlayer'),
   });
   if (flaskEval.activeSlots.length > 0) {
     db.setCondition('UsingFlask', true);
@@ -3872,6 +3876,10 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
   db.setMultiplier('BlueSocket', socketColorTotals.B);
   db.setMultiplier('WhiteSocket', socketColorTotals.W);
   db.setMultiplier('SocketFilled', totalSocketFilledCount);
+  const grandSpectrumCount = allJewelItems.filter((j) => /grand spectrum/i.test(j.name)).length;
+  if (grandSpectrumCount > 0) {
+    db.setMultiplier('GrandSpectrum', grandSpectrumCount);
+  }
   db.setMultiplier('RunesSocketedInBody Armour', bodyArmourFilledRunes);
   for (const [slotKey, cols] of Object.entries(socketColorBySlot)) {
     db.setMultiplier(`RedSocketIn${slotKey}`, cols.R);
@@ -5302,8 +5310,34 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
       ? Math.min(95, Math.max(0, Math.round((1 - (1.25 * enemyAcc) / (enemyAcc + Math.pow(evasion / 5, 0.9))) * 100)))
       : 0;
 
-  const maxAttackBlock = Math.min(90, Math.max(0, ruleset.maxBlockChance + Math.round(db.sum('BASE', 'BlockChanceMax'))));
-  const maxSpellBlock = Math.min(90, Math.max(0, ruleset.maxBlockChance + Math.round(db.sum('BASE', 'SpellBlockChanceMax'))));
+  const blockMaxOverride = db.override('BlockChanceMax');
+  const maxAttackBlock =
+    blockMaxOverride != null
+      ? Math.min(90, Math.max(0, Math.round(blockMaxOverride)))
+      : Math.min(90, Math.max(0, ruleset.maxBlockChance + Math.round(db.sum('BASE', 'BlockChanceMax'))));
+  const spellBlockMaxOverride = db.override('SpellBlockChanceMax');
+  const maxSpellBlock =
+    spellBlockMaxOverride != null
+      ? Math.min(90, Math.max(0, Math.round(spellBlockMaxOverride)))
+      : Math.min(90, Math.max(0, ruleset.maxBlockChance + Math.round(db.sum('BASE', 'SpellBlockChanceMax'))));
+  const shieldBlockOverride = usingShield ? db.override('ShieldBlockOverride') : null;
+  if (shieldBlockOverride != null && shieldBlockOverride > 0) {
+    const curShieldBlock = db
+      .calcStat('BlockChance')
+      .sources.filter((s) => s.type === 'BASE' && /weapon 2/i.test(s.source))
+      .reduce((acc, s) => acc + (typeof s.value === 'number' ? s.value : 0), 0);
+    const deltaBlock = shieldBlockOverride - curShieldBlock;
+    if (deltaBlock !== 0) {
+      db.addMod({
+        name: 'BlockChance',
+        type: 'BASE',
+        value: deltaBlock,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Determined Survivor (Shield Block Override)',
+      });
+    }
+  }
   const rawAttackBlock = db.calcStat('BlockChance').total;
   const blockChance = Math.min(maxAttackBlock, Math.max(0, Math.floor(rawAttackBlock + 1e-6)));
   db.setStat('BlockChance', blockChance);
@@ -6401,6 +6435,14 @@ function computeGroupOffence(
 
     // PoE 1 slot-scoped `Socketed Gems / Socketed Skills / Socketed Vaal Skills` modifiers
     // (Elder/Shaper/Essence pseudo-links, Triumvirate Authority, etc.)
+    if (mainGroup.slot) {
+      const preCtx = skillDb.getEvalContext();
+      skillDb.setEvalContext({
+        ...preCtx,
+        skillTypes: { ...(preCtx.skillTypes ?? {}), ...skillTypeMap },
+        socketedIn: mainGroup.slot,
+      });
+    }
     if (build.game === 'poe1' && slotItem && !chosen.inst.fromItem) {
       const isVaalActive =
         Boolean((chosen as { fromVaalGem?: boolean }).fromVaalGem && /^Vaal\s+/i.test(activeDef.name.en)) ||
@@ -6428,17 +6470,32 @@ function computeGroupOffence(
           else if (qual === 'fire') statName = 'FireDamage';
           else if (qual === 'cold') statName = 'ColdDamage';
           else if (qual === 'lightning') statName = 'LightningDamage';
-          skillDb.addMod({ name: statName, type: 'MORE', value: val, flags: mFlags, keywordFlags: 0, source: slotModSrc });
+          const alreadyFromSocketedIn = skillDb
+            .calcStat(statName, mFlags, 0)
+            .sources.some((s) => s.type === 'MORE' && Number(s.value) === val && s.source.includes(slotItem.name));
+          if (!alreadyFromSocketedIn) {
+            skillDb.addMod({ name: statName, type: 'MORE', value: val, flags: mFlags, keywordFlags: 0, source: slotModSrc });
+          }
           continue;
         }
         m = line.match(/^Socketed (?:Gems|Skills) have (\d+)% (more|less) (Attack and Cast|Attack|Cast) Speed$/i);
         if (m) {
           const val = (m[2]!.toLowerCase() === 'less' ? -1 : 1) * Number(m[1]);
           const kind = m[3]!.toLowerCase();
-          if (kind === 'attack and cast' || kind === 'attack') {
+          if (
+            (kind === 'attack and cast' || kind === 'attack') &&
+            !skillDb
+              .calcStat('Speed', ModFlag.Attack, 0)
+              .sources.some((s) => s.type === 'MORE' && Number(s.value) === val && s.source.includes(slotItem.name))
+          ) {
             skillDb.addMod({ name: 'Speed', type: 'MORE', value: val, flags: ModFlag.Attack, keywordFlags: 0, source: slotModSrc });
           }
-          if (kind === 'attack and cast' || kind === 'cast') {
+          if (
+            (kind === 'attack and cast' || kind === 'cast') &&
+            !skillDb
+              .calcStat('Speed', ModFlag.Spell, 0)
+              .sources.some((s) => s.type === 'MORE' && Number(s.value) === val && s.source.includes(slotItem.name))
+          ) {
             skillDb.addMod({ name: 'Speed', type: 'MORE', value: val, flags: ModFlag.Spell, keywordFlags: 0, source: slotModSrc });
           }
           continue;
@@ -6631,6 +6688,23 @@ function computeGroupOffence(
         continue;
       }
 
+      if (build.game === 'poe2' && (def.id === 'poe2_profanitysupport' || lower === 'profanity i')) {
+        if (
+          build.config.rawInputs?.conditionConsumedCorpseRecently ||
+          skillDb.getEvalContext().conditions.ConsumedCorpseRecently
+        ) {
+          skillDb.addMod({
+            name: 'ChaosDamage',
+            type: 'MORE',
+            value: 30,
+            flags: 0,
+            keywordFlags: 0,
+            source: `Support: ${def.name.en}`,
+          });
+        }
+        applyGemQualityStats(def, effSupQuality, 'Support', supSock.qualBonus);
+        continue;
+      }
       if (lower === 'empower' || lower === 'awakened empower') {
         empowerLevelBonus += Math.max(0, effSupLevel - 1);
         continue;
@@ -7270,14 +7344,21 @@ function computeGroupOffence(
     );
     if (berserkGem && (skillDb.getEvalContext().multipliers.Rage ?? 0) > 0) {
       let extraSupportLv = 0;
+      const otherNonUhtredSups = berserkGroup!.gems.filter((sup) => {
+        if (!sup.enabled || sup === berserkGem) return false;
+        const sd = getGemById('poe2', sup.gemId);
+        if (!sd || sd.category !== 'support') return false;
+        const sn = sd.name.en.trim().toLowerCase();
+        return sn !== "uhtred's exodus" && sn !== "uhtred's omen" && sn !== "uhtred's augury";
+      }).length;
       for (const sup of berserkGroup!.gems) {
         if (!sup.enabled || sup === berserkGem) continue;
         const sd = getGemById('poe2', sup.gemId);
         if (!sd) continue;
         const sn = sd.name.en.trim().toLowerCase();
-        if (sn === "uhtred's exodus") extraSupportLv += 3;
-        else if (sn === "uhtred's omen") extraSupportLv += 2;
-        else if (sn === "uhtred's augury") extraSupportLv += 1;
+        if (sn === "uhtred's exodus" && otherNonUhtredSups === 0) extraSupportLv += 3;
+        else if (sn === "uhtred's omen" && otherNonUhtredSups <= 1) extraSupportLv += 2;
+        else if (sn === "uhtred's augury" && otherNonUhtredSups <= 2) extraSupportLv += 1;
       }
       const bLv = Math.min(40, Math.max(1, berserkGem.level + extraSupportLv));
       const bQual = Math.max(0, berserkGem.quality ?? 0);
@@ -7618,8 +7699,18 @@ function computeGroupOffence(
               return gn === 'charged staff' || gn === 'falling thunder' || gn === 'flicker strike';
             }),
         );
-      if (hasPowerChargeConsumer) {
+      if (
+        hasPowerChargeConsumer &&
+        (build.config.rawInputs?.conditionConsumedPowerChargeRecently ||
+          activeNameLower === 'flicker strike')
+      ) {
         skillDb.setCondition('ConsumedPowerChargeRecently', true);
+      }
+      if (
+        hasPowerChargeConsumer &&
+        (build.config.rawInputs?.conditionGainedPowerChargeRecently ||
+          activeNameLower === 'flicker strike')
+      ) {
         skillDb.setCondition('GainedPowerChargeRecently', true);
       }
     }
