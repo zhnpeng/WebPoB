@@ -1951,6 +1951,26 @@ export function computeAuthenticAilmentAndSkillDots(input: AuthenticDotInput): A
       ? 1 - ruthlessBlowChanceFrac + ruthlessBlowChanceFrac * ruthlessBlowAilmentMult
       : 1;
 
+  // PoB1 CalcOffence.lua — Multistrike / Awakened Multistrike repeat damage multiplier for Ailments:
+  // Single-stack ailments (Bleed without Crimson Dance, 1-stack Ignite, single-poison Mamba) keep the
+  // highest-damage final repeat (RepeatTwoDamage +44% / RepeatThreeDamage +66%); multi-stack ailments
+  // (Poison, Crimson Dance Bleed, multi-stack Ignite) average across all repeats.
+  let finalRepeatAilmentMult = 1;
+  let avgRepeatAilmentMult = 1;
+  if (game === 'poe1' && !skillDb.flag('NoRepeatBonuses', flags, kwFlags)) {
+    const repeatCountVal = Math.max(1, 1 + Math.round(skillDb.sum('BASE', 'RepeatCount', flags, kwFlags)));
+    const r1More = skillDb.more('RepeatOneDamage', flags, kwFlags);
+    const r2More = skillDb.more('RepeatTwoDamage', flags, kwFlags);
+    const r3More = skillDb.more('RepeatThreeDamage', flags, kwFlags);
+    if (r1More !== 1 || r2More !== 1 || r3More !== 1) {
+      const hasThird = r3More !== 1 || repeatCountVal >= 4;
+      finalRepeatAilmentMult = Math.max(1, r1More, r2More, hasThird ? r3More : 1);
+      avgRepeatAilmentMult = hasThird
+        ? (1 + r1More + r2More + r3More) / 4
+        : (1 + r1More + r2More) / 3;
+    }
+  }
+
   const getPoe1ScaledBaseForAilment = (dt: DamageType, rollFrac: number): number => {
     const range = input.baseDamageRangeByType?.[dt];
     if (range && (range[0] > 0 || range[1] > 0)) {
@@ -2368,10 +2388,14 @@ export function computeAuthenticAilmentAndSkillDots(input: AuthenticDotInput): A
             scaledBase * nonCritMulti,
             scaledBase * critMulti,
           );
+          const poisonRepeatMult = cannotPoisonAlreadyPoisoned
+            ? finalRepeatAilmentMult
+            : avgRepeatAilmentMult;
           singleStackPoisonDps =
             0.3 *
             weightedSource *
             ruthlessBlowAilmentEffect *
+            poisonRepeatMult *
             poisonEffectMod *
             poisonFasterMult *
             poisonEnemyMult;
@@ -2676,10 +2700,12 @@ export function computeAuthenticAilmentAndSkillDots(input: AuthenticDotInput): A
               ? (customBasePct ?? 0.7) * 3
               : (customBasePct ?? 0.7);
 
+          const bleedRepeatMult = isCrimsonDance ? avgRepeatAilmentMult : finalRepeatAilmentMult;
           singleStackBleedDps =
             baseCoeff *
             weightedSource *
             ruthlessBlowAilmentEffect *
+            bleedRepeatMult *
             bleedEffectMod *
             bleedFasterMult *
             enemyPhysTakenMult;
@@ -3010,8 +3036,15 @@ export function computeAuthenticAilmentAndSkillDots(input: AuthenticDotInput): A
             scaledBase * nonCritMulti,
             scaledBase * critMulti,
           );
+          const igniteRepeatMult =
+            maxIgniteStacks > 1 ? avgRepeatAilmentMult : finalRepeatAilmentMult;
           const preEnemyDps =
-            0.9 * weightedSource * ruthlessBlowAilmentEffect * igniteEffectMod * igniteFasterMult;
+            0.9 *
+            weightedSource *
+            ruthlessBlowAilmentEffect *
+            igniteRepeatMult *
+            igniteEffectMod *
+            igniteFasterMult;
           igniteBurningGroundBase = preEnemyDps;
           singleStackIgniteDps = preEnemyDps * igniteEnemyMult;
         }
@@ -3063,6 +3096,13 @@ export function computeAuthenticAilmentAndSkillDots(input: AuthenticDotInput): A
       if (typeof skillData.ColdDot === 'number') rawDots.Cold = (rawDots.Cold ?? 0) + skillData.ColdDot;
       if (typeof skillData.LightningDot === 'number') rawDots.Lightning = (rawDots.Lightning ?? 0) + skillData.LightningDot;
       if (typeof skillData.ChaosDot === 'number') rawDots.Chaos = (rawDots.Chaos ?? 0) + skillData.ChaosDot;
+      // Also read skill-level BASE DoT from skillDb cmods (e.g. Exsanguinate / Exsanguinate of Transmission / Reap)
+      for (const dt of DAMAGE_TYPES) {
+        if ((rawDots[dt] ?? 0) <= 0) {
+          const dbDot = skillDb.sum('BASE', `${dt}Dot`, flags, kwFlags);
+          if (dbDot > 0) rawDots[dt] = dbDot;
+        }
+      }
 
       const hasAnySkillDot = DAMAGE_TYPES.some((dt) => (rawDots[dt] ?? 0) > 0);
       if (hasAnySkillDot) {
