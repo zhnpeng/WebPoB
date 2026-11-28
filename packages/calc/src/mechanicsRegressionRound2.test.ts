@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createEmptyBuild,
+  findGemByName,
   getGemsForGame,
   getPoe1MinionProfile,
   getPoe1SpectreProfile,
@@ -2132,6 +2133,46 @@ Implicits: 1
         '36% increased Elemental Damage with Attack Skills',
         '12 to 24 Added Fire Damage per 100 Maximum Mana',
       ]);
+    });
+
+    it('resolves legacy PoE 2 v0.1/v0.2 name-only tiered supports and legacy aliases without regressing explicit Roman tiers (Wave 6N)', () => {
+      const prevPoe2 = getGemsForGame('poe2');
+      try {
+        registerGemsData('poe2', {
+          game: 'poe2',
+          count: 8,
+          gems: [
+            { id: 'poe2_upheavalsupport', en: 'Upheaval I', cat: 'support', color: 'red', tags: ['support'] },
+            { id: 'poe2_closecombatsupport', en: 'Close Combat I', cat: 'support', color: 'green', tags: ['support'] },
+            { id: 'poe2_aftershockchancesupport', en: 'Aftershock I', cat: 'support', color: 'red', tags: ['support'] },
+            { id: 'poe2_brutalitysupport', en: 'Brutality I', cat: 'support', color: 'red', tags: ['support'] },
+            { id: 'poe2_blindsupport', en: 'Blind I', cat: 'support', color: 'green', tags: ['support'] },
+            { id: 'poe2_rapidattackssupport', en: 'Rapid Attacks I', cat: 'support', color: 'green', tags: ['support'] },
+            { id: 'poe2_shockconductionsupport', en: 'Shock Conduction', cat: 'support', color: 'blue', tags: ['support'] },
+            { id: 'poe2_skeletalwarrior', en: 'Skeletal Warrior', cat: 'active', color: 'blue', tags: ['minion'] },
+          ],
+        });
+
+        // Name-only lookups (no skillId) for legacy PoE 2 v0.1/v0.2 support names
+        expect(findGemByName('poe2', 'Upheaval')?.id).toBe('poe2_upheavalsupport');
+        expect(findGemByName('poe2', 'Upheaval Support')?.id).toBe('poe2_upheavalsupport');
+        expect(findGemByName('poe2', 'Close Combat')?.id).toBe('poe2_closecombatsupport');
+        expect(findGemByName('poe2', 'Aftershock')?.id).toBe('poe2_aftershockchancesupport');
+        expect(findGemByName('poe2', 'Brutality')?.id).toBe('poe2_brutalitysupport');
+        expect(findGemByName('poe2', 'Blind')?.id).toBe('poe2_blindsupport');
+        expect(resolveGemFromPobRef('poe2', { nameSpec: 'Upheaval' })?.id).toBe('poe2_upheavalsupport');
+
+        // Legacy renamed aliases
+        expect(findGemByName('poe2', 'Martial Tempo')?.id).toBe('poe2_rapidattackssupport');
+        expect(findGemByName('poe2', 'Coursing Current')?.id).toBe('poe2_shockconductionsupport');
+        expect(findGemByName('poe2', 'Skeletal Warrior Minion')?.id).toBe('poe2_skeletalwarrior');
+
+        // Explicit Roman tier must NOT falsely fall back to Tier I when that tier is absent
+        expect(findGemByName('poe2', 'Upheaval II')).toBeUndefined();
+        expect(findGemByName('poe2', 'Ricochet III')).toBeUndefined();
+      } finally {
+        setRegisteredGems('poe2', prevPoe2);
+      }
     });
   });
 });
