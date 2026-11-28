@@ -4201,8 +4201,16 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     explicitEnduranceCharges: cfg.enduranceCharges !== 3 ? cfg.enduranceCharges : undefined,
     baseMaxRage: 30,
     extraMaxRage: db.sum('BASE', 'MaximumRage'),
-    useRage: Boolean(cfg.rage && cfg.rage > 0),
-    explicitRage: cfg.rage,
+    useRage: Boolean(
+      (cfg.rage && cfg.rage > 0) ||
+        (typeof cfg.rawInputs?.multiplierRage === 'number' && cfg.rawInputs.multiplierRage > 0),
+    ),
+    explicitRage:
+      cfg.rage && cfg.rage > 0
+        ? cfg.rage
+        : typeof cfg.rawInputs?.multiplierRage === 'number' && Number.isFinite(cfg.rawInputs.multiplierRage)
+          ? cfg.rawInputs.multiplierRage
+          : cfg.rage,
   });
 
   const extraMaxPowerVal = db.sum('BASE', 'MaxPowerCharges');
@@ -6209,14 +6217,8 @@ function computeGroupOffence(
   let isDiallasMalefaction = false;
   if (build.game === 'poe1' && slotItem) {
     isDiallasMalefaction = slotItem.name.trim().toLowerCase() === "dialla's malefaction";
-    if (
-      isDiallasMalefaction ||
-      [...slotItem.implicits, ...slotItem.explicits].some((l) =>
-        /Gems can be Socketed in this Item ignoring Socket Colour/i.test(l),
-      )
-    ) {
-      slotAlwaysMatchesSocketColor = true;
-    }
+    // Note: "Gems can be Socketed in this Item ignoring Socket Colour" (Dialla's Malefaction) allows
+    // off-colour socketing but does NOT grant +10% matching-colour socket quality to mismatched colours.
     if (slotItem.sockets) {
       for (const ch of slotItem.sockets.toUpperCase()) {
         if (ch === 'R' || ch === 'G' || ch === 'B' || ch === 'W' || ch === 'A') {
@@ -7042,9 +7044,14 @@ function computeGroupOffence(
       }
     }
 
-    const activeSock = chosen.inst.fromItem
-      ? { qualBonus: 0, diallaLevelBonus: 0, diallaQualBonus: 0 }
-      : consumeMatchingSocketBonus(chosen.def, chosen.inst.instanceId);
+    const isSupportGrantedActive =
+      build.game === 'poe1' &&
+      (chosen.def.id.startsWith('poe1_triggeredsupport') ||
+        chosen.def.id === 'poe1_supportbluntweaponshockwave');
+    const activeSock =
+      chosen.inst.fromItem || isSupportGrantedActive
+        ? { qualBonus: 0, diallaLevelBonus: 0, diallaQualBonus: 0 }
+        : consumeMatchingSocketBonus(chosen.def, chosen.inst.instanceId);
     const defForBonus =
       (chosen as { fromVaalGem?: boolean }).fromVaalGem &&
       !chosen.def.tags.some((t) => t.toLowerCase() === 'vaal')
@@ -7067,7 +7074,8 @@ function computeGroupOffence(
     });
     const prismBonus =
       uniqueGearResult?.skillSpecificGemLevels[chosen.def.name.en.trim().toLowerCase()] ?? 0;
-    const isFixedLevelItemSkill = Boolean(chosen.inst.fromItem) && build.game === 'poe1';
+    const isFixedLevelItemSkill =
+      (Boolean(chosen.inst.fromItem) || isSupportGrantedActive) && build.game === 'poe1';
     const effGemLevelBonus = isFixedLevelItemSkill
       ? 0
       : activeBonus.levelBonus + activeSock.diallaLevelBonus;

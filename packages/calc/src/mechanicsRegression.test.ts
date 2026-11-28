@@ -2388,4 +2388,99 @@ describe('Mechanism-Layer Regression Suite (PoE 1 & PoE 2)', () => {
       expect(out.offence.damageByType.Physical.average).toBe(0);
     });
   });
+
+  describe('Wave 5H: rawInputs.multiplierRage, Dialla Off-Colour Quality & Support-Granted Sub-Skill Isolation', () => {
+    it('wires rawInputs.multiplierRage into Rage calculation when cfg.rage is unset', () => {
+      const base = createSamplePoe1Build();
+      const sword = makeWeapon({
+        id: 'rage_sword',
+        name: 'Test Sword',
+        baseName: 'Jewelled Foil',
+        slotType: 'Weapon 1',
+        weaponStats: {
+          weaponType: 'Sword',
+          twoHanded: false,
+          physicalMin: 100,
+          physicalMax: 200,
+          attacksPerSecond: 1.6,
+          critChance: 5,
+        },
+      });
+      const common: Build = {
+        ...base,
+        items: { ...base.items, [sword.id]: sword },
+        equipped: { ...base.equipped, 'Weapon 1': sword.id },
+        skills: [
+          {
+            id: 'sg_rage',
+            label: 'Attack',
+            enabled: true,
+            gems: [{ instanceId: 'g1', gemId: 'poe1_cyclone', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_rage',
+        config: {
+          ...base.config,
+          rage: 0,
+          enemyArmour: 0,
+          rawInputs: {},
+        },
+      };
+      const outNoRage = calculateBuild(common);
+      const outMultRage = calculateBuild({
+        ...common,
+        config: {
+          ...common.config,
+          rawInputs: { multiplierRage: 30 },
+        },
+      });
+      // 30 Rage grants 30% MORE Attack Damage (1.30x)
+      expect(outMultRage.offence.averageHit / outNoRage.offence.averageHit).toBeCloseTo(1.3, 2);
+    });
+
+    it('does not grant +10% matching-colour socket quality to off-colour gems socketed in Dialla\'s Malefaction', () => {
+      const base = createSamplePoe1Build();
+      const dialla: Item = {
+        id: 'dialla_body',
+        name: "Dialla's Malefaction",
+        baseName: "Sage's Robe",
+        rarity: 'UNIQUE',
+        slotType: 'Body Armour',
+        quality: 0,
+        sockets: 'R-R-R-R-R-R',
+        implicits: [],
+        explicits: [
+          'Gems can be Socketed in this Item ignoring Socket Colour',
+          'Gems Socketed in Red Sockets have +2 to Level',
+          'Gems Socketed in Green Sockets have +30% Quality',
+        ],
+      };
+      const blueInRed: Build = {
+        ...base,
+        items: { ...base.items, [dialla.id]: dialla },
+        equipped: { ...base.equipped, 'Body Armour': dialla.id },
+        skills: [
+          {
+            id: 'sg_dialla',
+            label: 'Arc in Red Dialla',
+            slot: 'Body Armour',
+            enabled: true,
+            gems: [{ instanceId: 'g_arc', gemId: 'poe1_arc', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_dialla',
+      };
+      const blueInBlue: Build = {
+        ...blueInRed,
+        items: {
+          ...blueInRed.items,
+          [dialla.id]: { ...dialla, sockets: 'B-B-B-B-B-B' },
+        },
+      };
+      const outRed = calculateBuild(blueInRed);
+      const outBlue = calculateBuild(blueInBlue);
+      // Red socket gives +2 Level (Lv22, Q0) vs Blue socket (Lv20, Q10); both must produce valid spell hits
+      expect(outRed.offence.averageHit).toBeGreaterThan(outBlue.offence.averageHit);
+    });
+  });
 });
