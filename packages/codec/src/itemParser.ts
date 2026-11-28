@@ -289,7 +289,11 @@ export function parseItemText(
 
     const runeMatch = line.match(/^(?:Rune|符文)\s*[:：]\s*(.+)$/i);
     if (runeMatch) {
-      const runeName = runeMatch[1]!.trim();
+      const runeName = runeMatch[1]!
+        .trim()
+        .replace(/&apos;|&#39;/gi, "'")
+        .replace(/&quot;/gi, '"')
+        .replace(/&amp;/gi, '&');
       if (runeName && !/^(?:none|无|無)$/i.test(runeName)) {
         runes.push(runeName);
       }

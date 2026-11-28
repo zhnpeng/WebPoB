@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createEmptyBuild,
   getGemsForGame,
+  getPoe1MinionProfile,
   getPoe1SpectreProfile,
   hydrateCompactTree,
   registerGemsData,
@@ -1828,6 +1829,38 @@ Implicits: 0
         id: 'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/CasterDemonHigh',
         damageMult: 1.25,
       });
+
+      // Wave 6E: Upstream PoE 1 minion profiles & Rune HTML entity decoding
+      expect(getPoe1MinionProfile('HeraldOfAgonySpiderPlated')).toMatchObject({
+        name: 'Agony Crawler',
+        damageMult: 1.5,
+        attackTime: 1.3,
+        primarySkill: { id: 'HeraldOfAgonyMinionTailSpike', extraProjectiles: 4 },
+      });
+      expect(getPoe1MinionProfile('HolyLivingRelic')).toMatchObject({
+        name: 'Holy Relic',
+        lifeMult: 6.0,
+        primarySkill: { id: 'RelicTriggeredNova', cooldown: 0.3, triggerOnParentAttack: true },
+      });
+      expect(getPoe1MinionProfile('Chaos Golem')).toMatchObject({
+        id: 'SummonedChaosGolem',
+        damageMult: 2.9,
+      });
+
+      const agonyTalons = parseItemText(
+        `Rarity: RARE
+Agony Talons
+Bound Cuffs
+Sockets: S S S
+Rune: Fenumus&apos; Rune of Spinning
+Implicits: 1
+{enchant}{rune}48% increased Cast Speed
+100% increased effect of Socketed Items`,
+        'test_agony',
+        'poe2',
+      );
+      expect(agonyTalons?.runes).toEqual(["Fenumus' Rune of Spinning"]);
+      expect(agonyTalons?.implicits).toEqual(['48% increased Cast Speed']);
     });
 
     it('hydrates off-hand shield attacks with 100% attackDamageMultiplierPct/damageEffectivenessPct and Retaliation cannotBeExerted', () => {

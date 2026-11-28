@@ -1450,3 +1450,189 @@ export function getPoe1SpectreProfile(skillMinion?: string | null): Poe1SpectreP
   if (!trimmed) return undefined;
   return POE1_SPECTRE_PROFILES[trimmed] ?? POE1_SPECTRE_BY_NAME_LOWER.get(trimmed.toLowerCase());
 }
+
+export interface Poe1MinionPrimarySkill {
+  readonly id: string;
+  readonly name: string;
+  readonly castTime: number;
+  readonly cooldown?: number;
+  readonly isAttack?: boolean;
+  readonly isSpell?: boolean;
+  readonly isProjectile?: boolean;
+  readonly extraProjectiles?: number;
+  readonly baseEffectiveness?: number;
+  readonly incrementalEffectiveness?: number;
+  readonly triggerOnParentAttack?: boolean;
+}
+
+export interface Poe1MinionProfile {
+  /** Upstream PoB1 `Data/Minions.lua` key. */
+  readonly id: string;
+  /** Display name (e.g. `Agony Crawler`, `Holy Relic`, `Chaos Golem`). */
+  readonly name: string;
+  /** Monster damage multiplier (`m.damage`). */
+  readonly damageMult: number;
+  /** Monster damage spread (`m.damageSpread`). */
+  readonly damageSpread: number;
+  /** Base attack time in seconds (`m.attackTime`). */
+  readonly attackTime: number;
+  /** Monster life multiplier (`m.life`). */
+  readonly lifeMult: number;
+  /** Optional weapon type (`m.weaponType1`). */
+  readonly weaponType1?: string;
+  /** Upstream `m.skillList`. */
+  readonly skillList: readonly string[];
+  /** Primary damage/trigger skill metadata from `Data/Skills/minion.lua`. */
+  readonly primarySkill?: Poe1MinionPrimarySkill;
+}
+
+/**
+ * Upstream PoB1 3.30 `Data/Minions.lua` + `Data/Skills/minion.lua` profiles for core summoned minions
+ * (`Agony Crawler`, `Holy Relic`, `Elemental Relics`, and all 6 Golems).
+ */
+export const POE1_MINION_PROFILES: Readonly<Record<string, Poe1MinionProfile>> = {
+  HeraldOfAgonySpiderPlated: {
+    id: 'HeraldOfAgonySpiderPlated',
+    name: 'Agony Crawler',
+    damageMult: 1.5,
+    damageSpread: 0.2,
+    attackTime: 1.3,
+    lifeMult: 1.5,
+    weaponType1: 'One Handed Sword',
+    skillList: [
+      'HeraldOfAgonyMinionMortar',
+      'HeraldOfAgonyMinionTailSpike',
+      'HeraldOfAgonyMinionCleave',
+      'Melee',
+    ],
+    primarySkill: {
+      id: 'HeraldOfAgonyMinionTailSpike',
+      name: 'Tail Spike',
+      castTime: 1.3,
+      isAttack: true,
+      isProjectile: true,
+      extraProjectiles: 4,
+    },
+  },
+  HolyLivingRelic: {
+    id: 'HolyLivingRelic',
+    name: 'Holy Relic',
+    damageMult: 1.0,
+    damageSpread: 0,
+    attackTime: 1.0,
+    lifeMult: 6.0,
+    skillList: ['RelicTriggeredNova', 'RelicTeleport'],
+    primarySkill: {
+      id: 'RelicTriggeredNova',
+      name: 'Nova',
+      castTime: 1.0,
+      cooldown: 0.3,
+      isSpell: true,
+      baseEffectiveness: 1.1052,
+      incrementalEffectiveness: 0.0579,
+      triggerOnParentAttack: true,
+    },
+  },
+  GuardianRelicAll: {
+    id: 'GuardianRelicAll',
+    name: 'All Relics',
+    damageMult: 1.0,
+    damageSpread: 0,
+    attackTime: 1.0,
+    lifeMult: 4.0,
+    skillList: ['RelicTeleport', 'Anger', 'Hatred', 'Wrath'],
+  },
+  SummonedChaosGolem: {
+    id: 'SummonedChaosGolem',
+    name: 'Chaos Golem',
+    damageMult: 2.9,
+    damageSpread: 0.2,
+    attackTime: 1.0,
+    lifeMult: 6.9,
+    skillList: [
+      'Melee',
+      'SandstormChaosElementalSummoned',
+      'ChaosElementalCascadeSummoned',
+      'SandstormChaosElementalSummonedEmpowered',
+    ],
+  },
+  SummonedFlameGolem: {
+    id: 'SummonedFlameGolem',
+    name: 'Flame Golem',
+    damageMult: 1.5,
+    damageSpread: 0.2,
+    attackTime: 1.0,
+    lifeMult: 5.82,
+    skillList: [
+      'FireElementalFlameRedSummoned',
+      'FireElementalConeSummoned',
+      'FireElementalMortarSummoned',
+      'FireElementalMeteorSummoned',
+    ],
+  },
+  SummonedCarrionGolem: {
+    id: 'SummonedCarrionGolem',
+    name: 'Carrion Golem',
+    damageMult: 0.6,
+    damageSpread: 0.2,
+    attackTime: 0.9,
+    lifeMult: 5.82,
+    skillList: [
+      'BoneGolemMultiAttack',
+      'BoneGolemCascade',
+      'BoneGolemLeapSlam',
+      'EGBoneGolemConsumeCorpse',
+      'BoneGolemCascadeEmpowered',
+    ],
+  },
+  SummonedStoneGolem: {
+    id: 'SummonedStoneGolem',
+    name: 'Stone Golem',
+    damageMult: 2.7,
+    damageSpread: 0.2,
+    attackTime: 1.0,
+    lifeMult: 7.25,
+    weaponType1: 'One Handed Sword',
+    skillList: ['Melee', 'RockGolemSlam', 'RockGolemMinionWhirlingBlades'],
+  },
+  SummonedIceGolem: {
+    id: 'SummonedIceGolem',
+    name: 'Ice Golem',
+    damageMult: 3.06,
+    damageSpread: 0.2,
+    attackTime: 0.85,
+    lifeMult: 5.82,
+    skillList: [
+      'Melee',
+      'IceElementalIceCyclone',
+      'IceElementalSpearSummoned',
+      'IceElementalSpearSummonedDeathNova',
+      'DeathExplodeIceElementalSummoned',
+    ],
+  },
+  SummonedLightningGolem: {
+    id: 'SummonedLightningGolem',
+    name: 'Lightning Golem',
+    damageMult: 1.5,
+    damageSpread: 0.2,
+    attackTime: 1.17,
+    lifeMult: 5.82,
+    skillList: [
+      'LightningGolemArcSummoned',
+      'LightningGolemWrath',
+      'MonsterProjectileSpellLightningGolemSummoned',
+    ],
+  },
+};
+
+const POE1_MINION_BY_NAME_LOWER: ReadonlyMap<string, Poe1MinionProfile> = new Map(
+  Object.values(POE1_MINION_PROFILES).map((p) => [p.name.toLowerCase(), p]),
+);
+
+/** Resolves a PoE 1 summoned minion profile by upstream ID (`HeraldOfAgonySpiderPlated`, etc.) or display name. */
+export function getPoe1MinionProfile(minionId?: string | null): Poe1MinionProfile | undefined {
+  if (!minionId) return undefined;
+  const trimmed = minionId.trim();
+  if (!trimmed) return undefined;
+  return POE1_MINION_PROFILES[trimmed] ?? POE1_MINION_BY_NAME_LOWER.get(trimmed.toLowerCase());
+}
