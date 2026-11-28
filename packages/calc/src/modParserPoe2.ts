@@ -3143,6 +3143,74 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
       },
     ],
   },
+  // Wave 6I: Veil of the Night, Rathpith Globe, Presence Ally aura mods, Rare/Unique Attack Damage
+  {
+    pattern: /^You have no Elemental Resistances$/i,
+    build: (_, src) => [mkMod('ZeroElementalResistances', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Non-Channelling Spells deal (\d+)% increased Damage per (\d+) maximum (Life|Mana)$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'INC', Number(m[1]), src, ModFlag.Spell),
+        tags: [
+          { type: 'Condition', var: 'Channelling', neg: true },
+          { type: 'PerStat', stat: m[3]!.toLowerCase() === 'life' ? 'Life' : 'Mana', div: Number(m[2]) },
+        ],
+      },
+    ],
+  },
+  {
+    pattern: /^Non-Channelling Spells have (\d+)% increased Critical (?:Hit|Strike) Chance per (\d+) maximum (Life|Mana)$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritChance', 'INC', Number(m[1]), src, ModFlag.Spell),
+        tags: [
+          { type: 'Condition', var: 'Channelling', neg: true },
+          { type: 'PerStat', stat: m[3]!.toLowerCase() === 'life' ? 'Life' : 'Mana', div: Number(m[2]) },
+        ],
+      },
+    ],
+  },
+  {
+    pattern: /^Non-Channelling Spells have \+(\d+(?:\.\d+)?)% to Critical (?:Hit|Strike) Chance per (\d+) maximum (Life|Mana)$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritChance', 'BASE', Number(m[1]), src, ModFlag.Spell),
+        tags: [
+          { type: 'Condition', var: 'Channelling', neg: true },
+          { type: 'PerStat', stat: m[3]!.toLowerCase() === 'life' ? 'Life' : 'Mana', div: Number(m[2]) },
+        ],
+      },
+    ],
+  },
+  {
+    pattern: /^Allies in your Presence deal (\d+)% increased Damage$/i,
+    build: (m, src) => [mkMod('AllyDamage', 'INC', Number(m[1]), src, 0, KeywordFlag.Minion)],
+  },
+  {
+    pattern: /^Allies in your Presence have (\d+)% increased Critical (?:Hit|Strike) Chance$/i,
+    build: (m, src) => [mkMod('AllyCritChance', 'INC', Number(m[1]), src, 0, KeywordFlag.Minion)],
+  },
+  {
+    pattern: /^Allies in your Presence deal (\d+) to (\d+) additional Attack (Physical|Fire|Cold|Lightning|Chaos) Damage$/i,
+    build: (m, src) => {
+      const elem = m[3]!.charAt(0).toUpperCase() + m[3]!.slice(1).toLowerCase();
+      return [
+        mkMod(`Ally${elem}Min`, 'BASE', Number(m[1]), src, ModFlag.Attack, KeywordFlag.Minion),
+        mkMod(`Ally${elem}Max`, 'BASE', Number(m[2]), src, ModFlag.Attack, KeywordFlag.Minion),
+      ];
+    },
+  },
+  {
+    pattern: /^(\d+)% increased Attack Damage against Rare or Unique Enemies$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'INC', Number(m[1]), src, ModFlag.Attack),
+        tags: [{ type: 'Condition', var: 'EnemyRareOrUnique' }],
+      },
+    ],
+  },
 
   // =========================================================================
   // 5. PoE 2 Skill-Specific & Tag Gem Level Scaling (+X to Level of all <SkillName|Nova|...> Skills)

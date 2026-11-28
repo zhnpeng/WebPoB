@@ -2150,6 +2150,50 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
           tags: [{ type: 'Condition', var: 'EnemyMarked' }],
         }),
       ]);
+      // Wave 6I: Veil of the Night, Rathpith Globe, Presence Allies, Rare/Unique Attack Damage
+      expect(parseModLine('You have no Elemental Resistances', 'Item:Helmet')).toEqual([
+        expect.objectContaining({ name: 'ZeroElementalResistances', type: 'FLAG', value: true }),
+      ]);
+      expect(
+        parseModLine('Non-Channelling Spells deal 10% increased Damage per 100 maximum Life', 'Item:Focus'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'Damage',
+          type: 'INC',
+          value: 10,
+          tags: [
+            { type: 'Condition', var: 'Channelling', neg: true },
+            { type: 'PerStat', stat: 'Life', div: 100 },
+          ],
+        }),
+      ]);
+      expect(
+        parseModLine('Non-Channelling Spells have 10% increased Critical Hit Chance per 100 maximum Life', 'Item:Focus'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'CritChance',
+          type: 'INC',
+          value: 10,
+          tags: [
+            { type: 'Condition', var: 'Channelling', neg: true },
+            { type: 'PerStat', stat: 'Life', div: 100 },
+          ],
+        }),
+      ]);
+      expect(
+        parseModLine('Allies in your Presence deal 12 to 24 additional Attack Lightning Damage', 'Item:Sceptre'),
+      ).toEqual([
+        expect.objectContaining({ name: 'AllyLightningMin', type: 'BASE', value: 12 }),
+        expect.objectContaining({ name: 'AllyLightningMax', type: 'BASE', value: 24 }),
+      ]);
+      expect(parseModLine('30% increased Attack Damage against Rare or Unique Enemies', 'Item:Ring')).toEqual([
+        expect.objectContaining({
+          name: 'Damage',
+          type: 'INC',
+          value: 30,
+          tags: [{ type: 'Condition', var: 'EnemyRareOrUnique' }],
+        }),
+      ]);
     });
   });
 });
