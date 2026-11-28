@@ -2178,4 +2178,117 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     // Total Pride Aura Effect = +50% (Tree) + 20% (Belt, counted once) = +70% -> trunc(39 * 1.7) = 66% MORE
     expect(res.enemyDb.more('PhysicalDamageTaken')).toBeCloseTo(1.66, 4);
   });
+
+  it('applies PoE 1 per-curse & presence-gated curse effect (item + ModDB) without double-counting', () => {
+    const vulnDef: GemDefinition = {
+      id: 'poe1_vulnerability',
+      name: { en: 'Vulnerability', zh: '脆弱' },
+      category: 'active',
+      game: 'poe1',
+      color: 'red',
+      tags: ['spell', 'aoe', 'duration', 'curse', 'hex', 'physical'],
+      modFlags: 0,
+      keywordFlags: KeywordFlag.Curse,
+      stats: [],
+      compiledMods: [
+        {
+          name: 'PhysicalDamageTaken',
+          type: 'INC',
+          value: 30,
+          flags: 0,
+          keywordFlags: 0,
+          target: 'enemy',
+        },
+      ],
+    };
+    const eleWeakDef: GemDefinition = {
+      id: 'poe1_elementalweakness',
+      name: { en: 'Elemental Weakness', zh: '元素要害' },
+      category: 'active',
+      game: 'poe1',
+      color: 'blue',
+      tags: ['spell', 'aoe', 'duration', 'curse', 'hex'],
+      modFlags: 0,
+      keywordFlags: KeywordFlag.Curse,
+      stats: [],
+      compiledMods: [
+        {
+          name: 'FireResist',
+          type: 'BASE',
+          value: -30,
+          flags: 0,
+          keywordFlags: 0,
+          target: 'enemy',
+        },
+      ],
+    };
+    const db = new ModDB();
+    db.addMod({ name: 'EnemyCurseLimit', type: 'BASE', value: 1, flags: 0, keywordFlags: 0, source: 'Tree' });
+    // Tree/ModDB per-curse effect (+20% Vulnerability) + duplicate item source (must not double-count!)
+    db.addMod({
+      name: 'CurseEffect:Vulnerability',
+      type: 'INC',
+      value: 20,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Tree: Curse Mastery',
+    });
+    db.addMod({
+      name: 'CurseEffect:Vulnerability',
+      type: 'INC',
+      value: 11,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Item (Helmet): Exarch Helm',
+    });
+
+    const res = evaluateAurasAndWatchersEye({
+      build: mkBuild({
+        game: 'poe1',
+        config: {
+          ...mkBuild().config,
+          enemyIsBoss: 'Pinnacle',
+        },
+        items: {
+          helm1: {
+            id: 'helm1',
+            name: 'Exarch Helm',
+            baseName: 'Royal Burgonet',
+            rarity: 'RARE',
+            slotType: 'Helmet',
+            quality: 0,
+            implicits: [
+              '11% increased Vulnerability Curse Effect',
+              'While a Unique Enemy is in your Presence, 20% increased Elemental Weakness Curse Effect',
+            ],
+            explicits: [],
+            rawText: '',
+          },
+        },
+        equipped: { Helmet: 'helm1' },
+        skills: [
+          {
+            id: 'sg-curses',
+            label: 'Curses',
+            enabled: true,
+            gems: [
+              { instanceId: 'c1', gemId: 'poe1_vulnerability', level: 20, quality: 0, enabled: true },
+              { instanceId: 'c2', gemId: 'poe1_elementalweakness', level: 20, quality: 0, enabled: true },
+            ],
+          },
+        ],
+      }),
+      playerDb: db,
+      getGemByIdFn: (_game, id) => {
+        if (id === 'poe1_vulnerability') return vulnDef;
+        if (id === 'poe1_elementalweakness') return eleWeakDef;
+        return undefined;
+      },
+      maxMana: 1000,
+    });
+    // Vulnerability: 30 * (1 + (11 + 20) / 100) = 39.3 -> trunc = 39% INC PhysicalDamageTaken
+    expect(res.enemyDb.sum('INC', 'PhysicalDamageTaken')).toBe(39);
+    // Elemental Weakness (Unique enemy in presence active via Pinnacle): -30 * 1.2 = -36 FireResist
+    expect(res.enemyDb.sum('BASE', 'FireResist')).toBe(-36);
+  });
 });
