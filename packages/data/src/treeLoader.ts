@@ -285,8 +285,7 @@ const POE1_BLIGHTED_ANOINT_NOTABLES: ReadonlyArray<{
   { id: 13739, en: 'Always Angry', stats: ['+8 to Minimum Rage'] },
   { id: 14079, en: 'Wood, Stone, and Spell', stats: ['10% increased effect of Arcane Surge on you per Summoned Totem'] },
   { id: 14587, en: 'Adaptive Steel', stats: ["5% chance to Defend with 200% of Armour for each time you've been Hit by an Enemy Recently, up to 30%"] },
-  // Note: Omit 'Transfiguration of Soul' until engine.ts:5155 excludes Intelligence's innate 2% ES/10 Int from esEval.incPct
-  { id: 16246, en: 'Tranquility', stats: ['5% increased maximum Energy Shield'] },
+  { id: 16246, en: 'Tranquility', stats: ['5% increased maximum Energy Shield', 'Transfiguration of Soul'] },
   { id: 20605, en: 'No Forgiveness', stats: ['20% chance for used Retaliation Skills to remain Usable and not consume a Cooldown Use'] },
   { id: 23549, en: 'Incorporeal', stats: ['Elusive on you reduces in effect 50% slower', 'Elusive is removed from you at 20% effect'] },
   { id: 24358, en: 'Selective Precision', stats: ['First and Final shots of Barrage sequences fire Projectiles that Return to you'] },
@@ -806,6 +805,11 @@ const UPSTREAM_SKILL_DATA_OVERRIDES: Readonly<
   poe1: {
     // Upstream PoB1 3.30 Data/Skills/act_int.lua: lightning_tendrils_channelled_larger_pulse_interval = 3
     poe1_lightningtendrils: { pulseInterval: 3 },
+    // Upstream PoB1 3.30 Data/Skills/act_str.lua & act_dex.lua: Retaliation melee attacks with `skill_cannot_be_exerted`
+    poe1_crushingfist: { cannotBeExerted: 1 },
+    poe1_eviscerate: { cannotBeExerted: 1 },
+    poe1_swordstorm: { cannotBeExerted: 1 },
+    poe1_glacialshieldswipe: { cannotBeExerted: 1 },
   },
   poe2: {},
 };
@@ -1109,15 +1113,22 @@ function synthesizeGemDefinition(
                 : [`15% more ${primaryDamageType} Damage`],
         }
       : isAttack
-        ? {
-            ...(entry.bd ? { baseDamage: entry.bd } : {}),
-            ...(entry.cc !== undefined ? { baseCritChance: entry.cc } : {}),
-            attackDamageMultiplierPct: entry.am ?? (entry.bd ? 100 : 145),
-            damageEffectivenessPct: entry.de ?? entry.am ?? (entry.bd ? 100 : 145),
-            attackSpeedMultiplier: entry.asm ?? 1.0,
-            manaCost: entry.mc ?? 12,
-            stats: officialStats,
-          }
+        ? (() => {
+            const hasIntrinsicBaseDmg = Boolean(
+              entry.bd ||
+                entry.sdata?.setOffHandPhysicalMin !== undefined ||
+                entry.sdata?.setOffHandFireMin !== undefined,
+            );
+            return {
+              ...(entry.bd ? { baseDamage: entry.bd } : {}),
+              ...(entry.cc !== undefined ? { baseCritChance: entry.cc } : {}),
+              attackDamageMultiplierPct: entry.am ?? (hasIntrinsicBaseDmg ? 100 : 145),
+              damageEffectivenessPct: entry.de ?? entry.am ?? (hasIntrinsicBaseDmg ? 100 : 145),
+              attackSpeedMultiplier: entry.asm ?? 1.0,
+              manaCost: entry.mc ?? 12,
+              stats: officialStats,
+            };
+          })()
         : {
             baseDamage: entry.bd ?? { [primaryDamageType]: [420, 760] as [number, number] },
             damageEffectivenessPct: entry.de ?? 120,

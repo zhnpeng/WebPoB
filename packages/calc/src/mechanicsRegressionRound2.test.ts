@@ -1701,7 +1701,7 @@ describe('Mechanism-Layer Regression Suite — Round 2 (Upstream PoB spec/System
         id: 16246,
         kind: 'notable',
         name: { en: 'Tranquility' },
-        stats: ['5% increased maximum Energy Shield'],
+        stats: ['5% increased maximum Energy Shield', 'Transfiguration of Soul'],
       });
       expect(tree.nodes[53759]).toMatchObject({
         id: 53759,
@@ -1802,6 +1802,51 @@ Gain 5% of Maximum Mana as Extra Maximum Energy Shield
 //Hits have 10% chance to deal 50% more Area Damage
 //+40 to Strength and Intelligence`);
       expect(parsed?.explicits).toEqual(['Gain 5% of Maximum Mana as Extra Maximum Energy Shield']);
+    });
+
+    it('hydrates off-hand shield attacks with 100% attackDamageMultiplierPct/damageEffectivenessPct and Retaliation cannotBeExerted', () => {
+      const prevPoe1 = getGemsForGame('poe1');
+      try {
+        const hydrated = registerGemsData('poe1', {
+          game: 'poe1',
+          count: 2,
+          gems: [
+            {
+              id: 'poe1_shieldcrush',
+              en: 'Shield Crush',
+              cat: 'active',
+              color: 'red',
+              tags: ['Attack', 'Melee', 'Area', 'Physical'],
+              sdata: {
+                CritChance: 5,
+                attackTime: 800,
+                setOffHandPhysicalMin: 300,
+                setOffHandPhysicalMax: 450,
+              },
+            },
+            {
+              id: 'poe1_crushingfist',
+              en: 'Crushing Fist',
+              cat: 'active',
+              color: 'red',
+              tags: ['Attack', 'Melee', 'Slam', 'Area', 'Retaliation'],
+              sdata: {
+                BaseMultiplier: 21.938,
+                DamageEffectiveness: 21.938,
+                cooldown: 4,
+              },
+            },
+          ],
+        });
+        const shieldCrush = hydrated.find((g) => g.id === 'poe1_shieldcrush')!;
+        expect(shieldCrush.attackDamageMultiplierPct).toBe(100);
+        expect(shieldCrush.damageEffectivenessPct).toBe(100);
+
+        const crushingFist = hydrated.find((g) => g.id === 'poe1_crushingfist')!;
+        expect(crushingFist.skillData?.cannotBeExerted).toBe(1);
+      } finally {
+        setRegisteredGems('poe1', prevPoe1);
+      }
     });
   });
 });
