@@ -621,7 +621,7 @@ export function parseItemText(
       : undefined;
 
   const resolveAndNormalizeModLine = (rawLine: string, rawModIndex?: number): string | null => {
-    if (/\{disabled\}/i.test(rawLine)) {
+    if (/\{disabled\}/i.test(rawLine) || /^\s*\/\//.test(rawLine)) {
       return null;
     }
     if (!shouldIncludeVariantLine(rawLine, variantSelection)) {

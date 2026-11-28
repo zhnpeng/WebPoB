@@ -503,17 +503,35 @@ function hydrateStringList(list?: string[]): string[] | undefined {
   return list;
 }
 
-function hydrateCompiledMods(cmods?: CompactCompiledMod[]): CompiledGemMod[] | undefined {
+function hydrateCompiledMods(
+  cmods?: CompactCompiledMod[],
+  isQuality = false,
+): CompiledGemMod[] | undefined {
   if (!Array.isArray(cmods) || cmods.length === 0) return undefined;
-  return cmods.map((m) => ({
-    name: m.n,
-    type: m.t,
-    value: m.v,
-    flags: m.f ?? 0,
-    keywordFlags: m.k ?? 0,
-    ...(m.tg !== undefined ? { target: m.tg } : {}),
-    ...(Array.isArray(m.tags) && m.tags.length > 0 ? { tags: m.tags } : {}),
-  }));
+  return cmods.map((m) => {
+    // Upstream PoB SkillStatMap defines `base_number_of_projectiles` / `base_number_of_arrows`
+    // with a `-1` base offset (for the implicit 1st projectile). Compact quality-mod export applied
+    // that `-1` offset to per-quality values (`0.1 -> -0.9`, `0.05 -> -0.95`, `0.2 -> -0.8`),
+    // causing 39 PoE 1 + 9 PoE 2 projectile gems to lose projectiles with quality. Restore `v + 1`.
+    const value =
+      isQuality &&
+      m.n === 'ProjectileCount' &&
+      m.t === 'BASE' &&
+      typeof m.v === 'number' &&
+      m.v < 0 &&
+      m.v > -1
+        ? Math.round((m.v + 1) * 1000) / 1000
+        : m.v;
+    return {
+      name: m.n,
+      type: m.t,
+      value,
+      flags: m.f ?? 0,
+      keywordFlags: m.k ?? 0,
+      ...(m.tg !== undefined ? { target: m.tg } : {}),
+      ...(Array.isArray(m.tags) && m.tags.length > 0 ? { tags: m.tags } : {}),
+    };
+  });
 }
 
 function hydrateSkillData(sdata?: Record<string, number>): Record<string, number> | undefined {
@@ -982,7 +1000,7 @@ function synthesizeGemDefinition(
     }
     return merged.length > 0 ? merged : undefined;
   })();
-  const rawQualityCompiledMods = hydrateCompiledMods(entry.qmods);
+  const rawQualityCompiledMods = hydrateCompiledMods(entry.qmods, true);
   const qualityStats = hydrateQualityStats(entry.qs);
   const fallbackQualityMods =
     (!rawQualityCompiledMods || rawQualityCompiledMods.length === 0) &&
