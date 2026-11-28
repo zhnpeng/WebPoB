@@ -350,8 +350,15 @@ export function evaluateActiveFlasks(
     ironFlaskEffectPct?: number;
     tinctureEffectPct?: number;
     magicTinctureEffectPct?: number;
+    /** Semantic flag from `DisableUtilityFlasks` / `UtilityFlasksDoNotApplyToPlayer` (e.g. PoE 1 Bloodline `Toad's Price`). */
+    disableUtilityFlasks?: boolean;
   },
 ): ActiveFlaskEvaluation {
+  // PoE 1 King in the Mists Bloodline `Toad's Price` (node 44903: "Utility Flasks are Disabled")
+  const utilityFlasksDisabled = Boolean(
+    extraOptions?.disableUtilityFlasks ||
+      (build.game === 'poe1' && build.tree?.allocatedNodeIds?.includes(44903)),
+  );
   const { left: magebloodLeft, right: magebloodRight } = detectPoe1MagebloodCounts(build);
   const meleeWeaponEquipped = hasEquippedMeleeWeapon(build);
   const mainGroup =
@@ -380,13 +387,13 @@ export function evaluateActiveFlasks(
   }
 
   const magebloodActiveSet = new Set<EquipmentSlotId>();
-  if (magebloodLeft > 0) {
+  if (!utilityFlasksDisabled && magebloodLeft > 0) {
     const count = Math.min(magebloodLeft, magicUtilitySlots.length);
     for (let i = 0; i < count; i++) {
       magebloodActiveSet.add(magicUtilitySlots[i]!);
     }
   }
-  if (magebloodRight > 0) {
+  if (!utilityFlasksDisabled && magebloodRight > 0) {
     const count = Math.min(magebloodRight, magicUtilitySlots.length);
     for (let i = 0; i < count; i++) {
       magebloodActiveSet.add(magicUtilitySlots[magicUtilitySlots.length - 1 - i]!);
@@ -412,9 +419,11 @@ export function evaluateActiveFlasks(
     const isActive = autoActivatedByMageblood || Boolean(build.activeFlaskSlots?.[slot]);
     if (!isActive) continue;
 
-    activeSlots.push(slot);
     const isTincture = /\btincture\b/i.test(item.baseName) || /\btincture\b/i.test(item.name);
     const baseName = isTincture ? null : resolveUtilityFlaskBaseName(item);
+    if (utilityFlasksDisabled && baseName !== null) continue;
+
+    activeSlots.push(slot);
     const localEffectPct = extractLocalFlaskEffectPct(item);
     const tinctureEffectInc = isTincture
       ? (extraOptions?.tinctureEffectPct ?? 0) +

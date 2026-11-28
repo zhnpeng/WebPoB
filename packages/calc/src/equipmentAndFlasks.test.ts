@@ -963,4 +963,58 @@ describe('equipmentAndFlasks — Special Meta Unique Gear Mechanics', () => {
     expect(screamsWithFlaskDb.sum('INC', 'Life')).toBe(0);
     expect(screamsWithFlaskDb.sum('INC', 'AreaOfEffect')).toBe(0);
   });
+
+  it("disables Utility Flasks (including Mageblood) under Toad's Price (disableUtilityFlasks flag or node 44903) while preserving Tinctures", () => {
+    const granite = makeItem({
+      id: 'fl-granite',
+      name: 'Granite Flask',
+      baseName: 'Granite Flask',
+      rarity: 'MAGIC',
+      explicits: ['50% increased Armour during Effect'],
+    });
+    const tincture = makeItem({
+      id: 'fl-tinc',
+      name: 'Prismatic Tincture',
+      baseName: 'Prismatic Tincture',
+      rarity: 'MAGIC',
+      explicits: ['80% increased Elemental Damage with Melee Weapons'],
+    });
+    const mageblood = makeItem({
+      id: 'belt-mb',
+      name: 'Mageblood',
+      baseName: 'Heavy Belt',
+      rarity: 'UNIQUE',
+      explicits: ['Leftmost 4 Magic Utility Flasks constantly apply their Flask Effects to you'],
+    });
+    const sword = makeItem({
+      id: 'weap-sword',
+      name: 'Jewelled Foil',
+      baseName: 'Jewelled Foil',
+      rarity: 'RARE',
+      explicits: [],
+    });
+
+    const baseBuild = makeMinimalBuild({
+      items: { 'fl-granite': granite, 'fl-tinc': tincture, 'belt-mb': mageblood, 'weap-sword': sword },
+      equipped: { 'Flask 1': 'fl-granite', 'Flask 2': 'fl-tinc', Belt: 'belt-mb', 'Weapon 1': 'weap-sword' },
+      activeFlaskSlots: { 'Flask 1': true, 'Flask 2': true },
+    });
+
+    // 1. Semantic flag `disableUtilityFlasks: true` disables Granite Flask (even with Mageblood), keeps Tincture
+    const resFlag = evaluateActiveFlasks(baseBuild, 0, { disableUtilityFlasks: true });
+    expect(resFlag.activeSlots).toEqual(['Flask 2']);
+    expect(resFlag.modLines).not.toContain('+1500 to Armour');
+    expect(resFlag.modLines.some((l) => /Elemental Damage/i.test(l))).toBe(true);
+
+    // 2. Allocating PoE 1 Bloodline node 44903 (`Toad's Price`) disables Utility Flasks automatically
+    const resNode = evaluateActiveFlasks(
+      makeMinimalBuild({
+        ...baseBuild,
+        tree: { ...baseBuild.tree, allocatedNodeIds: [44903] },
+      }),
+      0,
+    );
+    expect(resNode.activeSlots).toEqual(['Flask 2']);
+    expect(resNode.modLines).not.toContain('+1500 to Armour');
+  });
 });

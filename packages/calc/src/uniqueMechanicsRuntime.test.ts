@@ -197,6 +197,50 @@ describe('uniqueMechanicsRuntime — 1. PoE 2 Ingenuity Utility Belt', () => {
     expect(db.sum('BASE', 'Mana')).toBe(40);
     expect(db.sum('BASE', 'LightningResist')).toBe(32);
   });
+
+  it('consumes non-item Ring1Effect / Ring2Effect INC from ModDB without double-counting Belt Ingenuity sources', () => {
+    const db = new ModDB();
+    const belt = makeItem({
+      id: 'belt',
+      name: 'Ingenuity',
+      baseName: 'Utility Belt',
+      explicits: ['20% increased bonuses gained from left Equipped Ring'],
+    });
+    const leftRing = makeItem({
+      id: 'ring1',
+      name: 'Sapphire Ring',
+      baseName: 'Sapphire Ring',
+      explicits: ['+100 to maximum Life'],
+    });
+    const rightRing = makeItem({
+      id: 'ring2',
+      name: 'Topaz Ring',
+      baseName: 'Topaz Ring',
+      explicits: ['+100 to maximum Mana'],
+    });
+
+    db.addMods(parseModLines(leftRing.explicits, 'Item (Ring 1)'));
+    db.addMods(parseModLines(rightRing.explicits, 'Item (Ring 2)'));
+    // Simulate Ingenuity belt already parsed into db as Ring1Effect (+20) + a separate Passive node (+10 Ring1Effect, +25 Ring2Effect)
+    db.addMod({ name: 'Ring1Effect', type: 'INC', value: 20, flags: 0, keywordFlags: 0, source: 'Belt: Ingenuity' });
+    db.addMod({ name: 'Ring1Effect', type: 'INC', value: 10, flags: 0, keywordFlags: 0, source: 'Passive: Ring Mastery' });
+    db.addMod({ name: 'Ring2Effect', type: 'INC', value: 25, flags: 0, keywordFlags: 0, source: 'Passive: Ring Mastery' });
+
+    const res = evaluateIngenuityAndRingBonuses(
+      [
+        { slot: 'Belt', item: belt },
+        { slot: 'Ring 1', item: leftRing },
+        { slot: 'Ring 2', item: rightRing },
+      ],
+      db,
+    );
+
+    // Belt +20% + Passive +10% = +30% (NOT double-counted to +50%!)
+    expect(res.leftRingBonusPct).toBe(30);
+    expect(res.rightRingBonusPct).toBe(25);
+    expect(db.sum('BASE', 'Life')).toBe(130);
+    expect(db.sum('BASE', 'Mana')).toBe(125);
+  });
 });
 
 describe('uniqueMechanicsRuntime — 2. Morior Invictus & Per-Socket Modifiers', () => {

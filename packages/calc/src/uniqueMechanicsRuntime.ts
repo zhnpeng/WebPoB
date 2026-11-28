@@ -290,8 +290,9 @@ export function evaluateIngenuityAndRingBonuses(
   let leftRingBonusPct = 0;
   let rightRingBonusPct = 0;
   const beltSourceNames: string[] = [];
+  const beltSourceSlots = new Set<string>();
 
-  for (const { item } of entries) {
+  for (const { slot, item } of entries) {
     let matchedItem = false;
     for (const line of collectCleanItemLines(item)) {
       const mBoth = line.match(
@@ -325,8 +326,40 @@ export function evaluateIngenuityAndRingBonuses(
     }
     if (matchedItem) {
       beltSourceNames.push(item.name);
+      beltSourceSlots.add(slot.toLowerCase());
     }
   }
+
+  // Also consume non-item `Ring1Effect` / `Ring2Effect` INC modifiers parsed into `db`
+  // (e.g. PoE 2 passive tree / ascendancy / jewel ring-effect bonuses) without double-counting
+  // lines already scanned from equipped items like `Ingenuity` (whose ModDB source is the slot name e.g. 'Belt').
+  const beltSourceLower = new Set(beltSourceNames.map((n) => n.toLowerCase()));
+  const extraDbRingEffect = (statName: 'Ring1Effect' | 'Ring2Effect'): number => {
+    let extra = 0;
+    for (const s of db.calcStat(statName).sources) {
+      if (s.type !== 'INC' || typeof s.value !== 'number') continue;
+      const srcLower = s.source.toLowerCase();
+      let fromScannedItem = false;
+      for (const slotL of beltSourceSlots) {
+        if (srcLower === slotL || srcLower.startsWith(`${slotL}:`) || srcLower.includes(`(${slotL})`)) {
+          fromScannedItem = true;
+          break;
+        }
+      }
+      if (!fromScannedItem) {
+        for (const bName of beltSourceLower) {
+          if (bName && srcLower.includes(bName)) {
+            fromScannedItem = true;
+            break;
+          }
+        }
+      }
+      if (!fromScannedItem) extra += s.value;
+    }
+    return extra;
+  };
+  leftRingBonusPct += extraDbRingEffect('Ring1Effect');
+  rightRingBonusPct += extraDbRingEffect('Ring2Effect');
 
   const ring1Entry = entries.find((e) => e.slot === 'Ring 1');
   const ring2Entry = entries.find((e) => e.slot === 'Ring 2');
