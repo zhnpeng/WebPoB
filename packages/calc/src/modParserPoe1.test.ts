@@ -575,8 +575,11 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
         name: 'Damage',
         type: 'MORE',
         value: 25,
-        tags: [{ type: 'Condition', var: 'EnemyRareOrUnique' }],
+        tags: [{ type: 'Condition', var: 'TwoRareOrUniqueNearby', neg: true }],
       }),
+    ]);
+    expect(parseModLine('Damage cannot be Reflected', 'Tree: Opportunistic')).toEqual([
+      expect.objectContaining({ name: 'CannotTakeReflectedDamage', type: 'FLAG', value: true }),
     ]);
     expect(
       parseModLine('5% increased Poison Duration for each Poison you have inflicted Recently, up to a maximum of 100%', 'tree'),

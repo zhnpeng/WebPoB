@@ -679,8 +679,11 @@ describe('ascendancyMods', () => {
         allocatedNodes: nodes,
         config: { conditionLowLife: false },
       });
+      // Opportunistic ("at most one Rare or Unique Enemy") is active unless TwoRareOrUniqueNearby is set
+      expect(db.more('Damage')).toBeCloseTo(1.25, 5);
+      db.setCondition('TwoRareOrUniqueNearby', true);
       expect(db.more('Damage')).toBeCloseTo(1, 5);
-      db.setCondition('EnemyRareOrUnique', true);
+      db.setCondition('TwoRareOrUniqueNearby', false);
       expect(db.more('Damage')).toBeCloseTo(1.25, 5);
       expect(db.sum('BASE', 'CritMultiplier')).toBe(100);
       expect(3 + db.sum('BASE', 'MaxPowerCharges')).toBe(8); // 3 base + 4 + 1 Unstable Infusion

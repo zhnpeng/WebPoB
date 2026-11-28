@@ -2733,6 +2733,11 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
     pattern: /^(\d+)% increased Effect of the Buff granted by your (Stone|Chaos|Flame|Ice|Lightning|Carrion) Golems$/i,
     build: (m, src) => [mkMod(`GolemBuffEffect:${capFirst(m[2]!)}`, 'INC', Number(m[1]), src)],
   },
+  // Wave 6M: Assassin Opportunistic reflect immunity line
+  {
+    pattern: /^Damage cannot be Reflected$/i,
+    build: (_, src) => [mkMod('CannotTakeReflectedDamage', 'FLAG', true, src)],
+  },
 ];
 
 /**

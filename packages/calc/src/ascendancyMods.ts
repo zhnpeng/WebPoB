@@ -751,7 +751,7 @@ function applyPoe1PreStatAscendancies(
           flags: 0,
           keywordFlags: 0,
           source: src,
-          tags: [{ type: 'Condition', var: 'EnemyRareOrUnique' }],
+          tags: [{ type: 'Condition', var: 'TwoRareOrUniqueNearby', neg: true }],
         });
       }
     }
