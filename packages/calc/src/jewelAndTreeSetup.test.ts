@@ -1296,4 +1296,99 @@ describe('PoE 2 The Adorned Sinister Sockets & Undying Hate Conquered Passives',
     expect(normalScale.globalScale).toBeCloseTo(1.45, 4);
     expect(sinisterScale.globalScale).toBe(1);
   });
+
+  it('scales Grand Spectrum jewels by socketed count (capped at 3) across PoE 1 & PoE 2', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe2',
+      version: '0_5',
+      nodes: {
+        1: mkNode(1, 'Start', 'start', 0, 0),
+        10: mkNode(10, 'Jewel Socket', 'jewel', 200, 0),
+        20: mkNode(20, 'Jewel Socket', 'jewel', 400, 0),
+        30: mkNode(30, 'Jewel Socket', 'jewel', 600, 0),
+      },
+      groups: {},
+      classStartNodeIds: {},
+      bounds: { minX: 0, maxX: 1000, minY: -500, maxY: 500 },
+    };
+    const gs1 = mkItem({
+      id: 'gs1',
+      name: 'Grand Spectrum',
+      baseName: 'Ruby',
+      rarity: 'UNIQUE',
+      explicits: ['2% increased Maximum Life per socketed Grand Spectrum'],
+    });
+    const gs2 = mkItem({
+      id: 'gs2',
+      name: 'Grand Spectrum',
+      baseName: 'Sapphire',
+      rarity: 'UNIQUE',
+      explicits: ['2% increased Spirit per socketed Grand Spectrum'],
+    });
+    const gs3 = mkItem({
+      id: 'gs3',
+      name: 'Grand Spectrum',
+      baseName: 'Emerald',
+      rarity: 'UNIQUE',
+      explicits: ['+7% to all Elemental Resistances per socketed Grand Spectrum'],
+    });
+
+    const res = evaluateRadiusAndDistanceJewels(
+      [
+        { nodeId: 10, jewel: gs1 },
+        { nodeId: 20, jewel: gs2 },
+        { nodeId: 30, jewel: gs3 },
+      ],
+      tree,
+      new Set([1, 10, 20, 30]),
+      1,
+    );
+
+    const allLines = res.addedStatLines.flatMap((e) => e.lines);
+    expect(allLines).toContain('6% increased Maximum Life');
+    expect(allLines).toContain('6% increased Spirit');
+    expect(allLines).toContain('+21% to all Elemental Resistances');
+  });
+
+  it('transforms Life INC to Mana INC at 200% for PoE 1 Healthy Mind and Life INC to ES INC for Energy From Within (ModParser.lua:6288-6293)', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe1',
+      version: '3_28',
+      nodes: {
+        1: mkNode(1, 'Start', 'start', 0, 0),
+        10: mkNode(10, 'Jewel Socket', 'jewel', 0, 0),
+        101: mkNode(101, 'Life Node', 'small', 400, 0, ['5% increased maximum Life']),
+        102: mkNode(102, 'Notable Life', 'notable', 600, 0, ['10% increased maximum Life']),
+      },
+      groups: {},
+      classStartNodeIds: {},
+      bounds: { minX: -2000, maxX: 2000, minY: -2000, maxY: 2000 },
+    };
+    const healthyMind = mkItem({
+      id: 'hm-1',
+      name: 'Healthy Mind',
+      baseName: 'Cobalt Jewel',
+      rarity: 'UNIQUE',
+      explicits: [
+        'Radius: Large',
+        'Increases and Reductions to Life in Radius are Transformed to apply to Mana at 200% of their value',
+      ],
+    });
+
+    const res = evaluateRadiusAndDistanceJewels(
+      [{ nodeId: 10, jewel: healthyMind }],
+      tree,
+      new Set([1, 10, 101, 102]),
+      1,
+    );
+
+    const lifeDelta = res.addedMods
+      .filter((m) => m.name === 'Life' && m.type === 'INC')
+      .reduce((s, m) => s + Number(m.value), 0);
+    const manaDelta = res.addedMods
+      .filter((m) => m.name === 'Mana' && m.type === 'INC')
+      .reduce((s, m) => s + Number(m.value), 0);
+    expect(lifeDelta).toBe(-15);
+    expect(manaDelta).toBe(30);
+  });
 });

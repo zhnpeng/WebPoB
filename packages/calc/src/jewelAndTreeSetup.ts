@@ -45,7 +45,9 @@ export interface RadiusAndDistanceJewelDetail {
     | 'resist-conversion'
     | 'transcendent'
     | 'from-nothing'
-    | 'lioneyes-fall';
+    | 'lioneyes-fall'
+    | 'stat-transform'
+    | 'grand-spectrum';
   radiusLabel?: JewelRadiusLabel;
   radiusPx?: number;
   nodesInRadius?: number;
@@ -1180,6 +1182,41 @@ export function evaluateRadiusAndDistanceJewels(
     return { nodeId, jewel, socketNode, lowerName, allLines };
   });
 
+  // Grand Spectrum (PoE 1 & PoE 2): count active socketed Grand Spectrum jewels (capped at 3)
+  // and expand each `"<stat> per [socketed] Grand Spectrum"` line multiplied by count.
+  const grandSpectrumCount = Math.min(
+    3,
+    preparedJewels.filter(
+      ({ lowerName, allLines }) =>
+        lowerName === 'grand spectrum' ||
+        allLines.some((l) => /\bper\s+(?:socketed\s+)?Grand\s+Spectrum$/i.test(l)),
+    ).length,
+  );
+  if (grandSpectrumCount > 0) {
+    for (const { nodeId, jewel, allLines } of preparedJewels) {
+      const gsLines: string[] = [];
+      for (const line of allLines) {
+        const mGs = line.match(/^(.+?)\s+per\s+(?:socketed\s+)?Grand\s+Spectrum$/i);
+        if (!mGs) continue;
+        const prefix = mGs[1]!.trim();
+        gsLines.push(
+          grandSpectrumCount === 1 ? prefix : scaleStatLineNumeric(prefix, grandSpectrumCount),
+        );
+      }
+      if (gsLines.length > 0) {
+        addedStatLines.push({
+          source: `Grand Spectrum (${nodeId}) x${grandSpectrumCount}`,
+          lines: gsLines,
+        });
+        details.push({
+          nodeId,
+          jewelName: jewel.name,
+          kind: 'grand-spectrum',
+        });
+      }
+    }
+  }
+
   // Pre-pass (PoB 2 CalcSetup.lua:397-407): collect per-node Notable/Small passive effect bonuses
   // across all radius jewels so `Notable/Small Passive Skills in Radius also grant ...` lines
   // (including from the same or overlapping Time-Lost / Against the Darkness jewels) receive the
@@ -1342,6 +1379,7 @@ export function evaluateRadiusAndDistanceJewels(
     let eternalHubrisConquered = false;
     let fromNothingKeystone: string | null = null;
     let lioneyesFall = false;
+    const statTransforms: Array<{ fromNames: readonly string[]; toName: string; pct: number }> = [];
     const attrConversions: Array<{ from: 'Str' | 'Dex' | 'Int'; to: 'Str' | 'Dex' | 'Int' }> = [];
     const resistConversions: RadiusResistConversionSpec[] = [];
     const transcendentLines: Array<{
@@ -1427,6 +1465,45 @@ export function evaluateRadiusAndDistanceJewels(
         lioneyesFall = true;
         continue;
       }
+      // PoE 1 Radius Stat-Transform Jewels (ModParser.lua:6288-6298: Healthy Mind, Energy From Within, Cold Steel, Fireborn, etc.)
+      m = line.match(
+        /^Increases and Reductions to Life in Radius are Transformed to apply to Mana at (\d+)% of their value$/i,
+      );
+      if (m) {
+        statTransforms.push({ fromNames: ['Life'], toName: 'Mana', pct: Number(m[1]) });
+        continue;
+      }
+      if (/^Increases and Reductions to Life in Radius are Transformed to apply to Energy Shield$/i.test(line)) {
+        statTransforms.push({ fromNames: ['Life'], toName: 'EnergyShield', pct: 100 });
+        continue;
+      }
+      if (/^Increases and Reductions to Evasion Rating in Radius are Transformed to apply to Armour$/i.test(line)) {
+        statTransforms.push({ fromNames: ['Evasion'], toName: 'Armour', pct: 100 });
+        continue;
+      }
+      m = line.match(
+        /^Increases and Reductions to Energy Shield in Radius are Transformed to apply to Armour at (\d+)% of their value$/i,
+      );
+      if (m) {
+        statTransforms.push({ fromNames: ['EnergyShield'], toName: 'Armour', pct: Number(m[1]) });
+        continue;
+      }
+      if (/^Increases and Reductions to Physical Damage in Radius are Transformed to apply to Cold Damage$/i.test(line)) {
+        statTransforms.push({ fromNames: ['PhysicalDamage'], toName: 'ColdDamage', pct: 100 });
+        continue;
+      }
+      if (/^Increases and Reductions to Cold Damage in Radius are Transformed to apply to Physical Damage$/i.test(line)) {
+        statTransforms.push({ fromNames: ['ColdDamage'], toName: 'PhysicalDamage', pct: 100 });
+        continue;
+      }
+      if (/^Increases and Reductions to other Damage Types in Radius are Transformed to apply to Fire Damage$/i.test(line)) {
+        statTransforms.push({
+          fromNames: ['PhysicalDamage', 'ColdDamage', 'LightningDamage', 'ChaosDamage', 'ElementalDamage'],
+          toName: 'FireDamage',
+          pct: 100,
+        });
+        continue;
+      }
       m = line.match(
         /^(Strength|Dexterity|Intelligence) from Passives in Radius is Transformed to (Strength|Dexterity|Intelligence)$/i,
       );
@@ -1484,6 +1561,7 @@ export function evaluateRadiusAndDistanceJewels(
       eternalHubrisConquered ||
       fromNothingKeystone !== null ||
       lioneyesFall ||
+      statTransforms.length > 0 ||
       attrConversions.length > 0 ||
       resistConversions.length > 0 ||
       transcendentLines.length > 0;
@@ -1642,6 +1720,44 @@ export function evaluateRadiusAndDistanceJewels(
         nodeId,
         jewelName: jewel.name,
         kind: 'lioneyes-fall',
+        radiusLabel,
+        radiusPx,
+        nodesInRadius: inRadius.length,
+        notablesInRadius: notables.length,
+        smallsInRadius: smalls.length,
+      });
+    }
+
+    // --- B5. PoE 1 Radius Stat-Transform Jewels (Healthy Mind, Energy From Within, Cold Steel, Fireborn) ---
+    if (statTransforms.length > 0) {
+      for (const node of nonJewelPassives) {
+        if (node.stats.length === 0) continue;
+        const parsedNodeMods = parseModLines(node.stats, `Tree:${node.id}`);
+        for (const mod of parsedNodeMods) {
+          if (mod.type !== 'INC' || typeof mod.value !== 'number' || mod.value === 0) continue;
+          for (const spec of statTransforms) {
+            if (!spec.fromNames.includes(mod.name)) continue;
+            addedMods.push({
+              ...mod,
+              value: -mod.value,
+              source: `${jewel.name} (${nodeId}) negate ${mod.name} (${node.name.en})`,
+            });
+            const transformedVal = Math.trunc((mod.value * spec.pct) / 100);
+            if (transformedVal !== 0) {
+              addedMods.push({
+                ...mod,
+                name: spec.toName,
+                value: transformedVal,
+                source: `${jewel.name} (${nodeId}) -> ${spec.toName} (${node.name.en})`,
+              });
+            }
+          }
+        }
+      }
+      details.push({
+        nodeId,
+        jewelName: jewel.name,
+        kind: 'stat-transform',
         radiusLabel,
         radiusPx,
         nodesInRadius: inRadius.length,
