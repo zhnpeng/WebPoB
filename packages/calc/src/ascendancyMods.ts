@@ -1468,10 +1468,17 @@ function applyPoe2PostLifeAscendancies(
   }
 
   // --- Amazon: Critical Strike (Excess Attack Hit Chance -> Base Crit Chance at 25%) ---
+  // Matches upstream PoB 2 CalcDefence.lua:37-38 (`round(rawChance)`) + Blinded 20% less Enemy Evasion.
   if (nodes.has('critical strike')) {
     const acc = Math.max(0, input.accuracy ?? db.calcStat('Accuracy').total);
-    const enemyEva = Math.max(1, input.config?.enemyEvasion ?? 500);
-    const rawHitChance = ((acc * 1.25) / (acc + enemyEva * 0.3)) * 100;
+    let enemyEva = Math.max(1, input.config?.enemyEvasion ?? 500);
+    if (
+      Boolean(input.config?.rawInputs?.conditionEnemyBlinded) ||
+      db.flag('Condition:EnemyBlinded')
+    ) {
+      enemyEva = Math.max(1, Math.round(enemyEva * 0.8));
+    }
+    const rawHitChance = Math.round(((acc * 1.25) / (acc + enemyEva * 0.3)) * 100);
     const excessHit = Math.max(0, rawHitChance - 100);
     const extraBaseCrit = Math.round(excessHit * 0.25 * 100) / 100;
     if (extraBaseCrit > 0) {

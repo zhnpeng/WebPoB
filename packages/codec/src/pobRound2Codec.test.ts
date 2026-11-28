@@ -395,5 +395,18 @@ Implicits: 1
     const legacyBuild = xmlToBuild(legacyXml);
     expect(legacyBuild.equipped['Weapon 1']).toBe('imp_item_1');
     expect(legacyBuild.activeWeaponSet).toBe(2);
+
+    // Phrecia 3_28_alternate Harbinger nodes hydrated into customMods
+    const harbXml = `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding>
+  <Build className="Witch" ascendClassName="Harbinger" level="95" mainSocketGroup="1" />
+  <Tree activeSpec="1"><Spec title="Harb" treeVersion="3_28_alternate" nodes="1,39702,3702" /></Tree>
+  <Skills><Skill enabled="true"><Gem nameSpec="Frost Blades" level="20" quality="0" enabled="true" /></Skill></Skills>
+  <Items />
+  <Config />
+</PathOfBuilding>`;
+    const harbBuild = xmlToBuild(harbXml);
+    expect(harbBuild.config.customMods).toContain('Gain 20% of Maximum Mana as Extra Maximum Energy Shield');
+    expect(harbBuild.config.customMods).toContain('55% increased Cooldown Recovery Rate');
   });
 });

@@ -1297,6 +1297,41 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
     pattern: /^Your Maximum Frenzy Charges is equal to your Maximum Power Charges$/i,
     build: (_, src) => [mkMod('MaxFrenzyEqualsMaxPower', 'FLAG', true, src)],
   },
+  // Wave 4Q: Eldritch Glove Exposure-on-Hit implicits (consumed natively by engine.ts applyPoe1Exposure)
+  {
+    pattern: /^Inflict (Fire|Cold|Lightning) Exposure on Hit, applying -(\d+)% to (?:Fire|Cold|Lightning) Resistance$/i,
+    build: (m, src) => [
+      mkMod(`Enemy${capFirst(m[1]!)}Resist`, 'BASE', -Number(m[2]), `${src} (Exposure)`),
+    ],
+  },
+  // Wave 4Q: Vaal Skill Crit Chance (Soul Catcher / Soul Ripper)
+  {
+    pattern: /^(\d+)% increased Critical Strike Chance with Vaal Skills(?: during effect)?$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritChance', 'INC', Number(m[1]), src),
+        tags: [{ type: 'SkillType' as const, skillType: 'Vaal' }],
+      },
+    ],
+  },
+  // Wave 4Q: Unnerve on Hit, Original Sin & Ralakesh's Impatience
+  {
+    pattern: /^(\d+)% chance to Unnerve Enemies(?: for \d+ seconds)? on Hit$/i,
+    build: (m, src) => [mkMod('UnnerveOnHitChance', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Cannot deal non-Chaos Damage$/i,
+    build: (_, src) => [
+      mkMod('DealNoPhysical', 'FLAG', true, src),
+      mkMod('DealNoFire', 'FLAG', true, src),
+      mkMod('DealNoCold', 'FLAG', true, src),
+      mkMod('DealNoLightning', 'FLAG', true, src),
+    ],
+  },
+  {
+    pattern: /^Count as having maximum number of (Frenzy|Power|Endurance) Charges$/i,
+    build: (m, src) => [mkMod(`CountAsMax${capFirst(m[1]!)}Charges`, 'FLAG', true, src)],
+  },
 ];
 
 /**

@@ -515,8 +515,25 @@ describe('ascendancyMods', () => {
         maxMana: 600,
         accuracy: 3000,
       });
-      // rawHitChance = (3000 * 1.25) / (3000 + 150) * 100 = 119.0476% -> excess = 19.0476% -> * 0.25 = 4.76%
-      expect(db.sum('BASE', 'BaseCritChance', ModFlag.Attack)).toBeCloseTo(4.76, 2);
+      // rawHitChance = round((3000 * 1.25) / (3000 + 150) * 100) = 119 -> excess = 19 -> * 0.25 = 4.75%
+      expect(db.sum('BASE', 'BaseCritChance', ModFlag.Attack)).toBeCloseTo(4.75, 2);
+
+      // Blinded enemy has 20% less Evasion (enemyEvasion 1000 -> 800)
+      const dbBlinded = new ModDB();
+      applyPostLifeAscendancyMechanics({
+        game: 'poe2',
+        db: dbBlinded,
+        allocatedNodes: nodes,
+        config: { enemyEvasion: 1000, rawInputs: { conditionEnemyBlinded: true } },
+        str: 100,
+        dex: 300,
+        int: 80,
+        maxLife: 2000,
+        maxMana: 600,
+        accuracy: 3000,
+      });
+      // rawHitChance = round((3000 * 1.25) / (3000 + 800 * 0.3) * 100) = round(115.74) = 116 -> excess = 16 -> 4.00%
+      expect(dbBlinded.sum('BASE', 'BaseCritChance', ModFlag.Attack)).toBeCloseTo(4.0, 2);
     });
 
     it('Ritualist (PoE 2): Unfurled Finger & Mystic Attunement', () => {

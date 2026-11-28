@@ -472,6 +472,18 @@ const PHRECIA_ALTERNATE_NODE_STATS: Readonly<Record<number, readonly string[]>> 
     '+1 to Maximum Power Charges',
   ], // there is more
   26415: ['20% of Damage taken Recouped as Mana', '100% of Physical Damage is taken from Mana before Life'], // don't panic yet
+  // Harbinger (alternate Witch / Occultist slot)
+  63336: ['10% increased Energy Shield Recharge Rate', '15% increased Mana Regeneration Rate'],
+  1811: ['10% increased Energy Shield Recharge Rate', '15% increased Mana Regeneration Rate'],
+  23770: ['10% increased Energy Shield Recharge Rate', '15% increased Mana Regeneration Rate'],
+  58661: ['10% increased Energy Shield Recharge Rate', '15% increased Mana Regeneration Rate'],
+  39702: [
+    '30% of Non-Chaos Damage taken bypasses Energy Shield',
+    'Gain 20% of Maximum Mana as Extra Maximum Energy Shield',
+    'Gain 10% of Maximum Life as Extra Maximum Energy Shield',
+  ],
+  34822: ['100% increased Area of Effect of Hex Skills'],
+  3702: ['55% increased Cooldown Recovery Rate'],
 };
 
 /**

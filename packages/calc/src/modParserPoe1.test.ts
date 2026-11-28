@@ -991,4 +991,41 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       parseModLine('Your Maximum Frenzy Charges is equal to your Maximum Power Charges', 'item'),
     ).toEqual([expect.objectContaining({ name: 'MaxFrenzyEqualsMaxPower', type: 'FLAG', value: true })]);
   });
+
+  it('Wave 4Q: Eldritch Exposure-on-Hit, Vaal Crit, Unnerve-on-Hit, Original Sin & Ralakesh', () => {
+    expect(
+      parseModLine('Inflict Cold Exposure on Hit, applying -12% to Cold Resistance', 'Item (Gloves)'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'EnemyColdResist',
+        type: 'BASE',
+        value: -12,
+        source: 'Item (Gloves) (Exposure)',
+      }),
+    ]);
+    expect(
+      parseModLine('Inflict Lightning Exposure on Hit, applying -13% to Lightning Resistance', 'Item (Gloves)'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'EnemyLightningResist',
+        type: 'BASE',
+        value: -13,
+      }),
+    ]);
+    expect(parseModLine('80% increased Critical Strike Chance with Vaal Skills during effect', 'item')).toEqual([
+      expect.objectContaining({
+        name: 'CritChance',
+        type: 'INC',
+        value: 80,
+        tags: [{ type: 'SkillType', skillType: 'Vaal' }],
+      }),
+    ]);
+    expect(parseModLine('20% chance to Unnerve Enemies for 4 seconds on Hit', 'item')).toEqual([
+      expect.objectContaining({ name: 'UnnerveOnHitChance', type: 'BASE', value: 20 }),
+    ]);
+    expect(parseModLine('Cannot deal non-Chaos Damage', 'item')).toHaveLength(4);
+    expect(parseModLine('Count as having maximum number of Frenzy Charges', 'item')).toEqual([
+      expect.objectContaining({ name: 'CountAsMaxFrenzyCharges', type: 'FLAG', value: true }),
+    ]);
+  });
 });
