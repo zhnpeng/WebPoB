@@ -265,6 +265,50 @@ export const OFFICIAL_GEMS_FILES: Record<GameId, string> = {
   poe2: 'poe2-gems.json',
 };
 
+/**
+ * Official PoE 1 anoint-only (`isBlighted = true`) notables from upstream PoB1 `TreeData/3_30/tree.lua`.
+ * Compact `poe1-tree-*.json` files omit disconnected Blighted notables, so we hydrate them off-canvas
+ * so amulet/boot/helmet `Allocates <Notable>` enchants (e.g. `Force of Darkness`, `Tranquility`,
+ * `Tenacity`, `Crusader`, `Cleansed Thoughts`, `Way of the Warrior`) resolve across all tree versions.
+ */
+const POE1_BLIGHTED_ANOINT_NOTABLES: ReadonlyArray<{
+  id: number;
+  en: string;
+  stats: readonly string[];
+}> = [
+  { id: 203, en: 'Vinespike Cordial', stats: ['Inflict a Grasping Vine on Hit against Enemies with fewer than 8 Grasping Vines during Effect of any Life Flask'] },
+  { id: 1365, en: 'Knowledge Barrier', stats: ['6% increased Energy Shield Recharge Rate for each different type of Mastery you have Allocated'] },
+  { id: 3195, en: 'Legacy of the Wilds', stats: ['Tinctures have 40% increased effect while at or above 10 stacks of Mana Burn'] },
+  { id: 4354, en: 'Beacon of Hope', stats: ['80% increased Area of Effect of Aura Skills'] },
+  { id: 5574, en: 'Force of Darkness', stats: ['Damage Penetrates 15% Chaos Resistance'] },
+  { id: 5624, en: 'Crusader', stats: ['8% increased maximum Mana', 'Transfiguration of Mind'] },
+  { id: 13739, en: 'Always Angry', stats: ['+8 to Minimum Rage'] },
+  { id: 14079, en: 'Wood, Stone, and Spell', stats: ['10% increased effect of Arcane Surge on you per Summoned Totem'] },
+  { id: 14587, en: 'Adaptive Steel', stats: ["5% chance to Defend with 200% of Armour for each time you've been Hit by an Enemy Recently, up to 30%"] },
+  // Note: Omit 'Transfiguration of Soul' until engine.ts:5155 excludes Intelligence's innate 2% ES/10 Int from esEval.incPct
+  { id: 16246, en: 'Tranquility', stats: ['5% increased maximum Energy Shield'] },
+  { id: 20605, en: 'No Forgiveness', stats: ['20% chance for used Retaliation Skills to remain Usable and not consume a Cooldown Use'] },
+  { id: 23549, en: 'Incorporeal', stats: ['Elusive on you reduces in effect 50% slower', 'Elusive is removed from you at 20% effect'] },
+  { id: 24358, en: 'Selective Precision', stats: ['First and Final shots of Barrage sequences fire Projectiles that Return to you'] },
+  { id: 27781, en: 'Worship the Blightheart', stats: ['Create Fungal Ground instead of Consecrated Ground'] },
+  { id: 32853, en: "Sione's Ambition", stats: ['Strike Skills which target additional Enemies can do so from 40% further away'] },
+  { id: 33722, en: 'Hollow Effigy', stats: ['Your Offering Skills do not require a Corpse'] },
+  { id: 37512, en: 'Bastion of Faith', stats: ['Consecrated Ground you create also grants 50% reduced duration of Damaging Ailments on you'] },
+  { id: 38706, en: 'Way of the Warrior', stats: ['16% increased Melee Damage', '16% increased Armour', '+16 to maximum Life', '+30 to Strength'] },
+  { id: 40849, en: 'Persistence', stats: ['-10 Physical Damage taken from Hits', '-1 Physical Damage taken from Hits per Level'] },
+  { id: 41169, en: 'Jagged Wounds', stats: ["20% increased Maximum total Life Recovery per second from Leech if you've dealt a Critical Strike recently"] },
+  { id: 41307, en: 'Deadly Inclinations', stats: ['18% increased Evasion Rating', '+12 to maximum Life', '16% increased Projectile Damage', '+30 to Dexterity'] },
+  { id: 51360, en: 'Mixed Munitions', stats: ['5% increased Cooldown Recovery Rate for throwing Traps per Mine Detonated Recently'] },
+  { id: 52282, en: 'Tenacity', stats: ['5% increased maximum Life', 'Transfiguration of Body'] },
+  { id: 53759, en: 'Cleansed Thoughts', stats: ['Chaos Resistance is doubled'] },
+  { id: 56146, en: 'Deliberate Brutality', stats: ['Impales you inflict gain 50% increased Effect once 1 second of Duration has expired'] },
+  { id: 56207, en: 'Hardened Scars', stats: ['15% increased Life Recovery from Flasks', '25% less Damage over Time taken during Effect of any Life Flask'] },
+  { id: 56274, en: 'Lasting Tempest', stats: ['50% increased Duration of Elemental Ailments on Enemies'] },
+  { id: 57006, en: 'Vengeant Cascade', stats: ['Returning Projectiles have 150% increased Speed'] },
+  { id: 62596, en: 'Mystic Talents', stats: ['16% increased Spell Damage', '+14 to maximum Energy Shield', '25% increased Mana Regeneration Rate', '+30 to Intelligence'] },
+  { id: 64217, en: 'Aspect of Stone', stats: ['20% chance to Avoid Physical Damage from Hits'] },
+];
+
 export function hydrateCompactTree(payload: CompactTreePayload): PassiveTreeData {
   const nodes: Record<number, PassiveNode> = {};
   for (const cn of payload.nodes) {
@@ -289,6 +333,22 @@ export function hydrateCompactTree(payload: CompactTreePayload): PassiveTreeData
         statsZh: m.sz,
       })),
     };
+  }
+
+  if (payload.game === 'poe1') {
+    for (const bn of POE1_BLIGHTED_ANOINT_NOTABLES) {
+      if (!nodes[bn.id]) {
+        nodes[bn.id] = {
+          id: bn.id,
+          name: { en: bn.en, zh: bn.en },
+          kind: 'notable',
+          x: -99999,
+          y: -99999,
+          stats: [...bn.stats],
+          adjacent: [],
+        };
+      }
+    }
   }
 
   const tree: PassiveTreeData = {

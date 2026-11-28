@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createEmptyBuild,
   getGemsForGame,
+  hydrateCompactTree,
   registerGemsData,
   resolveGemFromPobRef,
   setRegisteredGems,
@@ -1679,6 +1680,35 @@ describe('Mechanism-Layer Regression Suite — Round 2 (Upstream PoB spec/System
       } finally {
         setRegisteredGems('poe1', prevPoe1);
       }
+    });
+
+    it('hydrates PoE 1 anoint-only (isBlighted) notables such as Force of Darkness and Tranquility into compact trees (Wave 4Y)', () => {
+      const tree = hydrateCompactTree({
+        game: 'poe1',
+        version: '3_30',
+        bounds: { minX: -1000, maxX: 1000, minY: -1000, maxY: 1000 },
+        groups: {},
+        classStartNodeIds: {},
+        nodes: [],
+      });
+      expect(tree.nodes[5574]).toMatchObject({
+        id: 5574,
+        kind: 'notable',
+        name: { en: 'Force of Darkness' },
+        stats: ['Damage Penetrates 15% Chaos Resistance'],
+      });
+      expect(tree.nodes[16246]).toMatchObject({
+        id: 16246,
+        kind: 'notable',
+        name: { en: 'Tranquility' },
+        stats: ['5% increased maximum Energy Shield'],
+      });
+      expect(tree.nodes[53759]).toMatchObject({
+        id: 53759,
+        kind: 'notable',
+        name: { en: 'Cleansed Thoughts' },
+        stats: ['Chaos Resistance is doubled'],
+      });
     });
   });
 });
