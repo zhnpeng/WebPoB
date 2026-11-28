@@ -1021,6 +1021,67 @@ const ZH_TO_EN_RULES: StatRewriteRule[] = [
       return `${v}% increased ${scopeEn}Damage against Unique Enemies`;
     },
   },
+  // Wave 6M: Remaining top poe2-wegame-cn Bonded, Flask, Charm & Affix lines
+  {
+    zhPattern: /^使用时开始能量护盾充能$/,
+    toEn: () => 'Energy Shield Recharge starts on use',
+  },
+  {
+    zhPattern: /^效果期间将所受伤害的\s*(\d+(?:\.\d+)?)%\s*吸纳为(生命|魔力|能量护盾)$/,
+    toEn: (_, v, pool) => {
+      const map: Record<string, string> = { 生命: 'Life', 魔力: 'Mana', 能量护盾: 'Energy Shield' };
+      return `${v}% of Damage Taken Recouped as ${map[pool] ?? pool} during Effect`;
+    },
+  },
+  {
+    zhPattern: /^效果期间被敌人击中时获得\s*(\d+)\s*点?怒火$/,
+    toEn: (_, v) => `Gain ${v} Rage when Hit by an Enemy during Effect`,
+  },
+  {
+    zhPattern: /^效果期间不具有固有的怒火损失$/,
+    toEn: () => 'No inherent loss of Rage during Effect',
+  },
+  {
+    zhPattern: /^执政官间隔期的消减速度加快\s*(\d+)%$/,
+    toEn: (_, v) => `Archon recovery period expires ${v}% faster`,
+  },
+  {
+    zhPattern: /^获得一个能量球时[，,]\s*有\s*(\d+)%\s*的几率随机获得一个额外的能量球$/,
+    toEn: (_, v) => `${v}% chance to gain an additional random Charge when you gain a Charge`,
+  },
+  {
+    zhPattern: /^你受到的异常状态的减速强度(?:降低|减少)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% reduced Slowing Potency of Debuffs on you`,
+  },
+  {
+    zhPattern: /^你使用的(?:咒|护)符有\s*(\d+)%\s*的几率不消耗充能$/,
+    toEn: (_, v) => `${v}% chance for Charms you use to not consume Charges`,
+  },
+  {
+    zhPattern: /^充能次数(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Charges`,
+  },
+  {
+    zhPattern: /^获得的充能(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Charges gained`,
+  },
+  {
+    zhPattern: /^每次使用消耗的充能次数(?:降低|减少)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% reduced Charges per use`,
+  },
+  {
+    zhPattern: /^回复量(提高|增加|降低|减少)\s*(\d+)%$/,
+    toEn: (_, dir, v) =>
+      `${v}% ${dir === '提高' || dir === '增加' ? 'increased' : 'reduced'} Amount Recovered`,
+  },
+  {
+    zhPattern: /^允许的(前缀|后缀)\s*([+-]?\d+)$/,
+    toEn: (_, kind, v) => `${v} ${kind === '前缀' ? 'Prefix' : 'Suffix'} Modifier allowed`,
+  },
+  {
+    zhPattern: /^生命回复(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Life Recovery`,
+  },
 ];
 
 const EN_TO_ZH_RULES: EnToZhRule[] = [

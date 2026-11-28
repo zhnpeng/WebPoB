@@ -2571,6 +2571,124 @@ describe('Mechanism-Layer Regression Suite (PoE 1 & PoE 2)', () => {
       // Maligaro overrides Critical Damage Bonus to 250% => total Crit Multiplier = 350% (ignores +100% INC)
       expect(out.offence.critMultiplier).toBe(350);
     });
+
+    it('gates Elemental Overload +40% MORE Elemental Damage on CritInPast8Sec (does not inflate when false)', () => {
+      const base = createSamplePoe1Build();
+      const sceptre: Item = {
+        id: 'eo_sceptre',
+        name: 'Test Oscillating Sceptre',
+        baseName: 'Oscillating Sceptre',
+        rarity: 'RARE',
+        slotType: 'Weapon 1',
+        quality: 0,
+        sockets: '',
+        implicits: ['Elemental Overload'],
+        explicits: [],
+      };
+      const eoBuild: Build = {
+        ...base,
+        items: { ...base.items, [sceptre.id]: sceptre },
+        equipped: { ...base.equipped, 'Weapon 1': sceptre.id },
+        skills: [
+          {
+            id: 'sg_arc_eo',
+            label: 'Arc',
+            enabled: true,
+            gems: [{ instanceId: 'g1', gemId: 'poe1_arc', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_arc_eo',
+        config: {
+          ...base.config,
+          rawInputs: { ...base.config.rawInputs, conditionCritInPast8Sec: true },
+        },
+      };
+      const outActive = calculateBuild(eoBuild);
+      const outInactive = calculateBuild({
+        ...eoBuild,
+        config: {
+          ...eoBuild.config,
+          rawInputs: { ...eoBuild.config.rawInputs, conditionCritInPast8Sec: false },
+        },
+      });
+      expect(outActive.offence.averageHit / outInactive.offence.averageHit).toBeCloseTo(1.4, 2);
+    });
+
+    it('scales Lightning Conduit hit damage via playerDb ShockEffect multiplier (per 5% Shock)', () => {
+      const base = createSamplePoe1Build();
+      const lcBase: Build = {
+        ...base,
+        skills: [
+          {
+            id: 'sg_lc',
+            label: 'Lightning Conduit',
+            enabled: true,
+            gems: [{ instanceId: 'g1', gemId: 'poe1_lightningconduit', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_lc',
+        config: {
+          ...base.config,
+          enemyShocked: false,
+          shockValue: 0,
+        },
+      };
+      const outNoShock = calculateBuild(lcBase);
+      const outShock50 = calculateBuild({
+        ...lcBase,
+        config: {
+          ...lcBase.config,
+          enemyShocked: true,
+          shockValue: 50,
+        },
+      });
+      // 50% Shock = 1.5x enemy damage taken * Lightning Conduit ShockEffect (per 5% Shock) hit MORE multiplier
+      expect(outShock50.offence.averageHit).toBeGreaterThan(outNoShock.offence.averageHit * 1.9);
+    });
+
+    it('honors explicit corrupted=false on support gems when evaluating corrupted gem level bonuses', () => {
+      const base = createSamplePoe1Build();
+      const body: Item = {
+        id: 'corr_body',
+        name: 'Corrupted Chest',
+        baseName: 'Vaal Regalia',
+        rarity: 'RARE',
+        slotType: 'Body Armour',
+        quality: 0,
+        sockets: 'B-B-B-B-B-B',
+        implicits: ['+2 to Level of Socketed Corrupted Gems'],
+        explicits: [],
+      };
+      const mkBuild = (corrupted: boolean): Build => ({
+        ...base,
+        items: { ...base.items, [body.id]: body },
+        equipped: { ...base.equipped, 'Body Armour': body.id },
+        skills: [
+          {
+            id: 'sg_corr',
+            label: 'Arc + Added Lightning',
+            slot: 'Body Armour',
+            enabled: true,
+            gems: [
+              { instanceId: 'g1', gemId: 'poe1_arc', level: 20, quality: 0, enabled: true },
+              {
+                instanceId: 'g2',
+                gemId: 'poe1_supportaddedlightningdamage',
+                level: 20,
+                quality: 0,
+                enabled: true,
+                corrupted,
+              } as Build['skills'][number]['gems'][number],
+            ],
+          },
+        ],
+        mainSkillGroupId: 'sg_corr',
+      });
+      const outCorr = calculateBuild(mkBuild(true));
+      const outClean = calculateBuild(mkBuild(false));
+      // Corrupted Added Lightning gets +2 levels (Lv22) vs non-corrupted (Lv20)
+      expect(outCorr.offence.averageHit).toBeGreaterThan(outClean.offence.averageHit);
+    });
   });
 
   describe('Layer-2 Oracle Expansion Regression Coverage (PoE 1 & PoE 2)', () => {

@@ -12,7 +12,7 @@ import {
   type ModTag,
   type ModType,
 } from '@webpob/core';
-import { getRuleset } from '@webpob/data';
+import { getRuleset, POE1_MINION_PROFILES } from '@webpob/data';
 import { ModDB } from './modDb.js';
 import { computePoe2CritMultiplier } from './offenceUpgrade.js';
 
@@ -3425,7 +3425,7 @@ export interface MinionOffenceInput {
   /** Effective active gem level (scales Lv.20 base damage via `1.095^(effLevel - 20)` when `!== 20`). */
   effLevel?: number;
   /** Optional GemInstance (`count`, `level`, `spiritReservationOverride`). */
-  gemInst?: Partial<Pick<GemInstance, 'count' | 'level' | 'quality' | 'spiritReservationOverride'>>;
+  gemInst?: Partial<Pick<GemInstance, 'gemId' | 'count' | 'level' | 'quality' | 'spiritReservationOverride'>>;
   /** Optional explicit active minion count override. */
   explicitCount?: number;
   /** PoE 2 total Spirit reserved by this persistent minion skill (e.g. 312 Spirit / 39 per Arsonist = 8). */
@@ -3557,18 +3557,47 @@ export function computeMinionGroupOffence(input: MinionOffenceInput): MinionGrou
   const levelDamageScale =
     effLevel !== baseLevel ? Math.pow(POB_MINION_DAMAGE_GROWTH_PER_LEVEL, effLevel - baseLevel) : 1;
 
-  const isSpell =
-    minionBase.isSpell ??
-    Boolean(minionBase.castTime && minionBase.castTime > 0 && minionBase.attacksPerSecond <= 0);
-  const flags =
-    input.flags ??
-    minionBase.modFlags ??
-    ((isSpell ? ModFlag.Spell : ModFlag.Attack | ModFlag.Melee) | ModFlag.Hit);
-  const kwFlags =
-    input.keywordFlags ??
-    minionBase.keywordFlags ??
-    (KeywordFlag.Minion | KeywordFlag.Hit | (isSpell ? KeywordFlag.Spell : KeywordFlag.Attack));
-  const effectiveness = (minionBase.damageEffectivenessPct ?? 100) / 100;
+  // Upstream PoB1 `Data/Minions.lua` + `Data/Skills/minion.lua` profile overrides for core summoned minions
+  const gemIdLower = (input.gemInst?.gemId ?? '').toLowerCase();
+  const isPoe1HolyRelic =
+    game === 'poe1' &&
+    (gemIdLower === 'poe1_summonholyrelic' ||
+      gemIdLower === 'poe1_summonholyrelicaltx' ||
+      minionBase.limitStat === 'ActiveHolyRelicLimit');
+  const isPoe1HeraldOfAgony =
+    game === 'poe1' && gemIdLower === 'poe1_heraldofagony';
+  const isPoe1RangedAnimateWeapon =
+    game === 'poe1' && gemIdLower === 'poe1_animateweaponalty';
+
+  // Sync parent VirulenceStack multiplier onto minionDb for Herald of Agony (`actor = "parent"` in PoB1 act_dex.lua)
+  if (isPoe1HeraldOfAgony && input.playerDb) {
+    const pMults = input.playerDb.getEvalContext().multipliers;
+    const pVir = pMults.VirulenceStack ?? pMults.VirulenceStacks ?? 0;
+    const mMults = minionDb.getEvalContext().multipliers;
+    if (pVir > 0 && !(mMults.VirulenceStack && mMults.VirulenceStack > 0)) {
+      minionDb.setMultiplier('VirulenceStack', pVir);
+    }
+  }
+
+  const isSpell = isPoe1HolyRelic
+    ? true
+    : minionBase.isSpell ??
+      Boolean(minionBase.castTime && minionBase.castTime > 0 && minionBase.attacksPerSecond <= 0);
+  const defaultMinionFlags = isPoe1HolyRelic
+    ? ModFlag.Spell | ModFlag.Area | ModFlag.Hit
+    : isPoe1HeraldOfAgony || isPoe1RangedAnimateWeapon
+      ? ModFlag.Attack | ModFlag.Projectile | ModFlag.Hit
+      : (isSpell ? ModFlag.Spell : ModFlag.Attack | ModFlag.Melee) | ModFlag.Hit;
+  const defaultMinionKwFlags = isPoe1HolyRelic
+    ? KeywordFlag.Minion | KeywordFlag.Spell | KeywordFlag.Hit
+    : isPoe1HeraldOfAgony || isPoe1RangedAnimateWeapon
+      ? KeywordFlag.Minion | KeywordFlag.Attack | KeywordFlag.Hit
+      : KeywordFlag.Minion | KeywordFlag.Hit | (isSpell ? KeywordFlag.Spell : KeywordFlag.Attack);
+  const flags = input.flags ?? minionBase.modFlags ?? defaultMinionFlags;
+  const kwFlags = input.keywordFlags ?? minionBase.keywordFlags ?? defaultMinionKwFlags;
+  // Upstream PoB1 `minion.lua`: RelicTriggeredNova has `damageEffectiveness = 2.5` (250%)
+  const effectiveness =
+    (minionBase.damageEffectivenessPct ?? (isPoe1HolyRelic ? 250 : 100)) / 100;
 
   // Step A: Base Min/Max damage scaled by level + added flat minion damage
   const baseMin: Record<DamageType, number> = { Physical: 0, Lightning: 0, Cold: 0, Fire: 0, Chaos: 0 };
@@ -3960,17 +3989,35 @@ export function computeMinionGroupOffence(input: MinionOffenceInput): MinionGrou
     totalAvgHit += avg;
   }
 
-  // Step F: Minion Attack / Cast Speed
-  const baseRate =
-    isSpell && minionBase.castTime && minionBase.castTime > 0
-      ? 1 / minionBase.castTime
-      : Math.max(0.01, minionBase.attacksPerSecond) * (1 + (minionBase.moreAttackSpeedPct ?? 0) / 100);
-  const speedInc = minionDb.sum('INC', 'Speed', flags, kwFlags);
-  const speedMore = minionDb.more('Speed', flags, kwFlags);
-  const actionSpeedMult =
-    Math.max(0.1, 1 + minionDb.sum('INC', 'ActionSpeed', flags, kwFlags) / 100) *
-    minionDb.more('ActionSpeed', flags, kwFlags);
-  const speedExact = Math.max(0.01, baseRate * Math.max(0.1, 1 + speedInc / 100) * speedMore * actionSpeedMult);
+  // Step F: Minion Attack / Cast Speed (or Cooldown-triggered Nova rate for PoE 1 Holy Relic)
+  let speedExact: number;
+  if (isPoe1HolyRelic) {
+    const relicCooldown = POE1_MINION_PROFILES.HolyLivingRelic?.primarySkill?.cooldown ?? 0.3;
+    const cdrInc = minionDb.sum('INC', 'CooldownRecovery', flags, kwFlags);
+    const cdrMore = minionDb.more('CooldownRecovery', flags, kwFlags);
+    const rawCd = relicCooldown / Math.max(0.01, (1 + cdrInc / 100) * cdrMore);
+    const quantizedCd = Math.max(
+      POB_SERVER_TICK_SEC,
+      Math.ceil(rawCd / POB_SERVER_TICK_SEC - 1e-9) * POB_SERVER_TICK_SEC,
+    );
+    speedExact = 1 / quantizedCd;
+  } else {
+    const profileAttackRate =
+      isPoe1HeraldOfAgony && POE1_MINION_PROFILES.HeraldOfAgonySpiderPlated?.attackTime
+        ? 1 / POE1_MINION_PROFILES.HeraldOfAgonySpiderPlated.attackTime
+        : undefined;
+    const baseRate =
+      isSpell && minionBase.castTime && minionBase.castTime > 0
+        ? 1 / minionBase.castTime
+        : Math.max(0.01, profileAttackRate ?? minionBase.attacksPerSecond) *
+          (1 + (minionBase.moreAttackSpeedPct ?? 0) / 100);
+    const speedInc = minionDb.sum('INC', 'Speed', flags, kwFlags);
+    const speedMore = minionDb.more('Speed', flags, kwFlags);
+    const actionSpeedMult =
+      Math.max(0.1, 1 + minionDb.sum('INC', 'ActionSpeed', flags, kwFlags) / 100) *
+      minionDb.more('ActionSpeed', flags, kwFlags);
+    speedExact = Math.max(0.01, baseRate * Math.max(0.1, 1 + speedInc / 100) * speedMore * actionSpeedMult);
+  }
 
   const avgHitWithCrit = totalAvgHit * effectiveCritMultiplier * doubleDamageMult;
   const perMinionHitDps = avgHitWithCrit * speedExact * (hitChance / 100);

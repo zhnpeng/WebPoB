@@ -4234,6 +4234,24 @@ export function evaluateAurasAndWatchersEye(
             playerDb.setCondition(ck, true);
           }
         }
+        // Propagate PoE 1 Herald of Agony VirulenceStack multiplier (clamped by VirulenceStacksMax)
+        if (build.game === 'poe1' && lowerAuraName === 'herald of agony') {
+          const rawVir = Number(
+            build.config.rawInputs?.heraldOfAgonyVirulenceStack ??
+              playerDb.getEvalContext().multipliers.VirulenceStack ??
+              0,
+          );
+          if (Number.isFinite(rawVir) && rawVir > 0) {
+            const baseMaxVir =
+              tmpPlayer.getEvalContext().multipliers.VirulenceStacksMax ??
+              playerDb.getEvalContext().multipliers.VirulenceStacksMax ??
+              40;
+            const bonusMaxVir = playerDb.sum('BASE', ['VirulenceStacksMax', 'MaxVirulenceStacks']);
+            const effVir = Math.max(0, Math.min(Math.max(40, baseMaxVir + bonusMaxVir), rawVir));
+            playerDb.setMultiplier('VirulenceStack', effVir);
+            minionDb.setMultiplier('VirulenceStack', effVir);
+          }
+        }
         enemyDb.addMods(collectModsFromDb(tmpEnemy));
         minionDb.addMods(collectModsFromDb(tmpMinion));
       }
@@ -4365,6 +4383,23 @@ export function evaluateAurasAndWatchersEye(
   // PASS 1: Non-curse Auras, Heralds, Golems, Stances, Aspects, and Global Buffs
   for (const cand of nonCurseCandidates) {
     evaluateCandidate(cand);
+  }
+
+  // Propagate canonical aura names from imported Party / Mercenary auras (`<Party><ImportedBuffs name="Aura">`)
+  // so Watcher's Eye `while affected by <Aura>` mods activate for party-granted auras (note: Sublime Vision only
+  // restricts "Auras from your Skills", so party-granted auras still affect the player).
+  if (build.config.importedPartyMods && build.config.importedPartyMods.length > 0) {
+    for (const pm of build.config.importedPartyMods) {
+      if (pm.target === 'enemy') continue;
+      const mPartyAura = pm.source.match(/^Party\s*\(Aura\):\s*(.+)$/i);
+      if (!mPartyAura) continue;
+      const canonical = WATCHERS_EYE_AURA_BY_LOWER.get(mPartyAura[1]!.trim().toLowerCase());
+      if (!canonical || canonical === 'Pride') continue;
+      activeAurasAll.add(canonical);
+      activeAurasAffectingPlayer.add(canonical);
+      const noSpace = canonical.replace(/\s+/g, '');
+      playerDb.setCondition(`AffectedBy${noSpace}`, true);
+    }
   }
 
   // PASS 2: Watcher's Eye & Sublime Vision conditional jewel lines BEFORE CurseLimit resolution

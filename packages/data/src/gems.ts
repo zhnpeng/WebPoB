@@ -971,8 +971,11 @@ const POE2_LEGACY_GEM_ALIASES: Readonly<Record<string, string>> = {
   castonshock: 'poe2_castonelementalailment',
   skillgemcastonshock: 'poe2_castonelementalailment',
   // PoE 2 v0.1/v0.2 SupportCoursingCurrentPlayer -> Shock Conduction (poe2_shockconductionsupport)
+  'coursing current': 'poe2_shockconductionsupport',
   supportcoursingcurrentplayer: 'poe2_shockconductionsupport',
   supportgemcoursingcurrent: 'poe2_shockconductionsupport',
+  // PoE 2 v0.1/v0.2 Skeletal Warrior Minion -> Skeletal Warrior (poe2_skeletalwarrior)
+  'skeletal warrior minion': 'poe2_skeletalwarrior',
 };
 
 interface GemLookupIndex {
@@ -1135,6 +1138,12 @@ export function findGemByName(game: GameId, name: string): GemDefinition | undef
     if (aliasTarget) {
       const aliased = index.byId.get(aliasTarget) ?? lookupGemInIndex(index, aliasTarget);
       if (aliased) return aliased;
+    }
+    // PoE 2 v0.3/0.5 renamed tiered supports from "<Name>" to "<Name> I" (e.g. Upheaval -> Upheaval I).
+    // Fall back to Tier I when no explicit Roman numeral tier is specified.
+    if (!/\s+(?:i|ii|iii|iv|v)$/i.test(stripped)) {
+      const tier1 = index.byExactNameLower.get(`${stripped} i`);
+      if (tier1) return tier1;
     }
   }
 

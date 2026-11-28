@@ -6043,6 +6043,7 @@ function computeOffence(
       baseBuses.enemyDb.setCondition('Shocked', true);
       baseBuses.enemyDb.setMultiplier('ShockEffect', effShockPct);
       baseBuses.playerDb.setMultiplier('EnemyShockEffect', effShockPct);
+      baseBuses.playerDb.setMultiplier('ShockEffect', effShockPct / 5);
       baseBuses.enemyDb.addMod({
         name: 'DamageTaken',
         type: 'INC',
@@ -6744,12 +6745,16 @@ function computeGroupOffence(
       const supSock = isSquireBridged || gemInst.fromItem
         ? { qualBonus: 0, diallaLevelBonus: 0, diallaQualBonus: 0 }
         : consumeMatchingSocketBonus(def, gemInst.instanceId);
-      const supIsCorrupted = Boolean(
-        gemInst.level >= 21 ||
-          gemInst.quality >= 21 ||
-          def.tags.some((t) => t.toLowerCase() === 'vaal') ||
-          (/^awakened\s+/i.test(def.name.en) && gemInst.level >= 6),
-      );
+      const explicitSupCorrupted = (gemInst as { corrupted?: boolean }).corrupted;
+      const supIsCorrupted =
+        explicitSupCorrupted !== undefined
+          ? explicitSupCorrupted
+          : Boolean(
+              gemInst.level >= 21 ||
+                gemInst.quality >= 21 ||
+                def.tags.some((t) => t.toLowerCase() === 'vaal') ||
+                (/^awakened\s+/i.test(def.name.en) && gemInst.level >= 6),
+            );
       const supBonus = isSquireBridged
         ? resolveGemBonuses(def, baseBuses.playerDb, [], { isCorrupted: supIsCorrupted })
         : resolveGemBonuses(def, baseBuses.playerDb, socketedRules, { isCorrupted: supIsCorrupted });
@@ -7642,6 +7647,7 @@ function computeGroupOffence(
         });
         groupEnemyDb.setMultiplier('ShockEffect', skillShockPct);
         skillDb.setMultiplier('EnemyShockEffect', skillShockPct);
+        skillDb.setMultiplier('ShockEffect', skillShockPct / 5);
       }
     }
   }
@@ -7741,7 +7747,7 @@ function computeGroupOffence(
       source: 'Intimidated (Rage Mastery)',
     });
   }
-  // PoE 1 Oscillating Sceptre / Keystone Elemental Overload (+40% MORE Elemental Hit & Ailment Damage, NoCritExtraDamage)
+  // PoE 1 Oscillating Sceptre / Keystone Elemental Overload (NoCritExtraDamage before crit calc; +40% MORE gated on CritInPast8Sec at line 10410)
   if (
     build.game === 'poe1' &&
     skillDb.flag('ElementalOverload') &&
@@ -7754,42 +7760,6 @@ function computeGroupOffence(
         value: true,
         flags: 0,
         keywordFlags: 0,
-        source: 'Elemental Overload',
-      });
-    }
-    const alreadyHasEoHit = skillDb
-      .calcStat('ElementalDamage', flags, kwFlags)
-      .sources.some(
-        (s) =>
-          s.type === 'MORE' &&
-          Number(s.value) === 40 &&
-          /elemental overload|custom|tree|keystone/i.test(s.source),
-      );
-    if (!alreadyHasEoHit) {
-      skillDb.addMod({
-        name: 'ElementalDamage',
-        type: 'MORE',
-        value: 40,
-        flags: ModFlag.Hit,
-        keywordFlags: 0,
-        source: 'Elemental Overload',
-      });
-    }
-    const alreadyHasEoAilment = skillDb
-      .calcStat('ElementalDamage', ModFlag.Ailment | ModFlag.Dot, KeywordFlag.Ailment)
-      .sources.some(
-        (s) =>
-          s.type === 'MORE' &&
-          Number(s.value) === 40 &&
-          /elemental overload|custom|tree|keystone/i.test(s.source),
-      );
-    if (!alreadyHasEoAilment) {
-      skillDb.addMod({
-        name: 'ElementalDamage',
-        type: 'MORE',
-        value: 40,
-        flags: 0,
-        keywordFlags: KeywordFlag.Ailment,
         source: 'Elemental Overload',
       });
     }
@@ -10438,6 +10408,72 @@ function computeGroupOffence(
   ) {
     skillDb.setCondition('CritInPast8Sec', true);
   }
+  // PoE 1 Oscillating Sceptre / Foulborn Xoph's Blood / Keystone Elemental Overload:
+  // +40% MORE Elemental Hit & Ailment Damage ONLY when CritInPast8Sec is active (and deduped against tree/amulet/item sources).
+  // If an unconditional +40% MORE ElementalDamage was emitted by parser despite !CritInPast8Sec (e.g. NeverCrit / Resolute Technique / conditionCritInPast8Sec=false), neutralize it.
+  if (build.game === 'poe1' && skillDb.flag('ElementalOverload')) {
+    const eoDisabled = neverCrit || build.config.rawInputs?.conditionCritInPast8Sec === false;
+    const eoActive = !eoDisabled && Boolean(skillDb.getEvalContext().conditions.CritInPast8Sec);
+    const alreadyHasEoHit = skillDb
+      .calcStat('ElementalDamage', flags, kwFlags)
+      .sources.some(
+        (s) =>
+          s.type === 'MORE' &&
+          Number(s.value) === 40 &&
+          /elemental overload|custom|tree|keystone|amulet|item/i.test(s.source),
+      );
+    const alreadyHasEoAilment = skillDb
+      .calcStat('ElementalDamage', ModFlag.Ailment | ModFlag.Dot, KeywordFlag.Ailment)
+      .sources.some(
+        (s) =>
+          s.type === 'MORE' &&
+          Number(s.value) === 40 &&
+          /elemental overload|custom|tree|keystone|amulet|item/i.test(s.source),
+      );
+    if (eoActive) {
+      if (!alreadyHasEoHit) {
+        skillDb.addMod({
+          name: 'ElementalDamage',
+          type: 'MORE',
+          value: 40,
+          flags: ModFlag.Hit,
+          keywordFlags: 0,
+          source: 'Elemental Overload',
+        });
+      }
+      if (!alreadyHasEoAilment) {
+        skillDb.addMod({
+          name: 'ElementalDamage',
+          type: 'MORE',
+          value: 40,
+          flags: 0,
+          keywordFlags: KeywordFlag.Ailment,
+          source: 'Elemental Overload',
+        });
+      }
+    } else if (eoDisabled) {
+      if (alreadyHasEoHit) {
+        skillDb.addMod({
+          name: 'ElementalDamage',
+          type: 'MORE',
+          value: (1 / 1.4 - 1) * 100,
+          flags: ModFlag.Hit,
+          keywordFlags: 0,
+          source: 'Elemental Overload (Inactive: !CritInPast8Sec)',
+        });
+      }
+      if (alreadyHasEoAilment) {
+        skillDb.addMod({
+          name: 'ElementalDamage',
+          type: 'MORE',
+          value: (1 / 1.4 - 1) * 100,
+          flags: 0,
+          keywordFlags: KeywordFlag.Ailment,
+          source: 'Elemental Overload (Inactive: !CritInPast8Sec)',
+        });
+      }
+    }
+  }
 
   // Double & Triple Damage including On-Crit chances (PoB1 CalcOffence.lua:3321-3330)
   const critShareForMult = neverCrit ? 0 : Math.min(1, Math.max(0, critChance / 100));
@@ -11573,6 +11609,25 @@ function computeGroupOffence(
     const brandFreqMore = skillDb.more('BrandActivationFrequency', flags, kwFlags);
     hitRateForDps =
       (1 / activeSkillData.repeatFrequency) * Math.max(0.05, 1 + brandFreqInc / 100) * brandFreqMore * actionSpeedMult;
+  } else if (
+    build.game === 'poe1' &&
+    (effectiveSkillTypeSet.has('herald') || activeDef.tags.some((t) => t.toLowerCase() === 'herald')) &&
+    typeof activeSkillData?.repeatFrequency === 'number' &&
+    activeSkillData.repeatFrequency > 0
+  ) {
+    const heraldFreqInc = skillDb.sum(
+      'INC',
+      ['HeraldStormFrequency', 'HeraldOfThunderHitFrequency', 'HitRate'],
+      flags,
+      kwFlags,
+    );
+    const heraldFreqMore = skillDb.more(
+      ['HeraldStormFrequency', 'HeraldOfThunderHitFrequency', 'HitRate'],
+      flags,
+      kwFlags,
+    );
+    hitRateForDps =
+      (1 / activeSkillData.repeatFrequency) * Math.max(0.05, 1 + heraldFreqInc / 100) * heraldFreqMore;
   }
 
   const isPoe2PureDotPart =

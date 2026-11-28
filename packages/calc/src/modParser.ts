@@ -208,7 +208,7 @@ const PARSER_RULES: ParserRule[] = [
     build: (m, src) => [
       {
         ...mkMod('Damage', 'MORE', Number(m[1]), src),
-        tags: [{ type: 'Condition', var: 'EnemyRareOrUnique' }],
+        tags: [{ type: 'Condition', var: 'TwoRareOrUniqueNearby', neg: true }],
       },
     ],
   },

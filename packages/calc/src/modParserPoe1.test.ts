@@ -575,8 +575,11 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
         name: 'Damage',
         type: 'MORE',
         value: 25,
-        tags: [{ type: 'Condition', var: 'EnemyRareOrUnique' }],
+        tags: [{ type: 'Condition', var: 'TwoRareOrUniqueNearby', neg: true }],
       }),
+    ]);
+    expect(parseModLine('Damage cannot be Reflected', 'Tree: Opportunistic')).toEqual([
+      expect.objectContaining({ name: 'CannotTakeReflectedDamage', type: 'FLAG', value: true }),
     ]);
     expect(
       parseModLine('5% increased Poison Duration for each Poison you have inflicted Recently, up to a maximum of 100%', 'tree'),
@@ -1424,7 +1427,7 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
         name: 'LifeRegenPercent',
         type: 'BASE',
         value: 2,
-        tags: [{ type: 'Multiplier', var: 'MinesDetonatedRecently', limit: 5 }],
+        tags: [{ type: 'Multiplier', var: 'MineDetonatedRecently', limit: 5 }],
       }),
     ]);
     expect(
@@ -1453,7 +1456,7 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
         name: 'CritChance',
         type: 'INC',
         value: 10,
-        tags: [{ type: 'Multiplier', var: 'MinesDetonatedRecently', limit: 10 }],
+        tags: [{ type: 'Multiplier', var: 'MineDetonatedRecently', limit: 10 }],
       }),
     ]);
     expect(parseModLine('Warcries Exert 1 additional Attack', 'Tree: Measured Fury')).toEqual([
@@ -1787,6 +1790,76 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
     ]);
     expect(parseModLine('25% of Physical Damage from Hits taken as fire', 'Custom')).toEqual([
       expect.objectContaining({ name: 'PhysicalDamageTakenAsFire', type: 'BASE', value: 25 }),
+    ]);
+  });
+
+  it('Wave 6L: Successive Detonations MineDetonatedRecently singular var + poe1-regression-bugs rules', () => {
+    expect(
+      parseModLine('+4% to Critical Strike Multiplier for each Mine Detonated Recently, up to +40%', 'Tree: Successive Detonations'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'CritMultiplier',
+        type: 'BASE',
+        value: 4,
+        tags: [{ type: 'Multiplier', var: 'MineDetonatedRecently', limit: 10 }],
+      }),
+    ]);
+    expect(
+      parseModLine("Herald of Thunder's Storms Hit Enemies with 50% increased Frequency", 'Item: Storm Secret'),
+    ).toEqual([
+      expect.objectContaining({ name: 'HeraldOfThunderHitFrequency', type: 'INC', value: 50 }),
+    ]);
+    expect(parseModLine('Cannot Block', 'Item')).toEqual([
+      expect.objectContaining({ name: 'CannotBlockAttacks', type: 'FLAG', value: true }),
+      expect.objectContaining({ name: 'CannotBlockSpells', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Nearby Enemies have Fire Exposure while at maximum Rage', 'Item')).toEqual([
+      expect.objectContaining({
+        name: 'FireExposure',
+        type: 'BASE',
+        value: -10,
+        tags: [{ type: 'Condition', var: 'AtMaxRage' }],
+      }),
+    ]);
+    expect(parseModLine('Socketed Spells have +50% to Critical Strike Multiplier', 'Item')).toEqual([
+      expect.objectContaining({ name: 'SocketedCritMultiplier', type: 'BASE', value: 50 }),
+    ]);
+    expect(parseModLine('36% increased Effect of the Buff granted by your Stone Golems', 'Item')).toEqual([
+      expect.objectContaining({ name: 'GolemBuffEffect:Stone', type: 'INC', value: 36 }),
+    ]);
+  });
+
+  it('Wave 6N: Watcher Eye Crit Pen, The Grey Wind, Instruments of Virtue, Onslaught while Fortified, WitherOnHit, OfferingEffectOnSelf', () => {
+    expect(
+      parseModLine('Critical Strikes Penetrate 10% of Enemy Elemental Resistances while affected by Zealotry', 'Item'),
+    ).toEqual([
+      expect.objectContaining({ name: 'CritFirePenetration', type: 'BASE', value: 10, tags: [{ type: 'Condition', var: 'AffectedByZealotry' }] }),
+      expect.objectContaining({ name: 'CritColdPenetration', type: 'BASE', value: 10, tags: [{ type: 'Condition', var: 'AffectedByZealotry' }] }),
+      expect.objectContaining({ name: 'CritLightningPenetration', type: 'BASE', value: 10, tags: [{ type: 'Condition', var: 'AffectedByZealotry' }] }),
+    ]);
+    expect(
+      parseModLine("Attacks with this Weapon have Added Fire Damage equal to 12% of Player's Maximum Life", 'Item: The Grey Wind'),
+    ).toEqual([
+      expect.objectContaining({ name: 'WeaponAddedFireFromLifePct', type: 'BASE', value: 12 }),
+    ]);
+    expect(
+      parseModLine("10% more Attack Damage for each Non-Instant Spell you've Cast in the past 8 seconds, up to a maximum of 30%", 'Tree: Instruments of Virtue'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'Damage',
+        type: 'MORE',
+        value: 10,
+        tags: [{ type: 'Multiplier', var: 'NonInstantSpellCastInPast8Sec', limit: 3 }],
+      }),
+    ]);
+    expect(parseModLine('You have Onslaught while Fortified', 'Item')).toEqual([
+      expect.objectContaining({ name: 'Onslaught', type: 'FLAG', value: true, tags: [{ type: 'Condition', var: 'Fortified' }] }),
+    ]);
+    expect(parseModLine('Melee Weapon Hits Inflict 3 Withered Debuffs for 2 seconds', 'Item')).toEqual([
+      expect.objectContaining({ name: 'WitherOnHit', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Your Offerings have 50% reduced Effect on you', 'Tree: Necromancer')).toEqual([
+      expect.objectContaining({ name: 'OfferingEffectOnSelf', type: 'INC', value: -50 }),
     ]);
   });
 });
