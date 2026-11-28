@@ -2785,4 +2785,116 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     expect(dbZero.sum('BASE', 'LightningMin')).toBe(0);
     expect(dbZero.sum('BASE', 'LightningMax')).toBe(0);
   });
+
+  it('syncs conditionEnemyLowLife to enemyDb so PoE 1 Punishment DamageTaken applies cleanly', () => {
+    const punishmentDef: GemDefinition = {
+      id: 'poe1_punishment',
+      name: { en: 'Punishment', zh: '惩罚' },
+      category: 'active',
+      game: 'poe1',
+      color: 'red',
+      tags: ['curse', 'hex', 'spell', 'aoe', 'duration'],
+      modFlags: 0,
+      keywordFlags: KeywordFlag.Curse | KeywordFlag.Spell,
+      stats: [],
+      compiledMods: [
+        {
+          name: 'DamageTaken',
+          type: 'INC',
+          value: 58,
+          flags: 0,
+          keywordFlags: 0,
+          target: 'enemy',
+          tags: [{ type: 'Condition', var: 'LowLife' }],
+        },
+      ],
+    };
+    const lookup = (_g: 'poe1' | 'poe2', id: string) => (id === 'poe1_punishment' ? punishmentDef : undefined);
+
+    // 1. With conditionEnemyLowLife = true -> Punishment grants +58% INC DamageTaken on enemyDb
+    const buildLowLife = mkBuild({
+      game: 'poe1',
+      skills: [
+        {
+          id: 'sg-punish',
+          label: 'Punishment',
+          enabled: true,
+          gems: [{ instanceId: 'p1', gemId: 'poe1_punishment', level: 20, quality: 0, enabled: true }],
+        },
+      ],
+    });
+    buildLowLife.config.rawInputs = { conditionEnemyLowLife: true };
+    const resLow = evaluateAurasAndWatchersEye({
+      build: buildLowLife,
+      playerDb: new ModDB(),
+      getGemByIdFn: lookup,
+      maxMana: 1000,
+    });
+    expect(resLow.enemyDb.getEvalContext().conditions.LowLife).toBe(true);
+    expect(resLow.enemyDb.sum('INC', 'DamageTaken')).toBe(58);
+
+    // 2. Without conditionEnemyLowLife -> Punishment stays gated (0% DamageTaken)
+    const resFull = evaluateAurasAndWatchersEye({
+      build: mkBuild({
+        game: 'poe1',
+        skills: [
+          {
+            id: 'sg-punish-full',
+            label: 'Punishment',
+            enabled: true,
+            gems: [{ instanceId: 'p2', gemId: 'poe1_punishment', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+      }),
+      playerDb: new ModDB(),
+      getGemByIdFn: lookup,
+      maxMana: 1000,
+    });
+    expect(resFull.enemyDb.sum('INC', 'DamageTaken')).toBe(0);
+  });
+
+  it('applies PoE 2 Hex gem quality (+0.5% Curse Effect per 1% quality) when qualityCompiledMods is omitted', () => {
+    const despairDef: GemDefinition = {
+      id: 'poe2_despair',
+      name: { en: 'Despair', zh: '绝望' },
+      category: 'active',
+      game: 'poe2',
+      color: 'blue',
+      tags: ['curse', 'spell', 'aoe', 'chaos'],
+      modFlags: 0,
+      keywordFlags: KeywordFlag.Curse | KeywordFlag.Spell,
+      stats: [],
+      compiledMods: [
+        {
+          name: 'ChaosResist',
+          type: 'BASE',
+          value: -48,
+          flags: 0,
+          keywordFlags: 0,
+          target: 'enemy',
+        },
+      ],
+    };
+    const lookup = (_g: 'poe1' | 'poe2', id: string) => (id === 'poe2_despair' ? despairDef : undefined);
+    const buildQ23 = mkBuild({
+      game: 'poe2',
+      skills: [
+        {
+          id: 'sg-despair',
+          label: 'Despair',
+          enabled: true,
+          gems: [{ instanceId: 'd1', gemId: 'poe2_despair', level: 19, quality: 23, enabled: true }],
+        },
+      ],
+    });
+    buildQ23.config.enemyIsBoss = 'Pinnacle';
+    const res = evaluateAurasAndWatchersEye({
+      build: buildQ23,
+      playerDb: new ModDB(),
+      getGemByIdFn: lookup,
+      maxMana: 1000,
+    });
+    // Despair -48% * 0.5 (Pinnacle Boss) * (1 + trunc(23 * 0.5)/100 = 1.11) = trunc(-26.64) = -26
+    expect(res.enemyDb.sum('BASE', 'ChaosResist')).toBe(-26);
+  });
 });
