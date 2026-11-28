@@ -2115,6 +2115,41 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
       expect(parseModLine('Attacks consume an Endurance Charge to Critically Hit', 'Item:Weapon 1')).toEqual([
         expect.objectContaining({ name: 'AttacksConsumeEnduranceChargeToCrit', type: 'FLAG', value: true }),
       ]);
+      // Wave 6H: PoE 2 0_1/0_2/0_3 tree wording parity
+      expect(parseModLine('20% increased Effect of Withered', 'Tree:44373')).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: 'WitherEffect', type: 'INC', value: 20 })]),
+      );
+      expect(
+        parseModLine('50% increased Effect of Poison you inflict on targets that are not Poisoned', 'Tree:0_2'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'PoisonMagnitude',
+          type: 'INC',
+          value: 50,
+          tags: [{ type: 'Condition', var: 'EnemyPoisoned', neg: true }],
+        }),
+      ]);
+      expect(
+        parseModLine('1% increased Effect of Arcane Surge on you per 15 maximum Mana', 'Tree:0_2'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'ArcaneSurgeEffect',
+          type: 'INC',
+          value: 1,
+          tags: [{ type: 'PerStat', stat: 'Mana', div: 15 }],
+        }),
+      ]);
+      expect(parseModLine('15% increased effect of Sorcery Ward', 'Tree:0_2')).toEqual([
+        expect.objectContaining({ name: 'SorceryWardEffect', type: 'INC', value: 15 }),
+      ]);
+      expect(parseModLine('25% increased Magnitude of Ailments you inflict against Marked Enemies', 'Tree:0_3')).toEqual([
+        expect.objectContaining({
+          name: 'AilmentMagnitude',
+          type: 'INC',
+          value: 25,
+          tags: [{ type: 'Condition', var: 'EnemyMarked' }],
+        }),
+      ]);
     });
   });
 });

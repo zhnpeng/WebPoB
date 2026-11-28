@@ -1256,11 +1256,12 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     },
   },
   {
-    pattern: /^(\d+)% (increased|reduced|more|less) (Ignite|Flammability|Poison|Shock|Bleeding|Withered) Magnitude$/i,
+    pattern: /^(\d+)% (increased|reduced|more|less) (?:(Ignite|Flammability|Poison|Shock|Bleeding|Withered) Magnitude|Effect of (Withered))$/i,
     build: (m, src) => {
       const { type, value } = signedVal(m[1]!, m[2]!);
-      if (m[3]!.toLowerCase() === 'withered') {
-        // PoE 2 Withered Magnitude scales Withered ChaosDamageTaken per stack (engine.ts reads WitherEffect)
+      const target = (m[3] ?? m[4] ?? '').toLowerCase();
+      if (target === 'withered') {
+        // PoE 2 Withered Magnitude / 0_2 Effect of Withered scales Withered ChaosDamageTaken per stack
         return [
           mkMod('WitherEffect', type, value, src),
           mkMod('WitheredMagnitude', type, value, src),
@@ -3083,6 +3084,64 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
   {
     pattern: /^Attacks consume an Endurance Charge to Critically Hit$/i,
     build: (_, src) => [mkMod('AttacksConsumeEnduranceChargeToCrit', 'FLAG', true, src)],
+  },
+  // Wave 6H: PoE 2 0_1/0_2/0_3 tree wording parity (`increased Effect of ...` / `Magnitude of ...`)
+  {
+    pattern: /^(\d+)% increased Effect of Poison you inflict on targets that are not Poisoned$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('PoisonMagnitude', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: 'EnemyPoisoned', neg: true }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased Effect of Arcane Surge on you per (\d+) maximum Mana$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('ArcaneSurgeEffect', 'INC', Number(m[1]), src),
+        tags: [{ type: 'PerStat', stat: 'Mana', div: Number(m[2]) }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased Magnitude of Unholy Might Buffs you grant per (\d+) maximum Mana$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('UnholyMightEffect', 'INC', Number(m[1]), src),
+        tags: [{ type: 'PerStat', stat: 'Mana', div: Number(m[2]) }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased effect of (Sorcery Ward|Incision)$/i,
+    build: (m, src) => [mkMod(`${m[2]!.replace(/\s+/g, '')}Effect`, 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^(\d+)% increased Magnitude of Daze$/i,
+    build: (m, src) => [mkMod('DazeMagnitude', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^(\d+)% increased Magnitude of Impales inflicted with Spells$/i,
+    build: (m, src) => [mkMod('ImpaleEffect', 'INC', Number(m[1]), src, ModFlag.Spell)],
+  },
+  {
+    pattern: /^(\d+)% increased Magnitude of Ailments you inflict against Marked Enemies$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('AilmentMagnitude', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: 'EnemyMarked' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased Magnitude of Bleeding you inflict against (Enemies affected by Incision|Pinned Enemies)$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('BleedingMagnitude', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: /pinned/i.test(m[2]!) ? 'EnemyPinned' : 'EnemyIncised' }],
+      },
+    ],
   },
 
   // =========================================================================
