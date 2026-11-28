@@ -373,7 +373,7 @@ export function resolveActiveSkillPartAndStats(
         gemDef.damageEffectivenessPct ??
         100);
 
-  const attackDamageMultiplierPct = partHasOwnLevelMap
+  let attackDamageMultiplierPct = partHasOwnLevelMap
     ? (partLevelEntry?.attackDamageMultiplierPct ??
         selectedPart?.attackDamageMultiplierPct ??
         baseLevelEntry?.attackDamageMultiplierPct ??
@@ -396,7 +396,7 @@ export function resolveActiveSkillPartAndStats(
   const critChance =
     partLevelEntry?.critChance ?? selectedPart?.critChance ?? gemDef.baseCritChance ?? 0;
 
-  const compiledMods: CompiledGemMod[] = partHasOwnLevelMap
+  const compiledMods: CompiledGemMod[] = [...(partHasOwnLevelMap
     ? (partLevelEntry?.compiledMods ??
         selectedPart?.compiledMods ??
         baseLevelEntry?.compiledMods ??
@@ -405,7 +405,7 @@ export function resolveActiveSkillPartAndStats(
     : (baseLevelEntry?.compiledMods ??
         selectedPart?.compiledMods ??
         gemDef.compiledMods ??
-        []);
+        []))];
 
   const skillData: Record<string, number | boolean | string> = {
     ...(gemDef.skillData ?? {}),
@@ -447,6 +447,38 @@ export function resolveActiveSkillPartAndStats(
     } else if (/(?:average|sequence|combo)/i.test(partNameLower) || partIndex === 4) {
       sequenceDamageMultiplier = 1.25;
     }
+  } else if (game === 'poe2' && (skillKey === 'walking calamity' || skillKey === 'apocalypse')) {
+    // PoB 2 Data/Skills/act_str.lua:20748 (`WalkingCalamityPlayer`) & other.lua:971 (`ApocalypsePlayer`):
+    // Base activation skills have `base_deal_no_damage` (0 DPS) unless a damaging sub-part is explicitly selected.
+    if (!selectedPart || !/meteor|fire|cold|lightning/i.test(partNameLower)) {
+      attackDamageMultiplierPct = 0;
+      sequenceDamageMultiplier = 0;
+      for (const k of Object.keys(baseDamage) as DamageType[]) {
+        delete baseDamage[k];
+      }
+    }
+  } else if (game === 'poe2' && skillKey === 'flameblast') {
+    // PoB 2 Data/Skills/act_int.lua:8461 (`FlameblastPlayer`):
+    // Max 10 stages, +75% MORE Spell Damage per stage (+750% MORE at max stages -> 8.5x Hit & Ignite).
+    const maxStageMod = compiledMods.find(
+      (m) => m.name === 'Multiplier:FlameblastMaxStages' && typeof m.value === 'number',
+    );
+    const maxStages = typeof maxStageMod?.value === 'number' && maxStageMod.value > 0 ? maxStageMod.value : 10;
+    const perStageMod = compiledMods.find(
+      (m) =>
+        m.name === 'Damage' &&
+        m.type === 'MORE' &&
+        typeof m.value === 'number' &&
+        m.tags?.some((t) => t.type === 'Multiplier' && t.var === 'FlameblastStage'),
+    );
+    const perStagePct = typeof perStageMod?.value === 'number' ? perStageMod.value : 75;
+    compiledMods.push({
+      name: 'Damage',
+      type: 'MORE',
+      value: maxStages * perStagePct,
+      flags: ModFlag.Spell,
+      keywordFlags: 0,
+    });
   } else if (skillKey === 'earthquake of amplification') {
     if (/aftershock/i.test(partNameLower) || partIndex === 2) {
       const baseDurationSec =

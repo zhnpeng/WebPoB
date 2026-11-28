@@ -417,8 +417,10 @@ describe('evaluateRadiusAndDistanceJewels', () => {
     );
 
     // Time-Lost Very Large (1800px): Notable A (500px) & Notable B (1400px) in radius; Notable Out (2500px) out
+    // PoB 2 CalcSetup.lua:404-407: +22% Notable effect also scales `Notable Passive Skills in Radius also grant`
+    // (`trunc(10 * 1.22) = 12%`) as well as the notable's native stats (`+2 Str`, `+2 Int`).
     const tlLines = res.addedStatLines.find((s) => s.source.includes('Brood Spark'))!.lines;
-    expect(tlLines.filter((l) => l === '10% increased Critical Damage Bonus')).toHaveLength(2);
+    expect(tlLines.filter((l) => l === '12% increased Critical Damage Bonus')).toHaveLength(2);
     // +22% Notable effect: trunc(10 * 1.22) - 10 = +2 Str and +2 Int
     expect(tlLines).toContain('+2 to Strength');
     expect(tlLines).toContain('+2 to Intelligence');
@@ -617,7 +619,9 @@ describe('evaluateRadiusAndDistanceJewels', () => {
       smallsInRadius: 1, // Attribute travel node (11) excluded in PoE 2!
     });
     const directLines = directRes.addedStatLines[0]!.lines;
-    expect(directLines).toContain('20% increased Critical Damage Bonus');
+    // The Adorned +100% scales 10% -> 20% and 20% Notable Effect -> 40%; CalcSetup.lua:404-407 then scales
+    // the Notable grant by 1.4x: trunc(20 * 1.4) = 28% increased Critical Damage Bonus!
+    expect(directLines).toContain('28% increased Critical Damage Bonus');
     expect(directLines).toContain('+4% to Fire Resistance');
     // Notable Heartbreaking (25% Crit Damage Bonus, +10 Str) scaled by +40% (1.4x) -> delta +10% Crit, +4 Str
     expect(directLines).toContain('10% increased Critical Damage Bonus');
@@ -1024,5 +1028,112 @@ describe('PoE 2 The Adorned Sinister Sockets & Undying Hate Conquered Passives',
     const uhLines = res.addedStatLines.find((s) => s.source.includes('Undying Hate'))?.lines ?? [];
     // Both 954px and 1620px are inside Very Large (1800px), while 1950px is outside -> 2 x "+8 to Strength"
     expect(uhLines).toEqual(['+8 to Strength', '+8 to Strength']);
+  });
+
+  it('scales PoE 2 Time-Lost Notable grants (including overlapping jewels) and base crit decimals (Struck Through +1% -> +0.22%)', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe2',
+      version: '0_5',
+      classStartNodeIds: { ranger: 1 },
+      nodes: {
+        1: mkNode(1, 'Start', 'start', 0, 0),
+        32763: mkNode(32763, 'Socket A', 'jewel', 0, 0),
+        61834: mkNode(61834, 'Socket B', 'jewel', 500, 0),
+        39369: mkNode(39369, 'Struck Through', 'notable', 300, 0, [
+          'Attacks have +1% to Critical Hit Chance',
+        ]),
+      },
+    };
+    const broodSpark = mkItem({
+      id: 'tl-a',
+      name: 'Brood Spark',
+      baseName: 'Time-Lost Emerald',
+      explicits: [
+        '22% increased Effect of Notable Passive Skills in Radius',
+        'Notable Passive Skills in Radius also grant 12% increased Critical Damage Bonus for Attack Damage',
+        'Upgrades Radius to Very Large',
+      ],
+    });
+    const raptureShard = mkItem({
+      id: 'tl-b',
+      name: 'Rapture Shard',
+      baseName: 'Time-Lost Emerald',
+      explicits: [
+        'Notable Passive Skills in Radius also grant 12% increased Critical Damage Bonus for Attack Damage',
+        'Upgrades Radius to Very Large',
+      ],
+    });
+    const res = evaluateRadiusAndDistanceJewels(
+      [
+        { nodeId: 32763, jewel: broodSpark },
+        { nodeId: 61834, jewel: raptureShard },
+      ],
+      tree,
+      new Set([1, 32763, 61834, 39369]),
+      1,
+    );
+    const linesA = res.addedStatLines.find((s) => s.source.includes('Brood Spark'))?.lines ?? [];
+    const linesB = res.addedStatLines.find((s) => s.source.includes('Rapture Shard'))?.lines ?? [];
+    // 12 * 1.22 = 14.64 -> 14% on BOTH Brood Spark and overlapping Rapture Shard!
+    expect(linesA).toContain('14% increased Critical Damage Bonus for Attack Damage');
+    expect(linesB).toContain('14% increased Critical Damage Bonus for Attack Damage');
+    // Struck Through +1% * 1.22 -> +0.22% delta preserved!
+    expect(linesA).toContain('Attacks have +0.22% to Critical Hit Chance');
+  });
+
+  it("transforms Melee and Claw nodes in Medium radius (1440px) to Bow modifiers for PoE 1 Lioneye's Fall", () => {
+    const tree: PassiveTreeData = {
+      game: 'poe1',
+      version: '3_29',
+      classStartNodeIds: { ranger: 1 },
+      nodes: {
+        1: mkNode(1, 'Start', 'start', 0, 0),
+        61834: mkNode(61834, 'Jewel Socket', 'jewel', 0, 0),
+        54791: mkNode(54791, 'Claws of the Magpie', 'notable', 1200, 0, [
+          'Claw Attacks deal 25% increased Damage with Hits and Ailments',
+          '10% increased Attack Speed with Claws',
+        ]),
+        27788: mkNode(27788, 'Blood Drinker', 'notable', 500, 0, [
+          '10% increased maximum Life',
+        ]),
+        99999: mkNode(99999, 'Far Claw Node', 'notable', 1700, 0, [
+          'Claw Attacks deal 30% increased Damage with Hits and Ailments',
+        ]),
+      },
+    };
+    const lioneye = mkItem({
+      id: 'lf-1',
+      name: "Lioneye's Fall",
+      baseName: 'Viridian Jewel',
+      rarity: 'UNIQUE',
+      explicits: ['Melee and Melee Weapon Type modifiers in Radius are Transformed to Bow Modifiers'],
+      rawText: 'Rarity: UNIQUE\nLioneye\'s Fall\nViridian Jewel\nRadius: Medium',
+    });
+
+    const res = evaluateRadiusAndDistanceJewels(
+      [{ nodeId: 61834, jewel: lioneye }],
+      tree,
+      new Set([1, 61834, 54791, 27788, 99999]),
+      1,
+    );
+    expect(res.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'lioneyes-fall', radiusLabel: 'Medium', radiusPx: 1440 }),
+      ]),
+    );
+    // Claws of the Magpie (1200px <= 1440px): Claw Damage +25% & Claw Speed +10% negated and converted to Bow!
+    const bowDmg = res.addedMods.find((m) => m.name === 'Damage' && m.value === 25);
+    const bowSpd = res.addedMods.find((m) => m.name === 'Speed' && m.value === 10);
+    expect(bowDmg).toBeDefined();
+    expect(bowDmg!.flags & 4096).not.toBe(0); // ModFlag.Bow = 1 << 12 = 4096
+    expect(bowDmg!.flags & (1 << 19)).toBe(0); // ModFlag.Claw stripped
+    expect(bowSpd).toBeDefined();
+    expect(bowSpd!.flags & 4096).not.toBe(0);
+    // Negation mods present so original Claw mods cancel out
+    expect(res.addedMods.some((m) => m.name === 'Damage' && m.value === -25)).toBe(true);
+    expect(res.addedMods.some((m) => m.name === 'Speed' && m.value === -10)).toBe(true);
+    // Out-of-radius (1700px) and non-melee Life nodes are NOT transformed
+    expect(res.addedMods.some((m) => m.name === 'Life')).toBe(false);
+    expect(res.addedMods.some((m) => Math.abs(Number(m.value)) === 30)).toBe(false);
   });
 });

@@ -1017,4 +1017,63 @@ describe('multiPartAndMetaRuntime', () => {
     expect(playerDb.getEvalContext().conditions.CanWither).toBe(true);
     expect(enemyDb.sum('INC', 'ChaosDamageTaken')).toBe(0);
   });
+
+  it('resolves PoE 2 Walking Calamity & Apocalypse base activation to 0 DPS and Flameblast to 10-stage +750% MORE Spell Damage', () => {
+    const wc = makeGemDef({
+      id: 'poe2_walkingcalamity',
+      en: 'Walking Calamity',
+      game: 'poe2',
+      tags: ['Attack', 'Area', 'Fire', 'Buff'],
+    });
+    const wcRes = resolveActiveSkillPartAndStats(wc, makeGemInst({ gemId: wc.id, level: 20 }), makeGroup(), 20, {
+      game: 'poe2',
+    });
+    expect(wcRes.attackDamageMultiplierPct).toBe(0);
+    expect(wcRes.sequenceDamageMultiplier).toBe(0);
+    expect(wcRes.baseDamage).toEqual({});
+
+    const apoc = makeGemDef({
+      id: 'poe2_apocalypse',
+      en: 'Apocalypse',
+      game: 'poe2',
+      tags: ['Spell', 'Area', 'Buff'],
+      baseDamage: { Fire: [100, 200] },
+    });
+    const apocRes = resolveActiveSkillPartAndStats(
+      apoc,
+      makeGemInst({ gemId: apoc.id, level: 20 }),
+      makeGroup(),
+      20,
+      { game: 'poe2' },
+    );
+    expect(apocRes.sequenceDamageMultiplier).toBe(0);
+    expect(apocRes.baseDamage).toEqual({});
+
+    const fb = makeGemDef({
+      id: 'poe2_flameblast',
+      en: 'Flameblast',
+      game: 'poe2',
+      tags: ['Spell', 'Area', 'Fire', 'Channelling'],
+      baseDamage: { Fire: [244, 367] },
+      compiledMods: [
+        { name: 'Multiplier:FlameblastMaxStages', type: 'BASE', value: 10, flags: 0, keywordFlags: 0 },
+        {
+          name: 'Damage',
+          type: 'MORE',
+          value: 75,
+          flags: ModFlag.Spell,
+          keywordFlags: 0,
+          tags: [{ type: 'Multiplier', var: 'FlameblastStage' }],
+        },
+      ],
+    });
+    const fbRes = resolveActiveSkillPartAndStats(fb, makeGemInst({ gemId: fb.id, level: 20 }), makeGroup(), 20, {
+      game: 'poe2',
+    });
+    expect(fbRes.compiledMods).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'Damage', type: 'MORE', value: 750, flags: ModFlag.Spell }),
+      ]),
+    );
+  });
 });

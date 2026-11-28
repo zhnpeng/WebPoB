@@ -1,10 +1,11 @@
-import type {
-  Build,
-  GameId,
-  Item,
-  Mod,
-  PassiveNode,
-  PassiveTreeData,
+import {
+  ModFlag,
+  type Build,
+  type GameId,
+  type Item,
+  type Mod,
+  type PassiveNode,
+  type PassiveTreeData,
 } from '@webpob/core';
 import { normalizeStatLineToEn } from '@webpob/i18n';
 import { POE1_EXPANSION_SOCKETS, isClusterJewelItem } from './clusterAndReservation.js';
@@ -43,7 +44,8 @@ export interface RadiusAndDistanceJewelDetail {
     | 'attr-conversion'
     | 'resist-conversion'
     | 'transcendent'
-    | 'from-nothing';
+    | 'from-nothing'
+    | 'lioneyes-fall';
   radiusLabel?: JewelRadiusLabel;
   radiusPx?: number;
   nodesInRadius?: number;
@@ -550,20 +552,23 @@ export function scaleStatLineNumeric(line: string, mult: number): string {
  */
 function scaleStatLineDelta(line: string, mult: number): string | null {
   if (mult === 1 || !Number.isFinite(mult)) return null;
+  // PoB 2 ScaleAddList preserves 2-decimal precision for small flat base crit bonuses
+  // (e.g. Struck Through "Attacks have +1% to Critical Hit Chance" * 1.22 -> +0.22% delta).
+  const isBaseCritLine = /\+\d+(?:\.\d+)?%\s+to\s+Critical\s+(?:Hit|Strike)\s+Chance/i.test(line);
   let anyNonZero = false;
   const out = line.replace(
     /([+-]?)(\d+(?:\.\d+)?)/g,
     (_full, sign: string, numStr: string) => {
       const val = Number(numStr);
       const dotIdx = numStr.indexOf('.');
-      if (dotIdx === -1) {
+      if (dotIdx === -1 && !isBaseCritLine) {
         const delta = Math.trunc(val * mult) - val;
         if (delta !== 0) anyNonZero = true;
         return `${sign}${delta}`;
       }
-      const decimals = numStr.length - dotIdx - 1;
+      const decimals = dotIdx === -1 ? 2 : numStr.length - dotIdx - 1;
       const factor = Math.pow(10, decimals);
-      const scaled = Math.trunc(val * mult * factor) / factor;
+      const scaled = Math.trunc(val * mult * factor + 1e-9) / factor;
       const delta = Math.round((scaled - val) * factor) / factor;
       if (delta !== 0) anyNonZero = true;
       return `${sign}${delta}`;
@@ -1136,12 +1141,11 @@ export function evaluateRadiusAndDistanceJewels(
   const allJewelItems = jewels.map((entry) => entry.jewel);
   const timelessSmallAttrs = buildTimelessSmallAttrMap(jewels, tree, nodeOverrides);
 
-  for (const { nodeId, jewel } of jewels) {
+  // Resolve effective (The Adorned / Prefix-Suffix / Socket-Effect scaled) lines once per jewel
+  // so both the Notable/Small effect pre-pass and main evaluation see identical scaled values.
+  const preparedJewels = jewels.map(({ nodeId, jewel }) => {
     const socketNode = tree.nodes[nodeId];
     const lowerName = jewel.name.toLowerCase();
-
-    // Ensure Corrupted Magic/Rare Time-Lost & radius jewels receive The Adorned / Prefix-Suffix scaling
-    // when caller hasn't already pre-scaled via scaleJewelModLines (WeakSet guards against double-scaling).
     let effectiveImplicits = jewel.implicits;
     let effectiveExplicits = jewel.explicits;
     if (
@@ -1162,8 +1166,56 @@ export function evaluateRadiusAndDistanceJewels(
       effectiveImplicits = scaled.implicits;
       effectiveExplicits = scaled.explicits;
     }
-
     const allLines = joinWrappedJewelLines([...effectiveImplicits, ...effectiveExplicits]);
+    return { nodeId, jewel, socketNode, lowerName, allLines };
+  });
+
+  // Pre-pass (PoB 2 CalcSetup.lua:397-407): collect per-node Notable/Small passive effect bonuses
+  // across all radius jewels so `Notable/Small Passive Skills in Radius also grant ...` lines
+  // (including from the same or overlapping Time-Lost / Against the Darkness jewels) receive the
+  // exact same `ScaleAddList` multiplier as the passive node's native stats.
+  const notableEffectByNodeId = new Map<number, number>();
+  const smallEffectByNodeId = new Map<number, number>();
+  for (const { jewel, socketNode, allLines } of preparedJewels) {
+    if (!socketNode) continue;
+    let preNotEff = 0;
+    let preSmEff = 0;
+    for (const line of allLines) {
+      let m =
+        line.match(/^(\d+)% increased Effect of Notable Passive Skills in Radius$/i) ??
+        line.match(/^Notable Passive Skills in Radius have (\d+)% increased Effect$/i);
+      if (m) {
+        preNotEff += Number(m[1]);
+        continue;
+      }
+      m =
+        line.match(/^(\d+)% increased Effect of Small Passive Skills in Radius$/i) ??
+        line.match(/^Small Passive Skills in Radius have (\d+)% increased Effect$/i);
+      if (m) {
+        preSmEff += Number(m[1]);
+      }
+    }
+    if (preNotEff <= 0 && preSmEff <= 0) continue;
+    const rLabel = resolveJewelRadiusLabel(jewel, tree.game);
+    const rPx = getJewelRadiusPx(rLabel, tree.game, tree.version);
+    const rNodes = getAllocatedNodesInRadius(socketNode, tree, activeTreeNodes, rPx);
+    if (preNotEff > 0) {
+      for (const n of rNodes) {
+        if (n.kind === 'notable') {
+          notableEffectByNodeId.set(n.id, (notableEffectByNodeId.get(n.id) ?? 0) + preNotEff);
+        }
+      }
+    }
+    if (preSmEff > 0) {
+      for (const n of rNodes) {
+        if (n.kind === 'small' && (tree.game !== 'poe2' || !isPoe2AttributeTravelSmall(n))) {
+          smallEffectByNodeId.set(n.id, (smallEffectByNodeId.get(n.id) ?? 0) + preSmEff);
+        }
+      }
+    }
+  }
+
+  for (const { nodeId, jewel, socketNode, lowerName, allLines } of preparedJewels) {
 
     // --- A. Split Personality (BFS shortest-path distance scaling) ---
     let splitPctPerNode = 0;
@@ -1237,6 +1289,7 @@ export function evaluateRadiusAndDistanceJewels(
     let grantsUnallocatedSmalls = false;
     let eternalHubrisConquered = false;
     let fromNothingKeystone: string | null = null;
+    let lioneyesFall = false;
     const attrConversions: Array<{ from: 'Str' | 'Dex' | 'Int'; to: 'Str' | 'Dex' | 'Int' }> = [];
     const resistConversions: RadiusResistConversionSpec[] = [];
     const transcendentLines: Array<{
@@ -1318,6 +1371,10 @@ export function evaluateRadiusAndDistanceJewels(
         fromNothingKeystone = m[1]!.trim();
         continue;
       }
+      if (/^Melee and Melee Weapon Type modifiers in Radius are Transformed to Bow Modifiers$/i.test(line)) {
+        lioneyesFall = true;
+        continue;
+      }
       m = line.match(
         /^(Strength|Dexterity|Intelligence) from Passives in Radius is Transformed to (Strength|Dexterity|Intelligence)$/i,
       );
@@ -1374,6 +1431,7 @@ export function evaluateRadiusAndDistanceJewels(
       grantsUnallocatedSmalls ||
       eternalHubrisConquered ||
       fromNothingKeystone !== null ||
+      lioneyesFall ||
       attrConversions.length > 0 ||
       resistConversions.length > 0 ||
       transcendentLines.length > 0;
@@ -1414,13 +1472,15 @@ export function evaluateRadiusAndDistanceJewels(
       const lines: string[] = [];
 
       for (const grantLine of notableAlsoGrants) {
-        for (let i = 0; i < notables.length; i++) {
-          lines.push(grantLine);
+        for (const n of notables) {
+          const effPct = notableEffectByNodeId.get(n.id) ?? 0;
+          lines.push(effPct > 0 ? scaleStatLineNumeric(grantLine, 1 + effPct / 100) : grantLine);
         }
       }
       for (const grantLine of smallAlsoGrants) {
-        for (let i = 0; i < smalls.length; i++) {
-          lines.push(grantLine);
+        for (const n of smalls) {
+          const effPct = smallEffectByNodeId.get(n.id) ?? 0;
+          lines.push(effPct > 0 ? scaleStatLineNumeric(grantLine, 1 + effPct / 100) : grantLine);
         }
       }
       for (const grantLine of attrAlsoGrants) {
@@ -1460,6 +1520,76 @@ export function evaluateRadiusAndDistanceJewels(
         nodeId,
         jewelName: jewel.name,
         kind: 'time-lost',
+        radiusLabel,
+        radiusPx,
+        nodesInRadius: inRadius.length,
+        notablesInRadius: notables.length,
+        smallsInRadius: smalls.length,
+      });
+    }
+
+    // --- B4. PoE 1 Lioneye's Fall (ModParser.lua:7124-7151: Melee & Melee Weapon Type -> Bow Modifiers) ---
+    if (lioneyesFall) {
+      const MELEE_WEAPON_FLAGS =
+        ModFlag.Axe |
+        ModFlag.Claw |
+        ModFlag.Dagger |
+        ModFlag.Mace |
+        ModFlag.Staff |
+        ModFlag.Sword |
+        ModFlag.Melee;
+      const USING_MELEE_CONDS = new Set([
+        'UsingAxe',
+        'UsingClaw',
+        'UsingDagger',
+        'UsingMace',
+        'UsingStaff',
+        'UsingSword',
+        'UsingMeleeWeapon',
+      ]);
+      for (const node of nonJewelPassives) {
+        if (node.stats.length === 0) continue;
+        const parsedNodeMods = parseModLines(node.stats, `Tree:${node.id}`);
+        for (const mod of parsedNodeMods) {
+          if (typeof mod.value !== 'number' || mod.value === 0) continue;
+          if ((mod.flags & MELEE_WEAPON_FLAGS) !== 0) {
+            addedMods.push({
+              ...mod,
+              value: -mod.value,
+              source: `Lioneye's Fall (${nodeId}) negate ${node.name.en}`,
+            });
+            addedMods.push({
+              ...mod,
+              flags: (mod.flags & ~MELEE_WEAPON_FLAGS) | ModFlag.Bow,
+              source: `Lioneye's Fall (${nodeId}) -> Bow (${node.name.en})`,
+            });
+          } else if (mod.tags && mod.tags.length > 0) {
+            const hasMeleeCond = mod.tags.some(
+              (t) => t.type === 'Condition' && typeof t.var === 'string' && USING_MELEE_CONDS.has(t.var),
+            );
+            if (hasMeleeCond) {
+              addedMods.push({
+                ...mod,
+                value: -mod.value,
+                source: `Lioneye's Fall (${nodeId}) negate ${node.name.en}`,
+              });
+              addedMods.push({
+                ...mod,
+                tags: mod.tags.map((t) =>
+                  t.type === 'Condition' && typeof t.var === 'string' && USING_MELEE_CONDS.has(t.var)
+                    ? { ...t, var: 'UsingBow' }
+                    : t,
+                ),
+                source: `Lioneye's Fall (${nodeId}) -> Bow (${node.name.en})`,
+              });
+            }
+          }
+        }
+      }
+      details.push({
+        nodeId,
+        jewelName: jewel.name,
+        kind: 'lioneyes-fall',
         radiusLabel,
         radiusPx,
         nodesInRadius: inRadius.length,
