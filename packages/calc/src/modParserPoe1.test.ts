@@ -1404,4 +1404,39 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       expect.objectContaining({ name: 'PhysicalDamageGainAsChaos', type: 'BASE', value: 47 }),
     ]);
   });
+
+  it('Wave 5C: Saboteur Demolitions Specialist (MineAuraEffect), Calculated Risk (DamageIsUnlucky), Pyromaniac & Eternal Struggle', () => {
+    expect(parseModLine('150% increased Effect of Auras from Mines', 'Tree: Demolitions Specialist')).toEqual([
+      expect.objectContaining({ name: 'MineAuraEffect', type: 'INC', value: 150 }),
+    ]);
+    expect(parseModLine('Damage with Hits is Unlucky', 'Tree: Calculated Risk')).toEqual([
+      expect.objectContaining({ name: 'DamageIsUnlucky', type: 'FLAG', value: true }),
+    ]);
+    expect(
+      parseModLine(
+        'Regenerate 2% of Life per second for each Mine Detonated Recently, up to 10% per second',
+        'Tree: Pyromaniac',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'LifeRegenPercent',
+        type: 'BASE',
+        value: 2,
+        tags: [{ type: 'Multiplier', var: 'MinesDetonatedRecently', limit: 5 }],
+      }),
+    ]);
+    expect(
+      parseModLine(
+        'Kill Enemies that have 15% or lower Life on Hit if The Searing Exarch is dominant',
+        'Item: The Eternal Struggle',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'CullPercent',
+        type: 'MAX',
+        value: 15,
+        tags: [{ type: 'Condition', var: 'SearingExarchDominant' }],
+      }),
+    ]);
+  });
 });

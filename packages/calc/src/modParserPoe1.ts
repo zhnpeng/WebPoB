@@ -2104,6 +2104,39 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
       },
     ],
   },
+  // Wave 5C: Saboteur Demolitions Specialist (MineAuraEffect — avoids polluting global AuraEffect!), Calculated Risk (DamageIsUnlucky), Pyromaniac, Eternal Struggle
+  {
+    pattern: /^(\d+)% increased Effect of Auras from Mines$/i,
+    build: (m, src) => [mkMod('MineAuraEffect', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Damage with Hits is Unlucky$/i,
+    build: (_, src) => [mkMod('DamageIsUnlucky', 'FLAG', true, src, ModFlag.Hit)],
+  },
+  {
+    pattern: /^Regenerate (\d+(?:\.\d+)?)% of Life per [Ss]econd for each (Mine Detonated|Trap Triggered) Recently, up to (\d+(?:\.\d+)?)% per second$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('LifeRegenPercent', 'BASE', Number(m[1]), src),
+        tags: [
+          {
+            type: 'Multiplier' as const,
+            var: /mine/i.test(m[2]!) ? 'MinesDetonatedRecently' : 'TrapsTriggeredRecently',
+            limit: Math.round(Number(m[3]) / Math.max(0.01, Number(m[1]))),
+          },
+        ],
+      },
+    ],
+  },
+  {
+    pattern: /^Kill Enemies that have (\d+)% or lower Life on Hit if The Searing Exarch is dominant$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CullPercent', 'MAX', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'SearingExarchDominant' }],
+      },
+    ],
+  },
 ];
 
 /**
