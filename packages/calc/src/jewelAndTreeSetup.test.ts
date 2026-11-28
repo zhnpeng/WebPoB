@@ -1433,4 +1433,71 @@ describe('PoE 2 The Adorned Sinister Sockets & Undying Hate Conquered Passives',
     // Node 101 grants its Tattoo stat instead of +10 to Dexterity; node 102 keeps +10 to Dexterity
     expect(uiEntry?.lines).toEqual(['5% increased Projectile Speed', '+10 to Dexterity']);
   });
+
+  it('resolves PoE 1 off-tree Blight-only anoints (Force of Darkness, Tranquility) and hidden Forbidden Flame/Flesh notables (Indomitable Resolve)', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe1',
+      version: '3_30',
+      nodes: {
+        1: mkNode(1, 'Start', 'start', 0, 0),
+        10: mkNode(10, 'Jewel Socket 1', 'jewel', 200, 0),
+        11: mkNode(11, 'Jewel Socket 2', 'jewel', 400, 0),
+      },
+      groups: {},
+      classStartNodeIds: {},
+      bounds: { minX: -1000, maxX: 1000, minY: -1000, maxY: 1000 },
+    };
+    const amulet = mkItem({
+      id: 'amulet-1',
+      name: 'Chaos Amulet',
+      baseName: 'Onyx Amulet',
+      slotType: 'Amulet',
+      implicits: ['Allocates Force of Darkness', 'Allocates Tranquility'],
+    });
+    const ffFlame = mkItem({
+      id: 'ff-flame',
+      name: 'Forbidden Flame',
+      baseName: 'Crimson Jewel',
+      rarity: 'UNIQUE',
+      explicits: ['Allocates Indomitable Resolve if you have the matching modifier on Forbidden Flesh'],
+    });
+    const ffFlesh = mkItem({
+      id: 'ff-flesh',
+      name: 'Forbidden Flesh',
+      baseName: 'Cobalt Jewel',
+      rarity: 'UNIQUE',
+      explicits: ['Allocates Indomitable Resolve if you have the matching modifier on Forbidden Flame'],
+    });
+    const build = mkBuild({
+      game: 'poe1',
+      name: 'OffTreeNotablesTest',
+      classId: 'marauder',
+      ascendancyId: 'juggernaut',
+      level: 95,
+      activeWeaponSet: 1,
+      tree: {
+        title: 'Default',
+        treeVersion: '3_30',
+        allocatedNodeIds: [1, 10, 11],
+        weaponSet1NodeIds: [],
+        weaponSet2NodeIds: [],
+        masteryEffects: {},
+        socketedJewels: { 10: 'ff-flame', 11: 'ff-flesh' },
+      },
+      items: { 'amulet-1': amulet, 'ff-flame': ffFlame, 'ff-flesh': ffFlesh },
+      equipped: { Amulet: 'amulet-1' },
+    });
+
+    const granted = collectAllocatedAnointNodes(build, tree, new Set([1, 10, 11]));
+    const byName = new Map(granted.map((n) => [n.name.en, n.stats]));
+    expect(byName.get('Force of Darkness')).toEqual(['Damage Penetrates 15% Chaos Resistance']);
+    expect(byName.get('Tranquility')).toEqual([
+      '5% increased maximum Energy Shield',
+      'Transfiguration of Soul',
+    ]);
+    expect(byName.get('Indomitable Resolve')).toEqual([
+      'Deal 10% less Damage',
+      'Take 25% less Damage',
+    ]);
+  });
 });

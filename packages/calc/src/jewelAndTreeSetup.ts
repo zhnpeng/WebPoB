@@ -308,21 +308,275 @@ export function collectAllocatedAnointNodes(
     }
   }
 
+/**
+ * Official PoE 1 3.30 off-tree (`orbit = 0`) Blight-exclusive anoint notables and
+ * Forbidden Flame / Forbidden Flesh hidden ascendancy exclusives omitted from `poe1-tree-*.json`.
+ * Source: upstream PathOfBuilding `src/TreeData/3_30/tree.lua`.
+ */
+const POE1_OFF_TREE_NOTABLES: Readonly<
+  Record<string, { id: number; name: string; stats: readonly string[]; isHiddenAscendancy?: boolean }>
+> = {
+  // Hidden Forbidden Flame / Forbidden Flesh exclusives
+  'indomitable resolve': {
+    id: 52435,
+    name: 'Indomitable Resolve',
+    stats: ['Deal 10% less Damage', 'Take 25% less Damage'],
+    isHiddenAscendancy: true,
+  },
+  'fatal flourish': {
+    id: 42469,
+    name: 'Fatal Flourish',
+    stats: [
+      'Final Repeat of Attack Skills deals 60% more Damage',
+      'Non-Travel Attack Skills Repeat an additional Time',
+    ],
+    isHiddenAscendancy: true,
+  },
+  'unleashed potential': {
+    id: 19355,
+    name: 'Unleashed Potential',
+    stats: [
+      '400% increased Endurance, Frenzy and Power Charge Duration',
+      '25% chance to gain a Power, Frenzy or Endurance Charge on Kill',
+      '+1 to Maximum Endurance Charges',
+      '+1 to Maximum Frenzy Charges',
+      '+1 to Maximum Power Charges',
+    ],
+    isHiddenAscendancy: true,
+  },
+  'fury of nature': {
+    id: 18054,
+    name: 'Fury of Nature',
+    stats: [
+      'Non-Damaging Elemental Ailments you inflict spread to nearby enemies within 2 metres',
+      'Non-Damaging Elemental Ailments you inflict have 100% more Effect',
+    ],
+    isHiddenAscendancy: true,
+  },
+  'nine lives': {
+    id: 27602,
+    name: 'Nine Lives',
+    stats: [
+      '25% of Damage taken Recouped as Life, Mana and Energy Shield',
+      'Recoup Effects instead occur over 3 seconds',
+    ],
+    isHiddenAscendancy: true,
+  },
+  'harness the void': {
+    id: 57331,
+    name: 'Harness the Void',
+    stats: [
+      '27% chance to gain 25% of Non-Chaos Damage with Hits as Extra Chaos Damage',
+      '13% chance to gain 50% of Non-Chaos Damage with Hits as Extra Chaos Damage',
+      '7% chance to gain 100% of Non-Chaos Damage with Hits as Extra Chaos Damage',
+    ],
+    isHiddenAscendancy: true,
+  },
+  'searing purity': {
+    id: 57568,
+    name: 'Searing Purity',
+    stats: [
+      '45% of Chaos Damage taken as Fire Damage',
+      '45% of Chaos Damage taken as Lightning Damage',
+    ],
+    isHiddenAscendancy: true,
+  },
+  // Blight-only anoint notables
+  'force of darkness': {
+    id: 5574,
+    name: 'Force of Darkness',
+    stats: ['Damage Penetrates 15% Chaos Resistance'],
+  },
+  tranquility: {
+    id: 16246,
+    name: 'Tranquility',
+    stats: ['5% increased maximum Energy Shield', 'Transfiguration of Soul'],
+  },
+  crusader: {
+    id: 5624,
+    name: 'Crusader',
+    stats: ['8% increased maximum Mana', 'Transfiguration of Mind'],
+  },
+  tenacity: {
+    id: 52282,
+    name: 'Tenacity',
+    stats: ['5% increased maximum Life', 'Transfiguration of Body'],
+  },
+  'cleansed thoughts': {
+    id: 53759,
+    name: 'Cleansed Thoughts',
+    stats: ['Chaos Resistance is doubled'],
+  },
+  'always angry': {
+    id: 13739,
+    name: 'Always Angry',
+    stats: ['+8 to Minimum Rage'],
+  },
+  'way of the warrior': {
+    id: 38706,
+    name: 'Way of the Warrior',
+    stats: [
+      '16% increased Melee Damage',
+      '16% increased Armour',
+      '+16 to maximum Life',
+      '+30 to Strength',
+    ],
+  },
+  'deadly inclinations': {
+    id: 41307,
+    name: 'Deadly Inclinations',
+    stats: [
+      '18% increased Evasion Rating',
+      '+12 to maximum Life',
+      '16% increased Projectile Damage',
+      '+30 to Dexterity',
+    ],
+  },
+  'mystic talents': {
+    id: 62596,
+    name: 'Mystic Talents',
+    stats: [
+      '16% increased Spell Damage',
+      '+14 to maximum Energy Shield',
+      '25% increased Mana Regeneration Rate',
+      '+30 to Intelligence',
+    ],
+  },
+  'hardened scars': {
+    id: 56207,
+    name: 'Hardened Scars',
+    stats: [
+      '15% increased Life Recovery from Flasks',
+      '25% less Damage over Time taken during Effect of any Life Flask',
+    ],
+  },
+  "sione's ambition": {
+    id: 32853,
+    name: "Sione's Ambition",
+    stats: ['Strike Skills which target additional Enemies can do so from 40% further away'],
+  },
+  'beacon of hope': {
+    id: 4354,
+    name: 'Beacon of Hope',
+    stats: ['80% increased Area of Effect of Aura Skills'],
+  },
+  'aspect of stone': {
+    id: 64217,
+    name: 'Aspect of Stone',
+    stats: ['20% chance to Avoid Physical Damage from Hits'],
+  },
+  persistence: {
+    id: 40849,
+    name: 'Persistence',
+    stats: ['-10 Physical Damage taken from Hits', '-1 Physical Damage taken from Hits per Level'],
+  },
+  'deliberate brutality': {
+    id: 56146,
+    name: 'Deliberate Brutality',
+    stats: ['Impales you inflict gain 50% increased Effect once 1 second of Duration has expired'],
+  },
+  'lasting tempest': {
+    id: 56274,
+    name: 'Lasting Tempest',
+    stats: ['50% increased Duration of Elemental Ailments on Enemies'],
+  },
+  'vengeant cascade': {
+    id: 57006,
+    name: 'Vengeant Cascade',
+    stats: ['Returning Projectiles have 150% increased Speed'],
+  },
+  'knowledge barrier': {
+    id: 1365,
+    name: 'Knowledge Barrier',
+    stats: ['6% increased Energy Shield Recharge Rate for each different type of Mastery you have Allocated'],
+  },
+  'wood, stone, and spell': {
+    id: 14079,
+    name: 'Wood, Stone, and Spell',
+    stats: ['10% increased effect of Arcane Surge on you per Summoned Totem'],
+  },
+  'hollow effigy': {
+    id: 33722,
+    name: 'Hollow Effigy',
+    stats: ['Your Offering Skills do not require a Corpse'],
+  },
+  'legacy of the wilds': {
+    id: 3195,
+    name: 'Legacy of the Wilds',
+    stats: ['Tinctures have 40% increased effect while at or above 10 stacks of Mana Burn'],
+  },
+  'no forgiveness': {
+    id: 20605,
+    name: 'No Forgiveness',
+    stats: ['20% chance for used Retaliation Skills to remain Usable and not consume a Cooldown Use'],
+  },
+  incorporeal: {
+    id: 23549,
+    name: 'Incorporeal',
+    stats: ['Elusive on you reduces in effect 50% slower', 'Elusive is removed from you at 20% effect'],
+  },
+  'selective precision': {
+    id: 24358,
+    name: 'Selective Precision',
+    stats: ['First and Final shots of Barrage sequences fire Projectiles that Return to you'],
+  },
+  'worship the blightheart': {
+    id: 27781,
+    name: 'Worship the Blightheart',
+    stats: ['Create Fungal Ground instead of Consecrated Ground'],
+  },
+  'bastion of faith': {
+    id: 37512,
+    name: 'Bastion of Faith',
+    stats: ['Consecrated Ground you create also grants 50% reduced duration of Damaging Ailments on you'],
+  },
+  'jagged wounds': {
+    id: 41169,
+    name: 'Jagged Wounds',
+    stats: ["20% increased Maximum total Life Recovery per second from Leech if you've dealt a Critical Strike recently"],
+  },
+  'mixed munitions': {
+    id: 51360,
+    name: 'Mixed Munitions',
+    stats: ['5% increased Cooldown Recovery Rate for throwing Traps per Mine Detonated Recently'],
+  },
+  'adaptive steel': {
+    id: 14587,
+    name: 'Adaptive Steel',
+    stats: ["5% chance to Defend with 200% of Armour for each time you've been Hit by an Enemy Recently, up to 30%"],
+  },
+  'vinespike cordial': {
+    id: 203,
+    name: 'Vinespike Cordial',
+    stats: ['Inflict a Grasping Vine on Hit against Enemies with fewer than 8 Grasping Vines during Effect of any Life Flask'],
+  },
+};
+
   const lookupNode = (name: string, preferAscendancy: boolean): PassiveNode | undefined => {
     const key = name.trim().toLowerCase();
     if (!key) return undefined;
-    if (preferAscendancy) {
-      return (
-        ascendancyNotableByName.get(key) ??
-        notableByName.get(key) ??
-        fallbackByName.get(key)
-      );
+    const fromTree = preferAscendancy
+      ? (ascendancyNotableByName.get(key) ?? notableByName.get(key) ?? fallbackByName.get(key))
+      : (notableByName.get(key) ?? ascendancyNotableByName.get(key) ?? fallbackByName.get(key));
+    if (fromTree) return fromTree;
+    if (build.game === 'poe1') {
+      const offTree = POE1_OFF_TREE_NOTABLES[key];
+      if (offTree) {
+        return {
+          id: offTree.id,
+          name: { en: offTree.name, zh: offTree.name },
+          kind: 'notable',
+          x: 0,
+          y: 0,
+          group: 0,
+          orbit: 0,
+          stats: [...offTree.stats],
+          adjacent: [],
+          ...(offTree.isHiddenAscendancy ? { ascendancyId: 'forbidden' } : {}),
+        };
+      }
     }
-    return (
-      notableByName.get(key) ??
-      ascendancyNotableByName.get(key) ??
-      fallbackByName.get(key)
-    );
+    return undefined;
   };
 
   const grantedNodeIds = new Set<number>();
