@@ -245,9 +245,12 @@ function matchPrePeelStructural(line: string, source: string): Mod[] | null {
   if (/^No Physical Damage$/i.test(line)) {
     return [makeMod('DealNoPhysical', 'FLAG', true, source, 0, 0, [])];
   }
-  if (/^Deal no (Elemental|Chaos|Non-Fire|Physical) Damage$/i.test(line)) {
-    const m = line.match(/^Deal no (Elemental|Chaos|Non-Fire|Physical) Damage$/i)!;
-    const key = m[1]!.toLowerCase() === 'non-fire' ? 'NonFire' : capFirst(m[1]!);
+  if (/^Deal no (Elemental|Chaos|Physical|Non-Fire|Non-Lightning|Non-Cold|Non-Chaos|Non-Physical) Damage$/i.test(line)) {
+    const m = line.match(
+      /^Deal no (Elemental|Chaos|Physical|Non-Fire|Non-Lightning|Non-Cold|Non-Chaos|Non-Physical) Damage$/i,
+    )!;
+    const lower = m[1]!.toLowerCase();
+    const key = lower.startsWith('non-') ? `Non${capFirst(lower.slice(4))}` : capFirst(lower);
     return [makeMod(`DealNo${key}`, 'FLAG', true, source, 0, 0, [])];
   }
   if (/^Cannot inflict Elemental Ailments$/i.test(line)) {

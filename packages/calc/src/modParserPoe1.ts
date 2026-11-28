@@ -2137,6 +2137,118 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
       },
     ],
   },
+  // Wave 5D: Mine/Warcry/Impale/Minion/Spider high-frequency PoE 1 rules
+  {
+    pattern: /^(\d+)% increased Critical Strike Chance for each Mine Detonated(?: Recently, up to (\d+)%)?$/i,
+    build: (m, src) => {
+      const v = Number(m[1]);
+      const lim = m[2] ? Math.round(Number(m[2]) / Math.max(1, v)) : 10;
+      return [
+        {
+          ...mkMod('CritChance', 'INC', v, src),
+          tags: [{ type: 'Multiplier' as const, var: 'MinesDetonatedRecently', limit: lim }],
+        },
+      ];
+    },
+  },
+  {
+    pattern: /^\+(\d+)% to Critical Strike Multiplier for each Mine Detonated(?: Recently, up to (\d+)%)?$/i,
+    build: (m, src) => {
+      const v = Number(m[1]);
+      const lim = m[2] ? Math.round(Number(m[2]) / Math.max(1, v)) : 10;
+      return [
+        {
+          ...mkMod('CritMultiplier', 'BASE', v, src),
+          tags: [{ type: 'Multiplier' as const, var: 'MinesDetonatedRecently', limit: lim }],
+        },
+      ];
+    },
+  },
+  {
+    pattern: /^Warcries Exert (\d+) additional Attacks?$/i,
+    build: (m, src) => [mkMod('WarcryExertCount', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Warcries Exert twice as many Attacks$/i,
+    build: (_, src) => [mkMod('WarcryExertCount', 'MORE', 100, src)],
+  },
+  {
+    pattern: /^Enemies Taunted by your Warcries take (\d+)% increased Damage$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('EnemyDamageTaken', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'EnemyTaunted' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Skills used by Mines deal (\d+)% increased Area Damage if you Detonated a Mine Recently$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'INC', Number(m[1]), src, ModFlag.Area, KeywordFlag.Mine),
+        tags: [{ type: 'Condition' as const, var: 'DetonatedMineRecently' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Skills used by Mines have (\d+)% increased Area of Effect if you Detonated a Mine Recently$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('AreaOfEffect', 'INC', Number(m[1]), src, 0, KeywordFlag.Mine),
+        tags: [{ type: 'Condition' as const, var: 'DetonatedMineRecently' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Attacks Exerted by [A-Z][a-zA-Z' ]+ deal (\d+)% increased Damage$/,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'INC', Number(m[1]), src, ModFlag.Attack),
+        tags: [{ type: 'Condition' as const, var: 'ExertedAttack' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased Spell Critical Strike Chance per Raised Spectre$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritChance', 'INC', Number(m[1]), src, ModFlag.Spell),
+        tags: [{ type: 'Multiplier' as const, var: 'RaisedSpectreCount' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Critical Strikes with Spells inflict Impale$/i,
+    build: (_, src) => [mkMod('SpellCritInflictsImpale', 'FLAG', true, src, ModFlag.Spell)],
+  },
+  {
+    pattern: /^Increases and Reductions to Minion Damage also affect you at (\d+)% of their value$/i,
+    build: (m, src) => [
+      mkMod('MinionDamageAppliesToPlayer', 'FLAG', true, src),
+      mkMod('MinionDamageAppliesToPlayerPct', 'BASE', Number(m[1]), src),
+    ],
+  },
+  {
+    pattern: /^Enemies affected by your Spider's Webs deal (\d+)% reduced Damage$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('EnemyDamageDealt', 'INC', -Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'EnemySpiderWeb' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Enemies affected by your Spider's Webs have -(\d+)% to All Resistances$/i,
+    build: (m, src) => {
+      const val = -Number(m[1]);
+      const tags = [{ type: 'Condition' as const, var: 'EnemySpiderWeb' }];
+      return (['Fire', 'Cold', 'Lightning', 'Chaos'] as const).map((el) => ({
+        ...mkMod(`${el}Resist`, 'BASE', val, src),
+        target: 'enemy' as const,
+        tags,
+      }));
+    },
+  },
 ];
 
 /**

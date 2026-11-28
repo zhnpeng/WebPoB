@@ -1439,4 +1439,39 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       }),
     ]);
   });
+
+  it('Wave 5D: Deal no Non-Lightning Damage, Successive Detonations, Warcry/Exert, Mine, Impale & Spider Webs', () => {
+    expect(parseModLine('Deal no Non-Lightning Damage', "Item: Doryani's Prototype")).toEqual([
+      expect.objectContaining({ name: 'DealNoNonLightning', type: 'FLAG', value: true }),
+    ]);
+    expect(
+      parseModLine('10% increased Critical Strike Chance for each Mine Detonated Recently, up to 100%', 'Tree: Successive Detonations'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'CritChance',
+        type: 'INC',
+        value: 10,
+        tags: [{ type: 'Multiplier', var: 'MinesDetonatedRecently', limit: 10 }],
+      }),
+    ]);
+    expect(parseModLine('Warcries Exert 1 additional Attack', 'Tree: Measured Fury')).toEqual([
+      expect.objectContaining({ name: 'WarcryExertCount', type: 'BASE', value: 1 }),
+    ]);
+    expect(
+      parseModLine('Enemies Taunted by your Warcries take 8% increased Damage', 'Tree: Natural Authority'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'EnemyDamageTaken',
+        type: 'INC',
+        value: 8,
+        tags: [{ type: 'Condition', var: 'EnemyTaunted' }],
+      }),
+    ]);
+    expect(parseModLine('Critical Strikes with Spells inflict Impale', 'Item: Entropic Devastation')).toEqual([
+      expect.objectContaining({ name: 'SpellCritInflictsImpale', type: 'FLAG', value: true }),
+    ]);
+    expect(
+      parseModLine("Enemies affected by your Spider's Webs have -10% to All Resistances", "Item: Fenumus' Shroud"),
+    ).toHaveLength(4);
+  });
 });
