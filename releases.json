@@ -4,6 +4,17 @@
   "prodUrl": "https://webpob.pages.dev",
   "releases": [
     {
+      "version": "0.3.1",
+      "tag": "v0.3.1",
+      "commit": "ae54d0f",
+      "deploymentId": "7d5134b5-6072-4229-ad61-5df1ecccc550",
+      "previewUrl": "https://7d5134b5.webpob.pages.dev",
+      "branch": "main",
+      "notes": "PoE 1 & PoE 2 calculation accuracy overhaul (185 upstream LuaJIT golden snapshots, 904 tests), main-thread calc bundle code-split (0 KB duplicate), historical passive tree support, and bilingual EN/ZH-CN/ZH-TW parity",
+      "status": "active",
+      "deployedAt": "2026-11-28T11:15:06.423Z"
+    },
+    {
       "version": "0.3.0",
       "tag": "v0.3.0",
       "commit": "17ff0ed",
@@ -11,7 +22,7 @@
       "previewUrl": "https://b7447204.webpob.pages.dev",
       "branch": "main",
       "notes": "深度对齐 PoB1/PoB2 计算引擎（SkillStatMap 编译宝石、组合式 ModParser、多 Actor/星团运行时）；新增国服 WeGame PoE 2 与 Maxroll 链接直导及国际服繁中（zh-TW）支持",
-      "status": "active",
+      "status": "previous",
       "deployedAt": "2026-11-27T17:25:41.471Z"
     },
     {
@@ -80,5 +91,5 @@
     }
   ],
   "rollbacks": [],
-  "updatedAt": "2026-11-27T17:25:41.471Z"
+  "updatedAt": "2026-11-28T11:15:06.423Z"
 }
