@@ -2791,6 +2791,53 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
     pattern: /^Your Offerings have (\d+)% reduced Effect on you$/i,
     build: (m, src) => [mkMod('OfferingEffectOnSelf', 'INC', -Number(m[1]), src)],
   },
+  // Wave 6O: 8-build near-5% sweep (Shining Justice, Dendrobate Dex/Int thresholds, Static Blows, Daresso's Defiance)
+  {
+    pattern: /^Consecrated Ground you create grants (\d+)% increased Accuracy Rating to you and Allies$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Accuracy', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'OnConsecratedGround' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased Damage with Poison if you have at least (\d+) (Strength|Dexterity|Intelligence)$/i,
+    build: (m, src) => {
+      const stat = m[3]!.toLowerCase() === 'strength' ? 'Str' : m[3]!.toLowerCase() === 'dexterity' ? 'Dex' : 'Int';
+      return [
+        {
+          ...mkMod('PoisonDamage', 'INC', Number(m[1]), src),
+          tags: [{ type: 'PerStat' as const, stat, div: Number(m[2]), limit: 1 }],
+        },
+      ];
+    },
+  },
+  {
+    pattern: /^(\d+)% increased Poison Duration if you have at least (\d+) (Strength|Dexterity|Intelligence)$/i,
+    build: (m, src) => {
+      const stat = m[3]!.toLowerCase() === 'strength' ? 'Str' : m[3]!.toLowerCase() === 'dexterity' ? 'Dex' : 'Int';
+      return [
+        {
+          ...mkMod('PoisonDuration', 'INC', Number(m[1]), src),
+          tags: [{ type: 'PerStat' as const, stat, div: Number(m[2]), limit: 1 }],
+        },
+      ];
+    },
+  },
+  {
+    pattern: /^(\d+)% increased Duration of Lightning Ailments$/i,
+    build: (m, src) => [mkMod('ShockDuration', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^You gain Onslaught for \d+ seconds per Endurance Charge when Hit$/i,
+    build: (_, src) => [
+      {
+        ...mkMod('Onslaught', 'FLAG', true, src),
+        tags: [{ type: 'Condition' as const, var: 'BeenHitRecently' }],
+      },
+    ],
+  },
 ];
 
 /**

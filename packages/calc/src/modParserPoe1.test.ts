@@ -1862,4 +1862,48 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       expect.objectContaining({ name: 'OfferingEffectOnSelf', type: 'INC', value: -50 }),
     ]);
   });
+
+  it('Wave 6O: Shining Justice, Dendrobate Dex/Int thresholds, Static Blows, Daresso Onslaught', () => {
+    expect(
+      parseModLine('Consecrated Ground you create grants 30% increased Accuracy Rating to you and Allies', 'Tree: Shining Justice'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'Accuracy',
+        type: 'INC',
+        value: 30,
+        tags: [{ type: 'Condition', var: 'OnConsecratedGround' }],
+      }),
+    ]);
+    expect(
+      parseModLine('100% increased Damage with Poison if you have at least 300 Dexterity', 'Item: Dendrobate'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'PoisonDamage',
+        type: 'INC',
+        value: 100,
+        tags: [{ type: 'PerStat', stat: 'Dex', div: 300, limit: 1 }],
+      }),
+    ]);
+    expect(
+      parseModLine('25% increased Poison Duration if you have at least 150 Intelligence', 'Item: Dendrobate'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'PoisonDuration',
+        type: 'INC',
+        value: 25,
+        tags: [{ type: 'PerStat', stat: 'Int', div: 150, limit: 1 }],
+      }),
+    ]);
+    expect(parseModLine('50% increased Duration of Lightning Ailments', 'Tree: Static Blows')).toEqual([
+      expect.objectContaining({ name: 'ShockDuration', type: 'INC', value: 50 }),
+    ]);
+    expect(parseModLine('You gain Onslaught for 5 seconds per Endurance Charge when Hit', 'Item')).toEqual([
+      expect.objectContaining({
+        name: 'Onslaught',
+        type: 'FLAG',
+        value: true,
+        tags: [{ type: 'Condition', var: 'BeenHitRecently' }],
+      }),
+    ]);
+  });
 });
