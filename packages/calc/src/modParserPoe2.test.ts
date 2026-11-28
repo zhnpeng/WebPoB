@@ -1129,5 +1129,241 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
         qualityBonus: 0,
       });
     });
+
+    it('parses Wave 4O PoE 2 mechanics (NonDamagingAilment->Shock, Withered->WitherEffect, Sniper DistanceRamp, conditional duration/projectiles, Falcon Dive, Block-Fire, semantic flags)', () => {
+      // Non-Damaging Ailment Magnitude expands to ShockMagnitude/ChillMagnitude/FreezeBuildup (PoB2 ModParser.lua:818-820)
+      expect(
+        parseModLine('30% increased Magnitude of Non-Damaging Ailments you inflict', 'Item: Maligaro'),
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: 'ShockMagnitude', type: 'INC', value: 30 }),
+          expect.objectContaining({ name: 'ChillMagnitude', type: 'INC', value: 30 }),
+          expect.objectContaining({ name: 'FreezeBuildup', type: 'INC', value: 30 }),
+          expect.objectContaining({ name: 'NonDamagingAilmentMagnitude', type: 'INC', value: 30 }),
+        ]),
+      );
+
+      // Conditional ailment magnitude no longer leaks unconditionally (The Noble Wolf, Cruel Fate)
+      expect(
+        parseModLine('25% increased Magnitude of Ailments you inflict against Marked Enemies', 'Tree:2745'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'AilmentMagnitude',
+          type: 'INC',
+          value: 25,
+          tags: [{ type: 'Condition', var: 'EnemyMarked' }],
+        }),
+      ]);
+      expect(
+        parseModLine(
+          '20% increased Magnitude of Non-Damaging Ailments you inflict with Critical Hits',
+          'Tree:18465',
+        ),
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: 'ShockMagnitude',
+            type: 'INC',
+            value: 20,
+            tags: [{ type: 'Condition', var: 'CriticalStrike' }],
+          }),
+        ]),
+      );
+
+      // Withered Magnitude emits WitherEffect (consumed by engine.ts) alongside WitheredMagnitude
+      expect(parseModLine('20% increased Withered Magnitude', 'Gloves')).toEqual([
+        expect.objectContaining({ name: 'WitherEffect', type: 'INC', value: 20 }),
+        expect.objectContaining({ name: 'WitheredMagnitude', type: 'INC', value: 20 }),
+      ]);
+
+      // Conditional Projectile Damage & Crit ("against Enemies further than 6m") attach EnemyDistanceGt:60
+      expect(
+        parseModLine('Projectiles deal 15% increased Damage with Hits against Enemies further than 6m', 'Tree:10648'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'Damage',
+          type: 'INC',
+          value: 15,
+          flags: ModFlag.Projectile | ModFlag.Hit,
+          tags: [{ type: 'Condition', var: 'EnemyDistanceGt:60' }],
+        }),
+      ]);
+      expect(
+        parseModLine('Projectiles have 25% increased Critical Hit Chance against Enemies further than 6m', 'Tree:8904'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'CritChance',
+          type: 'INC',
+          value: 25,
+          flags: ModFlag.Projectile,
+          tags: [{ type: 'Condition', var: 'EnemyDistanceGt:60' }],
+        }),
+      ]);
+
+      // Sniper (Tree:11526): both full and split line 2 emit Bow CritChance with DistanceRamp:35:0,70:1
+      for (const sniperLine of [
+        'Arrows gain Critical Hit Chance as they travel farther, up to 40% increased Critical Hit Chance after 7 metres',
+        '40% increased Critical Hit Chance after 7 metres',
+      ]) {
+        expect(parseModLine(sniperLine, 'Tree:11526')).toEqual([
+          expect.objectContaining({
+            name: 'CritChance',
+            type: 'INC',
+            value: 40,
+            flags: ModFlag.Bow,
+            tags: [{ type: 'Condition', var: 'DistanceRamp:35:0,70:1' }],
+          }),
+        ]);
+      }
+
+      // Moment of Truth, Dynamism, Supportive Ancestors (Totem Damage + Totem Cast Speed)
+      expect(
+        parseModLine(
+          "25% increased Critical Damage Bonus if you've dealt a Non-Critical Hit Recently",
+          'Tree:17548',
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'CritDamageBonusInc',
+          type: 'INC',
+          value: 25,
+          tags: [{ type: 'Condition', var: 'NonCritRecently' }],
+        }),
+      ]);
+      expect(
+        parseModLine("40% increased Damage if you've Triggered a Skill Recently", 'Tree:3688'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'Damage',
+          type: 'INC',
+          value: 40,
+          tags: [{ type: 'Condition', var: 'TriggeredSkillRecently' }],
+        }),
+      ]);
+      expect(parseModLine('25% increased Damage while you have a Totem', 'Tree:19249')).toEqual([
+        expect.objectContaining({
+          name: 'Damage',
+          type: 'INC',
+          value: 25,
+          tags: [{ type: 'Condition', var: 'HaveTotem' }],
+        }),
+      ]);
+      expect(
+        parseModLine('Spells Cast by Totems have 3% increased Cast Speed per Summoned Totem', 'Tree:19249'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'Speed',
+          type: 'INC',
+          value: 3,
+          keywordFlags: KeywordFlag.Totem,
+        }),
+      ]);
+
+      // Conditional Ailment Durations & Elemental Exposure Effect
+      expect(
+        parseModLine('40% increased Duration of Poisons you inflict against Slowed Enemies', 'Tree:261'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'EnemyPoisonDuration',
+          type: 'INC',
+          value: 40,
+          tags: [{ type: 'Condition', var: 'EnemySlowed' }],
+        }),
+      ]);
+      expect(
+        parseModLine('20% increased duration of Ailments you inflict against Cursed Enemies', 'Tree:5594'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'EnemyAilmentDuration',
+          type: 'INC',
+          value: 20,
+          tags: [{ type: 'Condition', var: 'EnemyCursed' }],
+        }),
+      ]);
+      expect(parseModLine('5% increased Duration of Damaging Ailments on Enemies', 'Jewel:32763')).toEqual([
+        expect.objectContaining({ name: 'DamagingAilmentDuration', type: 'INC', value: 5 }),
+      ]);
+      expect(parseModLine('25% increased Fire Exposure Effect', 'Tree:19715')).toEqual([
+        expect.objectContaining({ name: 'FireExposureEffect', type: 'INC', value: 25 }),
+      ]);
+
+      // Falcon Dive (capped PerStat Accuracy) & Block-Chance Fire Gain
+      expect(
+        parseModLine('1% increased Attack Speed per 400 Accuracy Rating, up to 20%', 'Tree:60034'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'Speed',
+          type: 'INC',
+          value: 1,
+          flags: ModFlag.Attack,
+          tags: [{ type: 'PerStat', stat: 'Accuracy', div: 400, limit: 20, limitTotal: true }],
+        }),
+      ]);
+      expect(
+        parseModLine('Gain 1% of damage as Fire damage per 1% Chance to Block', 'Tree: Shield'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'DamageGainAsFire',
+          type: 'BASE',
+          value: 1,
+          tags: [{ type: 'PerStat', stat: 'BlockChance', div: 1 }],
+        }),
+      ]);
+
+      // Wave 4O Semantic Flags (Ancestral Empowerment, Amazon Critical Strike, Companion Damage, Aftershock)
+      expect(
+        parseModLine('Every second Slam Skill you use yourself is Ancestrally Boosted', 'Tree:3762'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'AncestralEmpowerment',
+          type: 'FLAG',
+          value: true,
+          tags: [{ type: 'SkillType', skillType: 'Slam' }],
+        }),
+        expect.objectContaining({
+          name: 'Condition:AncestrallyBoosted',
+          type: 'FLAG',
+          value: true,
+          tags: [{ type: 'SkillType', skillType: 'Slam' }],
+        }),
+      ]);
+      expect(parseModLine('Chance to Hit with Attacks can exceed 100%', 'Tree:9294')).toEqual([
+        expect.objectContaining({
+          name: 'HitChanceCanExceed100',
+          type: 'FLAG',
+          value: true,
+          tags: [{ type: 'SkillType', skillType: 'Attack' }],
+        }),
+      ]);
+      expect(
+        parseModLine('Gain additional Critical Hit Chance equal to 25% of excess chance to Hit with Attacks', 'Tree:9294'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'CritChance',
+          type: 'BASE',
+          value: 0.25,
+          tags: [
+            { type: 'Multiplier', var: 'ExcessHitChance' },
+            { type: 'SkillType', skillType: 'Attack' },
+          ],
+        }),
+      ]);
+      expect(
+        parseModLine('Increases and Reductions to Companion Damage also apply to you', 'Tree: Companion'),
+      ).toEqual([
+        expect.objectContaining({ name: 'CompanionDamageAppliesToPlayer', type: 'FLAG', value: true }),
+      ]);
+      expect(
+        parseModLine('10% chance for Mace Slam Skills you use yourself to cause an additional Aftershock', 'Tree: Slam'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'AftershockChance',
+          type: 'BASE',
+          value: 10,
+          flags: ModFlag.Mace,
+          tags: [{ type: 'SkillType', skillType: 'Slam' }],
+        }),
+      ]);
+    });
   });
 });

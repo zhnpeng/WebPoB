@@ -890,4 +890,94 @@ describe('parseConditionalSuffix', () => {
       ).active,
     ).toBe(true);
   });
+
+  it('evaluates Wave 4O PoE 2 conditions, aliases (Infusion, Totem, EnemySlowed/Cursed/Marked/ArmourBroken), and capped Accuracy PerStat', () => {
+    // Suffix parsing for PoE 2 conditionals
+    expect(
+      parseConditionalSuffix("25% increased Critical Damage Bonus if you've dealt a Non-Critical Hit Recently"),
+    ).toEqual({
+      baseLine: '25% increased Critical Damage Bonus',
+      tags: [{ type: 'Condition', var: 'NonCritRecently' }],
+    });
+    expect(parseConditionalSuffix("40% increased Damage if you've Triggered a Skill Recently")).toEqual({
+      baseLine: '40% increased Damage',
+      tags: [{ type: 'Condition', var: 'TriggeredSkillRecently' }],
+    });
+    expect(parseConditionalSuffix('25% increased Damage while you have a Totem')).toEqual({
+      baseLine: '25% increased Damage',
+      tags: [{ type: 'Condition', var: 'HaveTotem' }],
+    });
+    expect(parseConditionalSuffix('40% increased Duration of Poisons against Slowed Enemies')).toEqual({
+      baseLine: '40% increased Duration of Poisons',
+      tags: [{ type: 'Condition', var: 'EnemySlowed' }],
+    });
+    expect(parseConditionalSuffix('20% increased duration of Ailments against Cursed Enemies')).toEqual({
+      baseLine: '20% increased duration of Ailments',
+      tags: [{ type: 'Condition', var: 'EnemyCursed' }],
+    });
+    expect(parseConditionalSuffix('25% increased Magnitude of Ailments against Marked Enemies')).toEqual({
+      baseLine: '25% increased Magnitude of Ailments',
+      tags: [{ type: 'Condition', var: 'EnemyMarked' }],
+    });
+    expect(parseConditionalSuffix('20% increased Damage against Enemies with Fully Broken Armour')).toEqual({
+      baseLine: '20% increased Damage',
+      tags: [{ type: 'Condition', var: 'EnemyArmourBroken' }],
+    });
+    expect(
+      parseConditionalSuffix('4% increased Attack Speed while a Rare or Unique Enemy is in your Presence'),
+    ).toEqual({
+      baseLine: '4% increased Attack Speed',
+      tags: [{ type: 'Condition', var: 'EnemyRareOrUnique' }],
+    });
+    expect(parseConditionalSuffix('1% increased Attack Speed per 400 Accuracy Rating, up to 20%')).toEqual({
+      baseLine: '1% increased Attack Speed',
+      tags: [{ type: 'PerStat', stat: 'Accuracy', div: 400, limit: 20, limitTotal: true }],
+    });
+
+    // Condition & multiplier aliases
+    const ctx = createEmptyEvalContext();
+    ctx.conditions.InfusionConsumedRecently = true;
+    ctx.conditions.EnemyMaimed = true;
+    ctx.conditions.Marked = true;
+    ctx.conditions.ArmourFullyBroken = true;
+    ctx.multipliers.SummonedTotem = 6;
+    ctx.multipliers.CurseOnEnemy = 1;
+    ctx.multipliers.NearbyAlly = 2;
+    ctx.stats.Accuracy = 10000;
+
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'ConsumedElementalInfusionRecently' }] }), ctx).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'HaveTotem' }] }), ctx).active,
+    ).toBe(true);
+    expect(
+      applyModTagEval(3, evaluateModTags(makeMod({ value: 3, tags: [{ type: 'Multiplier', var: 'ActiveTotem' }] }), ctx)),
+    ).toBe(18);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'EnemySlowed' }] }), ctx).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'EnemyCursed' }] }), ctx).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'EnemyMarked' }] }), ctx).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'EnemyArmourBroken' }] }), ctx).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(
+        makeMod({ tags: [{ type: 'Condition', var: 'MultiplierThreshold:NearbyAlly:1|CompanionInPresence' }] }),
+        ctx,
+      ).active,
+    ).toBe(true);
+
+    // Falcon Dive capped Accuracy PerStat (floor(10000/400) = 25 -> capped at 20 total)
+    const falconMod = makeMod({
+      value: 1,
+      tags: [{ type: 'PerStat', stat: 'Accuracy', div: 400, limit: 20, limitTotal: true } as unknown as ModTag],
+    });
+    expect(applyModTagEval(1, evaluateModTags(falconMod, ctx))).toBe(20);
+  });
 });

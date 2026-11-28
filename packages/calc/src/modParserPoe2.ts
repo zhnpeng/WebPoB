@@ -625,6 +625,10 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
   {
     pattern: /^Projectiles have (\d+)% increased Critical Hit Chance(?: .+)?$/i,
     build: (m, src) => {
+      const { baseLine, tags } = parseConditionalSuffix(m[0]!);
+      if (tags.length > 0 && /^Projectiles have \d+% increased Critical Hit Chance$/i.test(baseLine)) {
+        return [{ ...mkMod('CritChance', 'INC', Number(m[1]), src, ModFlag.Projectile), tags }];
+      }
       if (m[0]!.length > 'Projectiles have 00% increased Critical Hit Chance'.length + 2) {
         const comp = parseModCompositional(m[0]!, src);
         if (comp.length > 0) return comp;
@@ -632,6 +636,17 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
       }
       return [mkMod('CritChance', 'INC', Number(m[1]), src, ModFlag.Projectile)];
     },
+  },
+  // Sniper (Tree:11526, PoB 2 ModParser.lua:4995): Arrows gain Crit Chance over distance (0 at <=3.5m -> 100% at >=7m)
+  // Handles both full single-line PoB phrasing and the split line 2 in poe2-tree-0_5.json.
+  {
+    pattern: /^(?:Arrows gain Critical Hit Chance as they travel farther,\s*up to\s+)?(\d+)% increased Critical Hit Chance after 7 metres$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritChance', 'INC', Number(m[1]), src, ModFlag.Bow),
+        tags: [{ type: 'Condition', var: 'DistanceRamp:35:0,70:1' }],
+      },
+    ],
   },
   {
     pattern: /^Hits against you have (\d+)% reduced Critical Damage Bonus$/i,
@@ -1141,7 +1156,8 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
   },
 
   // Ailment Magnitude, Speed, Chance & Duration
-  // PoE 2 Low Tolerance (Tree:42959): PoB 2 evaluates as AilmentEffect INC (CalcOffence.lua:5398)
+  // PoE 2 Low Tolerance (Tree:42959): PoB 2 gates "on targets that are not Poisoned" on
+  // MultiplierThreshold(PoisonStacks <= 1); keep Magnitude form for unit parity while gating Effect form.
   {
     pattern: /^(\d+)% (increased|reduced) Magnitude of Poison(?: you inflict)? on targets that are not Poisoned$/i,
     build: (m, src) => {
@@ -1192,10 +1208,35 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     build: (_, src) => [mkMod('AllDamageCanPoison', 'FLAG', true, src)],
   },
   {
-    pattern: /^(\d+)% (increased|reduced|more|less) Magnitude of (Damaging Ailments|Non-Damaging Ailments|Ailments|Ignite|Bleeding|Poison|Shock|Chill|Jagged Ground)(?: you (?:inflict|create))?(?: (?:against|with) .+)?$/i,
+    pattern: /^(\d+)% (increased|reduced|more|less) Magnitude of (Damaging Ailments|Non-Damaging Ailments|Ailments|Ignite|Bleeding|Poison|Shock|Chill|Jagged Ground)(?: you (?:inflict|create))?(?: (?:against|with|while|if|when) .+)?$/i,
     build: (m, src) => {
       const { type, value } = signedVal(m[1]!, m[2]!);
       const kind = m[3]!.toLowerCase();
+      const { baseLine, tags: rawTags } = parseConditionalSuffix(m[0]!);
+      if (rawTags.length === 0 && /\b(?:against|while|if|when)\b/i.test(baseLine)) {
+        return [];
+      }
+      // skillActorRuntime.ts evaluates damaging-ailment magInc outside CriticalStrike context;
+      // keep CriticalStrike gating on non-damaging ailments while preserving non-crit-tagged conditionals (Marked/Cursed/Slowed).
+      const isDamagingAilment =
+        kind === 'damaging ailments' ||
+        kind === 'ignite' ||
+        kind === 'bleeding' ||
+        kind === 'poison';
+      const tags = isDamagingAilment
+        ? rawTags.filter((t) => !(t.type === 'Condition' && t.var === 'CriticalStrike'))
+        : rawTags;
+      const withTags = (mod: Mod): Mod => (tags.length > 0 ? { ...mod, tags } : mod);
+      if (kind === 'non-damaging ailments') {
+        // PoB 2 ModParser.lua:818-820: expands to EnemyShockMagnitude, EnemyChillMagnitude, EnemyFreezeBuildup
+        // Emit WebPoB canonical shock/chill/freeze stats alongside NonDamagingAilmentMagnitude for compatibility.
+        return [
+          withTags(mkMod('ShockMagnitude', type, value, src)),
+          withTags(mkMod('ChillMagnitude', type, value, src)),
+          withTags(mkMod('FreezeBuildup', type, value, src)),
+          withTags(mkMod('NonDamagingAilmentMagnitude', type, value, src)),
+        ];
+      }
       const stat =
         kind === 'ignite'
           ? 'IgniteMagnitude'
@@ -1207,18 +1248,23 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
                 ? 'ShockMagnitude'
                 : kind === 'chill'
                   ? 'ChillMagnitude'
-                  : kind === 'non-damaging ailments'
-                    ? 'NonDamagingAilmentMagnitude'
-                    : kind === 'jagged ground'
-                      ? 'JaggedGroundMagnitude'
-                      : 'AilmentMagnitude';
-      return [mkMod(stat, type, value, src)];
+                  : kind === 'jagged ground'
+                    ? 'JaggedGroundMagnitude'
+                    : 'AilmentMagnitude';
+      return [withTags(mkMod(stat, type, value, src))];
     },
   },
   {
     pattern: /^(\d+)% (increased|reduced|more|less) (Ignite|Flammability|Poison|Shock|Bleeding|Withered) Magnitude$/i,
     build: (m, src) => {
       const { type, value } = signedVal(m[1]!, m[2]!);
+      if (m[3]!.toLowerCase() === 'withered') {
+        // PoE 2 Withered Magnitude scales Withered ChaosDamageTaken per stack (engine.ts reads WitherEffect)
+        return [
+          mkMod('WitherEffect', type, value, src),
+          mkMod('WitheredMagnitude', type, value, src),
+        ];
+      }
       return [mkMod(`${m[3]}Magnitude`, type, value, src)];
     },
   },
@@ -1260,9 +1306,43 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     pattern: /^(\d+)% chance for Attack Hits to apply Incision$/i,
     build: (m, src) => [mkMod('IncisionChance', 'BASE', Number(m[1]), src, ModFlag.Attack)],
   },
+  // PoE 2 Ailment/Poison/Ignite/Bleed/Elemental Ailment Duration (with optional conditional suffixes:
+  // Toxic Sludge "against Slowed Enemies", Decrepifying Curse "against Cursed Enemies", Time-Lost Damaging Ailments)
+  {
+    pattern: /^(\d+)% (increased|reduced) [Dd]uration of (Damaging Ailments|Elemental Ailments|Ailments|Poisons?|Ignites?|Bleedings?|Shocks?|Chills?)(?: you inflict| on Enemies)?(?: (?:against|while|if|when|with) .+)?$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      const kind = m[3]!.toLowerCase();
+      const { baseLine, tags } = parseConditionalSuffix(m[0]!);
+      if (tags.length === 0 && /\b(?:against|while|if|when)\b|\bwith Critical\b/i.test(baseLine)) {
+        return [];
+      }
+      const stat =
+        kind === 'damaging ailments'
+          ? 'DamagingAilmentDuration'
+          : kind === 'elemental ailments'
+            ? 'EnemyElementalAilmentDuration'
+            : kind === 'ailments'
+              ? 'EnemyAilmentDuration'
+              : kind.startsWith('poison')
+                ? 'EnemyPoisonDuration'
+                : kind.startsWith('ignite')
+                  ? 'EnemyIgniteDuration'
+                  : kind.startsWith('bleed')
+                    ? 'EnemyBleedDuration'
+                    : kind.startsWith('shock')
+                      ? 'EnemyShockDuration'
+                      : 'EnemyChillDuration';
+      const mod = mkMod(stat, type, value, src);
+      return [tags.length > 0 ? { ...mod, tags } : mod];
+    },
+  },
   {
     pattern: /^(\d+)% increased (Ignite|Bleeding|Poison|Shock|Chill|Duration of Damaging Ailments|Pin|Armour Break|Curse|Hazard|Elemental Infusion|Archon Buff|Minion|Parried Debuff)(?: Duration)?(?: on Enemies)?$/i,
     build: (m, src) => {
+      if (m[2]!.toLowerCase() === 'duration of damaging ailments') {
+        return [mkMod('DamagingAilmentDuration', 'INC', Number(m[1]), src)];
+      }
       const key = m[2]!.replace(/\s+/g, '');
       return [mkMod(`${key}Duration`, 'INC', Number(m[1]), src)];
     },
@@ -1355,6 +1435,14 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
   {
     pattern: /^(\d+)% reduced (?:effect|Effect|Magnitude|Duration) of (Curses|Shock|Chill|Ignite|Bleeding|Ailments) on [Yy]ou$/i,
     build: (m, src) => [mkMod(`${m[2]}OnSelfReduction`, 'INC', Number(m[1]), src)],
+  },
+  // Elemental Exposure Effect (Cremation Tree:19715, PoB 2 ModParser.lua:702-704)
+  {
+    pattern: /^(\d+)% increased (Fire|Cold|Lightning) Exposure Effect$/i,
+    build: (m, src) => {
+      const el = `${m[2]!.charAt(0).toUpperCase()}${m[2]!.slice(1).toLowerCase()}`;
+      return [mkMod(`${el}ExposureEffect`, 'INC', Number(m[1]), src)];
+    },
   },
   {
     pattern: /^(\d+)% increased (Exposure|Blind|Arcane Surge|Archon Buffs|Puppet Master|Parried Debuff)(?: Effect| effect| Magnitude)?(?: on you)?$/i,
@@ -1562,12 +1650,23 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
           },
         ];
       }
+      const { baseLine, tags } = parseConditionalSuffix(m[0]!);
+      if (tags.length > 0) {
+        const hitFlag = /\bwith Hits\b/i.test(baseLine) ? ModFlag.Hit : 0;
+        if (subject === 'projectiles') {
+          return [{ ...mkMod('Damage', 'INC', val, src, ModFlag.Projectile | hitFlag), tags }];
+        }
+        if (subject === 'attack skills') {
+          return [{ ...mkMod('Damage', 'INC', val, src, ModFlag.Attack | hitFlag), tags }];
+        }
+      }
       const comp = parseModCompositional(m[0]!, src);
       if (comp.length > 0) return comp;
-      if (subject === 'attack skills') {
+      const hasTrailingCondition = /\b(?:against|while|when|if|per|for each)\b/i.test(m[0]!);
+      if (subject === 'attack skills' && !hasTrailingCondition) {
         return [mkMod('Damage', 'INC', val, src, ModFlag.Attack)];
       }
-      if (subject === 'projectiles') {
+      if (subject === 'projectiles' && !hasTrailingCondition) {
         return [mkMod('Damage', 'INC', val, src, ModFlag.Projectile)];
       }
       const flags = subject.includes('attack')
@@ -1642,11 +1741,11 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
   },
   {
     pattern: /^Spells Cast by Totems have (\d+)% increased Cast Speed$/i,
-    build: (m, src) => [mkMod('TotemCastSpeed', 'INC', Number(m[1]), src, ModFlag.Spell, KeywordFlag.Totem)],
+    build: (m, src) => [mkMod('Speed', 'INC', Number(m[1]), src, ModFlag.Cast, KeywordFlag.Totem)],
   },
   {
     pattern: /^Attacks used by Totems have (\d+)% increased Attack Speed$/i,
-    build: (m, src) => [mkMod('TotemAttackSpeed', 'INC', Number(m[1]), src, ModFlag.Attack, KeywordFlag.Totem)],
+    build: (m, src) => [mkMod('Speed', 'INC', Number(m[1]), src, ModFlag.Attack, KeywordFlag.Totem)],
   },
   {
     pattern: /^Totems gain \+(\d+)% to all Maximum Elemental Resistances$/i,
@@ -2088,7 +2187,7 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
       },
     ],
   },
-  // Ancestral Unity (Tree:62609): "Attacks used by Totems have 4% increased Attack Speed per Summoned Totem"
+  // Ancestral Unity (Tree:62609) & Supportive Ancestors (Tree:19249): Totem Speed per Summoned Totem
   {
     pattern: /^Attacks used by Totems have (\d+)% increased Attack Speed per Summoned Totem$/i,
     build: (m, src) => [
@@ -2097,6 +2196,98 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
         tags: [{ type: 'Multiplier', var: 'ActiveTotem' }],
       },
     ],
+  },
+  {
+    pattern: /^Spells Cast by Totems have (\d+)% increased Cast Speed per Summoned Totem$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Speed', 'INC', Number(m[1]), src, ModFlag.Cast, KeywordFlag.Totem),
+        tags: [{ type: 'Multiplier', var: 'ActiveTotem' }],
+      },
+    ],
+  },
+  // Wave 4O PoE 2 Semantic Flags (PoB 2 ModParser.lua:2709, 2774-2775, 3191, 3699)
+  {
+    pattern: /^Every second Slam Skill you use yourself is Ancestrally Boosted$/i,
+    build: (_, src) => [
+      { ...mkMod('AncestralEmpowerment', 'FLAG', true, src), tags: [{ type: 'SkillType', skillType: 'Slam' }] },
+      { ...mkMod('Condition:AncestrallyBoosted', 'FLAG', true, src), tags: [{ type: 'SkillType', skillType: 'Slam' }] },
+    ],
+  },
+  {
+    pattern: /^Chance to Hit with Attacks can exceed 100%$/i,
+    build: (_, src) => [
+      { ...mkMod('HitChanceCanExceed100', 'FLAG', true, src), tags: [{ type: 'SkillType', skillType: 'Attack' }] },
+    ],
+  },
+  {
+    pattern: /^Gain additional Critical Hit Chance equal to (\d+)% of excess chance to Hit with Attacks$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritChance', 'BASE', Number(m[1]) / 100, src),
+        tags: [
+          { type: 'Multiplier', var: 'ExcessHitChance' },
+          { type: 'SkillType', skillType: 'Attack' },
+        ],
+      },
+    ],
+  },
+  {
+    pattern: /^Increases and Reductions to Companion Damage also apply to you$/i,
+    build: (_, src) => [mkMod('CompanionDamageAppliesToPlayer', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Spells for which this Sacrifice was fully made deal (\d+)% more Damage$/i,
+    build: (m, src) => [
+      mkMod('EldritchEmpowerment', 'FLAG', true, src),
+      {
+        ...mkMod('Damage', 'MORE', Number(m[1]), src, ModFlag.Spell),
+        tags: [{ type: 'Condition', var: 'EldritchEmpowermentSacrifice' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% chance for (?:(Mace) )?Slam Skills you use yourself to cause an additional Aftershock$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('AftershockChance', 'BASE', Number(m[1]), src, m[2] ? ModFlag.Mace : 0),
+        tags: [{ type: 'SkillType', skillType: 'Slam' }],
+      },
+    ],
+  },
+  // Falcon Dive (PoB 2 ModParser.lua:1620): "1% increased Attack Speed per 400 Accuracy Rating, up to 20%"
+  {
+    pattern: /^(\d+)% (increased|reduced) (Attack|Cast) Speed per (\d+) Accuracy Rating(?:,\s*up to (\d+)%)?$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      const flags = m[3]!.toLowerCase() === 'attack' ? ModFlag.Attack : ModFlag.Cast;
+      const tag = m[5]
+        ? ({
+            type: 'PerStat',
+            stat: 'Accuracy',
+            div: Number(m[4]),
+            limit: Number(m[5]),
+            limitTotal: true,
+          } as unknown as ModTag)
+        : ({ type: 'PerStat', stat: 'Accuracy', div: Number(m[4]) } as ModTag);
+      return [{ ...mkMod('Speed', type, value, src, flags), tags: [tag] }];
+    },
+  },
+  // Shield / Block Fire Gain: "Gain 1% of damage as Fire damage per 1% Chance to Block"
+  {
+    pattern: /^Gain (\d+(?:\.\d+)?)% of (?:(Physical|Fire|Cold|Lightning|Elemental) )?[Dd]amage as (?:[Ee]xtra )?(Fire|Cold|Lightning|Chaos|Physical) [Dd]amage per (\d+)%? Chance to Block$/i,
+    build: (m, src) => {
+      const from = m[2]
+        ? `${m[2].charAt(0).toUpperCase()}${m[2].slice(1).toLowerCase()}DamageGainAs`
+        : 'DamageGainAs';
+      const to = `${m[3]!.charAt(0).toUpperCase()}${m[3]!.slice(1).toLowerCase()}`;
+      return [
+        {
+          ...mkMod(`${from}${to}`, 'BASE', Number(m[1]), src),
+          tags: [{ type: 'PerStat', stat: 'BlockChance', div: Number(m[4]) }],
+        },
+      ];
+    },
   },
   // Molten Carapace (Tree:51868): "+2% to Maximum Fire Resistance while Ignited"
   {

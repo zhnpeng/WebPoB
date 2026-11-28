@@ -247,6 +247,58 @@ function evalSingleConditionVar(varExpr: string, ctx?: ModEvalContext): boolean 
     const nearbyRareUnique = ctx.multipliers.NearbyRareOrUniqueEnemies;
     return nearbyRareUnique !== undefined && nearbyRareUnique <= 1;
   }
+  if (varExpr === 'ConsumedElementalInfusionRecently') {
+    return Boolean(ctx.conditions.InfusionConsumedRecently);
+  }
+  if (varExpr === 'InfusionConsumedRecently') {
+    return Boolean(ctx.conditions.ConsumedElementalInfusionRecently);
+  }
+  if (varExpr === 'HaveTotem') {
+    return (
+      (ctx.multipliers.SummonedTotem ??
+        ctx.multipliers.ActiveTotem ??
+        ctx.multipliers.TotemsSummoned ??
+        0) > 0
+    );
+  }
+  if (varExpr === 'EnemySlowed') {
+    // PoB 2 CalcPerform.lua:847-854: enemy is Slowed if any negative ActionSpeed/MovementSpeed debuff applies
+    return Boolean(
+      ctx.conditions.Slowed ||
+        ctx.conditions.EnemyChilled ||
+        ctx.conditions.EnemyFrozen ||
+        ctx.conditions.EnemyMaimed ||
+        ctx.conditions.EnemyHindered ||
+        ctx.conditions.EnemyTemporalChains ||
+        (ctx.multipliers.EnemyChillEffect ?? 0) > 0,
+    );
+  }
+  if (varExpr === 'EnemyCursed') {
+    return Boolean(
+      ctx.conditions.Cursed ||
+        (ctx.multipliers.CurseOnEnemy ?? 0) > 0 ||
+        (ctx.multipliers.CursesOnEnemy ?? 0) > 0,
+    );
+  }
+  if (varExpr === 'EnemyMarked') {
+    return Boolean(ctx.conditions.Marked);
+  }
+  if (varExpr === 'Marked') {
+    return Boolean(ctx.conditions.EnemyMarked);
+  }
+  if (varExpr === 'EnemyPoisoned') {
+    return Boolean(
+      ctx.conditions.Poisoned ||
+        (ctx.multipliers.PoisonStacks ?? ctx.multipliers.PoisonOnEnemy ?? 0) > 0,
+    );
+  }
+  if (varExpr === 'EnemyArmourBroken') {
+    return Boolean(
+      ctx.conditions.ArmourBroken ||
+        ctx.conditions.ArmourFullyBroken ||
+        ctx.conditions.EnemyArmourFullyBroken,
+    );
+  }
   return false;
 }
 
@@ -254,6 +306,12 @@ function resolveMultiplierValue(varName: string, ctx?: ModEvalContext): number {
   if (!ctx) return 0;
   const direct = ctx.multipliers[varName];
   if (direct !== undefined) return direct;
+  if (varName === 'ActiveTotem' || varName === 'SummonedTotem' || varName === 'TotemsSummoned') {
+    return ctx.multipliers.ActiveTotem ?? ctx.multipliers.SummonedTotem ?? ctx.multipliers.TotemsSummoned ?? 0;
+  }
+  if (varName === 'PoisonStacks' || varName === 'PoisonStack' || varName === 'PoisonOnEnemy') {
+    return ctx.multipliers.PoisonStacks ?? ctx.multipliers.PoisonOnEnemy ?? ctx.multipliers.PoisonStack ?? 0;
+  }
   if (varName === 'EnemyElementalAilmentCount' || varName === 'ElementalHitAilmentOnEnemy') {
     const alt =
       varName === 'EnemyElementalAilmentCount'
@@ -529,6 +587,17 @@ const SUFFIX_RULES: readonly SuffixRule[] = [
   {
     regex: /\s*(?:,\s*)?(?:for every|per)\s+(\d+)\s+of\s+your\s+lowest\s+Attribute\s*$/i,
     toTag: (m) => ({ type: 'PerStat', stat: 'LowestAttr', div: Number(m[1]) }),
+  },
+  {
+    regex: /\s*(?:,\s*)?(?:for every|per)\s+(\d+)\s+Accuracy\s+Rating,\s*up\s+to\s+(\d+)%?\s*$/i,
+    toTag: (m) =>
+      ({
+        type: 'PerStat',
+        stat: 'Accuracy',
+        div: Number(m[1]),
+        limit: Number(m[2]),
+        limitTotal: true,
+      }) as unknown as ModTag,
   },
   {
     regex: /\s*(?:,\s*)?(?:for every|per)\s+(\d+)\s+Accuracy\s+Rating\s*$/i,
@@ -836,12 +905,64 @@ const SUFFIX_RULES: readonly SuffixRule[] = [
     toTag: () => ({ type: 'Condition', var: 'Unarmed' }),
   },
   {
+    regex: /\s*(?:,\s*)?if\s+you(?:'ve|\s+have)\s+dealt\s+a\s+Non-Critical\s+(?:Hit|Strike)\s+Recently\s*$/i,
+    toTag: () => ({ type: 'Condition', var: 'NonCritRecently' }),
+  },
+  {
+    regex: /\s*(?:,\s*)?if\s+you(?:'ve|\s+have)\s+Triggered\s+a\s+Skill\s+Recently\s*$/i,
+    toTag: () => ({ type: 'Condition', var: 'TriggeredSkillRecently' }),
+  },
+  {
+    regex: /\s*(?:,\s*)?while\s+you\s+have\s+a\s+Totem\s*$/i,
+    toTag: () => ({ type: 'Condition', var: 'HaveTotem' }),
+  },
+  {
+    regex: /\s*(?:,\s*)?against\s+Slowed\s+Enemies\s*$/i,
+    toTag: () => ({ type: 'Condition', var: 'EnemySlowed' }),
+  },
+  {
+    regex: /\s*(?:,\s*)?(?:against|on)\s+Cursed\s+Enemies\s*$/i,
+    toTag: () => ({ type: 'Condition', var: 'EnemyCursed' }),
+  },
+  {
+    regex: /\s*(?:,\s*)?against\s+Marked\s+Enem(?:y|ies)\s*$/i,
+    toTag: () => ({ type: 'Condition', var: 'EnemyMarked' }),
+  },
+  {
+    regex: /\s*(?:,\s*)?against\s+Poisoned\s+Enemies\s*$/i,
+    toTag: () => ({ type: 'Condition', var: 'EnemyPoisoned' }),
+  },
+  {
+    regex: /\s*(?:,\s*)?(?:with|on|from)\s+Critical\s+(?:Hits?|Strikes?)\s*$/i,
+    toTag: () => ({ type: 'Condition', var: 'CriticalStrike' }),
+  },
+  {
+    regex: /\s*(?:,\s*)?while\s+a\s+Rare\s+or\s+Unique\s+Enemy\s+is\s+in\s+your\s+Presence\s*$/i,
+    toTag: () => ({ type: 'Condition', var: 'EnemyRareOrUnique' }),
+  },
+  {
+    regex: /\s*(?:,\s*)?against\s+Enemies\s+with\s+Fully\s+Broken\s+Armour\s*$/i,
+    toTag: () => ({ type: 'Condition', var: 'EnemyArmourBroken' }),
+  },
+  {
+    regex: /\s*(?:,\s*)?while\s+you\s+have\s+an\s+Ally\s+in\s+your\s+Presence\s*$/i,
+    toTag: () => ({ type: 'Condition', var: 'MultiplierThreshold:NearbyAlly:1|CompanionInPresence' }),
+  },
+  {
+    regex: /\s*(?:,\s*)?while\s+Chilled\s*$/i,
+    toTag: () => ({ type: 'Condition', var: 'Chilled' }),
+  },
+  {
     regex: /\s*(?:,\s*)?while\s+Surrounded\s*$/i,
     toTag: () => ({ type: 'Condition', var: 'Surrounded' }),
   },
 ];
 
 const PREFIX_RULES: readonly SuffixRule[] = [
+  {
+    regex: /^while\s+you\s+have\s+a\s+Totem,\s+/i,
+    toTag: () => ({ type: 'Condition', var: 'HaveTotem' }),
+  },
   {
     regex: /^(?:while|when)\s+not\s+on\s+Low\s+Life,\s+/i,
     toTag: () => ({ type: 'Condition', var: 'LowLife', neg: true }),
