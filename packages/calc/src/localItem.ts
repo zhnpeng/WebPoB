@@ -30,6 +30,7 @@ interface LocalWeaponAccum {
   incAttackSpeed: number;
   flatCrit: number;
   incCrit: number;
+  noQualityPhys: boolean;
   eleDamage: Partial<Record<'Fire' | 'Cold' | 'Lightning' | 'Chaos', [number, number]>>;
 }
 
@@ -148,12 +149,40 @@ function tryConsumeLocalWeaponMod(
   rawLine: string,
   acc: LocalWeaponAccum,
   allowBonded?: boolean,
+  quality = 0,
 ): boolean {
-  let line = normalizeStatLineToEn(rawLine);
+  let line = normalizeStatLineToEn(rawLine.replace(/\{[^}]*\}/g, '').trim());
   if (!line) return false;
   if (/^Bonded\s*:/i.test(line)) {
     if (!allowBonded) return false;
     line = line.replace(/^Bonded\s*:\s*/i, '').trim();
+  }
+
+  // PoE 1 Harvest Alternate Quality weapon enchants (`ModParser.lua:5956-5959` & `Item.lua`):
+  // - "Quality does not increase Physical Damage" disables the default weapon Quality multiplier.
+  // - "X% increased Critical Strike Chance per Y% Quality" scales LOCAL weapon crit chance.
+  // - "X% increased Attack Speed per Y% Quality" scales LOCAL weapon attack speed.
+  if (/^Quality does not increase Physical Damage$/i.test(line)) {
+    acc.noQualityPhys = true;
+    return true;
+  }
+  const mQualCrit = line.match(
+    /^(\d+)% increased Critical (?:Strike|Hit) Chance per (\d+)% Quality$/i,
+  );
+  if (mQualCrit) {
+    const step = Number(mQualCrit[2]);
+    if (step > 0 && quality > 0) {
+      acc.incCrit += Math.floor(quality / step) * Number(mQualCrit[1]);
+    }
+    return true;
+  }
+  const mQualAs = line.match(/^(\d+)% increased Attack Speed per (\d+)% Quality$/i);
+  if (mQualAs) {
+    const step = Number(mQualAs[2]);
+    if (step > 0 && quality > 0) {
+      acc.incAttackSpeed += Math.floor(quality / step) * Number(mQualAs[1]);
+    }
+    return true;
   }
 
   // Strictly global weapon modifiers must never be consumed into local weapon stats
@@ -707,13 +736,14 @@ export function resolveItemEffectiveStats(
     incAttackSpeed: 0,
     flatCrit: 0,
     incCrit: 0,
+    noQualityPhys: false,
     eleDamage: {},
   };
   for (const line of effectiveImplicits) {
-    if (!tryConsumeLocalWeaponMod(line, acc, opts?.allowBonded)) globalImplicits.push(line);
+    if (!tryConsumeLocalWeaponMod(line, acc, opts?.allowBonded, item.quality)) globalImplicits.push(line);
   }
   for (const line of effectiveExplicits) {
-    if (!tryConsumeLocalWeaponMod(line, acc, opts?.allowBonded)) globalExplicits.push(line);
+    if (!tryConsumeLocalWeaponMod(line, acc, opts?.allowBonded, item.quality)) globalExplicits.push(line);
   }
 
   if (item.localStatsPrecomputed) {
@@ -735,7 +765,7 @@ export function resolveItemEffectiveStats(
   }
 
   const rawBase = getBaseItemStats(item.baseName, 0, game)?.weapon ?? item.weaponStats!;
-  const qMult = 1 + Math.max(0, item.quality) / 100;
+  const qMult = acc.noQualityPhys ? 1 : 1 + Math.max(0, item.quality) / 100;
   const physMin = Math.round((rawBase.physicalMin + acc.flatPhysMin) * (1 + acc.incPhys / 100) * qMult);
   const physMax = Math.round((rawBase.physicalMax + acc.flatPhysMax) * (1 + acc.incPhys / 100) * qMult);
   const attacksPerSecond = Math.round(rawBase.attacksPerSecond * (1 + acc.incAttackSpeed / 100) * 100) / 100;

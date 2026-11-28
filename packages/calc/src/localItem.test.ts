@@ -326,4 +326,42 @@ describe('localItem — resolveItemEffectiveStats', () => {
     const resStaff = resolveItemEffectiveStats(staff, 'poe2');
     expect(resStaff.globalImplicits).toContain('+810 to maximum Mana');
   });
+
+  it('consumes PoE 1 Harvest Alternate Quality weapon enchants locally (no phys quality, local crit & attack speed per quality)', () => {
+    const paradoxica: Item = {
+      id: 'w-harvest-1',
+      name: 'Paradoxica',
+      baseName: 'Vaal Rapier',
+      rarity: 'UNIQUE',
+      slotType: 'Weapon 1',
+      quality: 20,
+      localStatsPrecomputed: false,
+      weaponStats: {
+        weaponType: 'Sword',
+        twoHanded: false,
+        physicalMin: 100,
+        physicalMax: 200,
+        attacksPerSecond: 1.3,
+        critChance: 6.5,
+      },
+      implicits: [
+        '{crafted}Quality does not increase Physical Damage',
+        '{crafted}1% increased Critical Strike Chance per 4% Quality',
+        '{crafted}1% increased Attack Speed per 8% Quality',
+        '+25% to Global Critical Strike Multiplier',
+      ],
+      explicits: ['19% increased Attack Speed'],
+    };
+
+    const res = resolveItemEffectiveStats(paradoxica, 'poe1');
+    // Quality does NOT scale physicalMin/Max (stays 100-200 instead of 120-240)
+    expect(res.weaponStats?.physicalMin).toBe(100);
+    expect(res.weaponStats?.physicalMax).toBe(200);
+    // 20 / 4 = 5% local crit: round(6.5 * 1.05 * 100) / 100 = 6.83
+    expect(res.weaponStats?.critChance).toBe(6.83);
+    // 19% + floor(20 / 8) = 21% local attack speed: round(1.3 * 1.21 * 100) / 100 = 1.57
+    expect(res.weaponStats?.attacksPerSecond).toBe(1.57);
+    // None of the local Harvest quality lines leak into globalImplicits
+    expect(res.globalImplicits).toEqual(['+25% to Global Critical Strike Multiplier']);
+  });
 });

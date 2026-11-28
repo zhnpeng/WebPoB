@@ -1445,6 +1445,14 @@ export function evaluatePersistentBuffAndStanceSkills(
         if (lower === 'charge regulation') {
           if (seenPersistentBuffs.has('charge regulation')) continue;
           seenPersistentBuffs.add('charge regulation');
+          // PoB 2 `poe2-gems.json` (`poe2_chargeregulation`) already ships compiledMods for
+          // Speed INC / CritChance MORE / Armour-Evasion-ES MORE which `evaluateAurasAndWatchersEye`
+          // injects natively. Skip emitting fallback mods when `gemDef.compiledMods` is populated
+          // so Charge Regulation is NEVER double-applied (still works for synthetic/uncompiled defs).
+          if (def?.compiledMods && def.compiledMods.length > 0) {
+            appliedSkills.push('Charge Regulation');
+            continue;
+          }
           // PoB 2 Data/Skills/act_int.lua:3119-3245 ChargeRegulationPlayer (Lv1..40):
           // - With Frenzy Charges (>=1): Speed INC (20%..30%)
           // - With Power Charges (>=1): CritChance MORE (20%..32%)

@@ -1110,5 +1110,27 @@ describe('multiPartAndMetaRuntime', () => {
     expect(playerDb.more('Armour')).toBeCloseTo(1.2, 4);
     expect(playerDb.more('Evasion')).toBeCloseTo(1.2, 4);
     expect(playerDb.more('EnergyShield')).toBeCloseTo(1.2, 4);
+
+    // When gemDef already ships compiledMods (like poe2-gems.json), fallback mods MUST NOT be re-emitted
+    const crCompiled = makeGemDef({
+      id: 'poe2_chargeregulation_compiled',
+      en: 'Charge Regulation',
+      game: 'poe2',
+      tags: ['Buff', 'Persistent'],
+      compiledMods: [{ name: 'Speed', type: 'INC', value: 25, flags: 0, keywordFlags: 0 }],
+    });
+    const compiledDb = new ModDB();
+    compiledDb.setMultiplier('FrenzyCharge', 3);
+    const compiledRes = evaluatePersistentBuffAndStanceSkills(
+      [makeGroup({ gems: [makeGemInst({ gemId: crCompiled.id, level: 20 })] })],
+      1,
+      'poe2',
+      compiledDb,
+      new ModDB(),
+      (id) => (id === crCompiled.id ? crCompiled : undefined),
+    );
+    expect(compiledRes.appliedSkills).toContain('Charge Regulation');
+    expect(compiledRes.playerModsAdded).toHaveLength(0);
+    expect(compiledDb.sum('INC', 'Speed')).toBe(0);
   });
 });
