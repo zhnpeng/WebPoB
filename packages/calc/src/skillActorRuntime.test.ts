@@ -1169,6 +1169,29 @@ describe('skillActorRuntime — 5. PoB 1 & PoB 2 Ailment, Skill DoT, Routing & M
     );
     // round(0.81 * 1.22 * 100) / 100 = 0.99 (NOT 1 + (-19 + 22)/100 = 1.03!)
     expect(skillDb.more('Damage', ModFlag.Attack, KeywordFlag.Attack)).toBeCloseTo(0.99, 4);
+
+    // When engine.ts has ALREADY converted quality MORE into a non-integer relative multiplier
+    // effRelMore = ((100 + 138 + 120) / (100 + 138) - 1) * 100 = 50.420168..., do NOT coalesce
+    // it a second time when the base integer mod (138) arrives afterwards!
+    const relDb = new ModDB();
+    const effRelMore = ((100 + 138 + 120) / (100 + 138) - 1) * 100;
+    injectCompiledGemMods(
+      relDb,
+      enemyDb,
+      minionDb,
+      [{ name: 'Damage', type: 'MORE', value: effRelMore, keywordFlags: KeywordFlag.Bleed }],
+      'Skill: Lacerate of Haemorrhage (Q60)',
+      { game: 'poe1' },
+    );
+    injectCompiledGemMods(
+      relDb,
+      enemyDb,
+      minionDb,
+      [{ name: 'Damage', type: 'MORE', value: 138, keywordFlags: KeywordFlag.Bleed }],
+      'Skill: Lacerate of Haemorrhage',
+      { game: 'poe1' },
+    );
+    expect(relDb.more('Damage', ModFlag.Dot | ModFlag.Ailment, KeywordFlag.Bleed)).toBeCloseTo(3.58, 3);
   });
 
   it('supports PoE 2 config PoisonStacks, DurationofDamagingAilmentsDuration, Escalating Toxins, PoisonFaster, and AllDamageCanPoison', () => {
