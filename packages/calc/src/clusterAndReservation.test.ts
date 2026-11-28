@@ -3247,4 +3247,117 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     // Deferred to engine.ts:4818 -> db Life remains 1000 here (no duplicate Life BASE added)
     expect(db.calcStat('Life').total).toBe(1000);
   });
+
+  it('parses Zealotry Watcher Eye Consecrated Ground CritChance into canonical CritChance INC (not dead ConditionalCritChance)', () => {
+    const zealotryDef: GemDefinition = {
+      id: 'poe1_zealotry',
+      name: { en: 'Zealotry', zh: '狂热' },
+      category: 'active',
+      game: 'poe1',
+      color: 'blue',
+      tags: ['aura', 'spell', 'aoe', 'intelligence'],
+      modFlags: ModFlag.Spell | ModFlag.Area,
+      keywordFlags: KeywordFlag.Aura,
+      manaReservationPct: 50,
+      isAuraOrBuff: true,
+      stats: [],
+      compiledMods: [],
+    };
+    const watchersEye: Item = {
+      id: 'we-zeal',
+      name: "Watcher's Eye",
+      baseName: 'Prismatic Jewel',
+      rarity: 'UNIQUE',
+      slotType: 'Any',
+      quality: 0,
+      implicits: [],
+      explicits: [
+        '116% increased Critical Strike Chance against Enemies on Consecrated Ground while affected by Zealotry',
+      ],
+      rawText: '',
+    };
+    const db = new ModDB();
+    evaluateAurasAndWatchersEye({
+      build: mkBuild({
+        game: 'poe1',
+        skills: [
+          {
+            id: 'sg-zeal',
+            label: 'Zealotry',
+            enabled: true,
+            gems: [{ instanceId: 'z1', gemId: 'poe1_zealotry', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+      }),
+      playerDb: db,
+      socketedJewels: [watchersEye],
+      getGemByIdFn: (_g, id) => (id === 'poe1_zealotry' ? zealotryDef : undefined),
+      maxMana: 1000,
+    });
+    expect(db.sum('INC', 'CritChance')).toBe(116);
+  });
+
+  it('applies Bane / Bane of Condemnation -25% MORE Curse Effect penalty (0.75x) to linked Hexes in the same skill group', () => {
+    const baneAltDef: GemDefinition = {
+      id: 'poe1_banealtx',
+      name: { en: 'Bane of Condemnation', zh: '定罪灾厄' },
+      category: 'active',
+      game: 'poe1',
+      color: 'blue',
+      tags: ['spell', 'aoe', 'duration', 'chaos', 'hex'],
+      modFlags: ModFlag.Spell | ModFlag.Area,
+      keywordFlags: KeywordFlag.Spell | KeywordFlag.Chaos,
+      stats: [],
+    };
+    const punishmentDef: GemDefinition = {
+      id: 'poe1_punishment',
+      name: { en: 'Punishment', zh: '惩罚' },
+      category: 'active',
+      game: 'poe1',
+      color: 'red',
+      tags: ['spell', 'aoe', 'duration', 'curse', 'hex'],
+      modFlags: ModFlag.Spell | ModFlag.Area,
+      keywordFlags: KeywordFlag.Curse,
+      stats: [],
+      compiledMods: [
+        {
+          name: 'DamageTaken',
+          type: 'INC',
+          value: 58,
+          flags: 0,
+          keywordFlags: 0,
+          target: 'enemy',
+          tags: [{ type: 'Condition', var: 'LowLife' }],
+        },
+      ],
+    };
+    const pDb = new ModDB();
+    const eDb = new ModDB();
+    eDb.setCondition('LowLife', true);
+    const build = mkBuild({
+      game: 'poe1',
+      skills: [
+        {
+          id: 'sg-bane',
+          label: 'Bane',
+          enabled: true,
+          gems: [
+            { instanceId: 'b1', gemId: 'poe1_banealtx', level: 21, quality: 20, enabled: true },
+            { instanceId: 'p1', gemId: 'poe1_punishment', level: 20, quality: 0, enabled: true },
+          ],
+        },
+      ],
+    });
+    build.config.rawInputs = { conditionEnemyLowLife: true };
+    evaluateAurasAndWatchersEye({
+      build,
+      playerDb: pDb,
+      enemyDb: eDb,
+      getGemByIdFn: (_g, id) =>
+        id === 'poe1_banealtx' ? baneAltDef : id === 'poe1_punishment' ? punishmentDef : undefined,
+      maxMana: 1000,
+    });
+    // 58 * 0.75 = 43.5 -> truncated to 43
+    expect(eDb.sum('INC', 'DamageTaken')).toBe(43);
+  });
 });

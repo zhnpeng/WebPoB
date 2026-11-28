@@ -2300,6 +2300,13 @@ export function parseWatchersEyeCondition(
  * delegating first to `parseModLines` and covering Watcher's Eye-specific phrasings.
  */
 function parseWatchersEyeEffectLine(strippedLine: string, source: string): Mod[] {
+  // Handle Zealotry Consecrated Ground CritChance BEFORE parseModLines, which otherwise emits
+  // non-canonical `ConditionalCritChance` and drops the +100..120% INC CritChance.
+  const mZealotryCrit = strippedLine.match(
+    /^(\d+)% increased Critical Strike Chance against Enemies on Consecrated Ground$/i,
+  );
+  if (mZealotryCrit) return [mkMod('CritChance', 'INC', Number(mZealotryCrit[1]), source)];
+
   const direct = parseModLines([strippedLine], source);
   if (direct.length > 0) return direct;
 
@@ -2714,6 +2721,7 @@ export function evaluateAurasAndWatchersEye(
     isMark: boolean;
     effQuality: number;
     groupCurseEffectInc: number;
+    groupCurseEffectMoreMult: number;
     groupHasBonechill: boolean;
     groupBonechillColdTakenInc: number;
     groupSkitterbotAilmentEffectInc: number;
@@ -2813,6 +2821,7 @@ export function evaluateAurasAndWatchersEye(
     let blessingName: string | undefined;
     let blessingEffectPct = 0;
     let groupCurseEffectInc = 0;
+    let groupCurseEffectMoreMult = 1;
     let groupHasBonechill = false;
     let groupBonechillColdTakenInc = 0;
     let groupSkitterbotAilmentEffectInc = 0;
@@ -2997,8 +3006,25 @@ export function evaluateAurasAndWatchersEye(
       }
     }
 
-    // Track PoE 1 group-level global support effects (Combustion, Bonechill, Maim, Feeding Frenzy)
+    // Track PoE 1 group-level global support effects (Combustion, Bonechill, Maim, Feeding Frenzy, Bane curse penalty)
     if (build.game === 'poe1') {
+      for (const gm of group.gems) {
+        if (!gm.enabled) continue;
+        const gd = lookupGem('poe1', gm.gemId);
+        if (!gd || gd.category !== 'active') continue;
+        const gn = gd.name.en.trim().toLowerCase();
+        if (gn === 'bane' || gn === 'bane of condemnation') {
+          // Upstream PoB1 act_int.lua: Bane & Bane of Condemnation apply -25% MORE Curse Effect (0.75x) to linked Hexes;
+          // base Bane quality also grants +1% INC Curse Effect per 1% Q.
+          groupCurseEffectMoreMult *= 0.75;
+          if (gn === 'bane') {
+            const gBon = resolveGemBonuses(gd, playerDb, groupSocketedRules);
+            const effQ = Math.max(0, (gm.quality ?? 0) + gBon.qualityBonus + groupEnhanceQualityBonus);
+            groupCurseEffectInc += effQ;
+          }
+          break;
+        }
+      }
       const groupActiveDefs = group.gems
         .filter((g) => g.enabled)
         .map((g) => lookupGem('poe1', g.gemId))
@@ -3326,6 +3352,7 @@ export function evaluateAurasAndWatchersEye(
           isApproachingFlamesBuff,
           isEnemyOnlyAura,
           groupCurseEffectInc,
+          groupCurseEffectMoreMult,
           groupHasBonechill,
           groupBonechillColdTakenInc,
           groupSkitterbotAilmentEffectInc,
@@ -4069,8 +4096,9 @@ export function evaluateAurasAndWatchersEye(
                 ),
               )
             : 1;
+        const baneHexMoreMult = isCurseOrMark && !isMark ? cand.groupCurseEffectMoreMult : 1;
         const enemyMult = isCurseOrMark
-          ? Math.max(0, 1 + totalCurseInc / 100) * poe2BossHexMult
+          ? Math.max(0, 1 + totalCurseInc / 100) * baneHexMoreMult * poe2BossHexMult
           : lowerAuraName === 'aspect of the spider'
             ? spiderWebStacks
             : (1 + auraEffectPctForPlayer / 100) * supremeEgoMoreMult;
