@@ -7,6 +7,7 @@ import {
   type PassiveNode,
   type PassiveTreeData,
 } from '@webpob/core';
+import { getTimelessJewelData, getTimelessLutBuffer } from '@webpob/data';
 import { normalizeStatLineToEn } from '@webpob/i18n';
 import { POE1_EXPANSION_SOCKETS, isClusterJewelItem } from './clusterAndReservation.js';
 import { parseModLines } from './modParser.js';
@@ -1362,9 +1363,29 @@ interface TimelessSmallAttrAdjustment {
   replaceBaseAttrs?: boolean;
   addStr?: number;
   addDex?: number;
+  addInt?: number;
 }
 
 type Poe1TimelessSmallFaction = 'karui' | 'maraketh' | 'templar' | 'eternal';
+
+function extractPoe1TimelessSeed(lines: readonly string[]): number | null {
+  for (const line of lines) {
+    const m =
+      line.match(/Commanded leadership over (\d+) warriors under\b/i) ??
+      line.match(/Denoted service of (\d+) dekhara in the akhara of\b/i) ??
+      line.match(/Carved to glorify (\d+) new faithful converted by High Templar\b/i) ??
+      line.match(/Commissioned (\d+) coins to commemorate\b/i);
+    if (m) return Number(m[1]);
+  }
+  return null;
+}
+
+const FACTION_TO_TIMELESS_NAME: Record<Poe1TimelessSmallFaction, string> = {
+  karui: 'lethal pride',
+  maraketh: 'brutal restraint',
+  templar: 'militant faith',
+  eternal: 'elegant hubris',
+};
 
 function detectPoe1TimelessSmallFaction(
   jewel: Item,
@@ -1429,6 +1450,72 @@ function buildTimelessSmallAttrMap(
   const map = new Map<number, TimelessSmallAttrAdjustment>();
   if (tree.game !== 'poe1') return map;
 
+  const tlDataset = getTimelessJewelData('poe1') as
+    | {
+        reachableNodeIds?: number[];
+        jewels?: Record<
+          string,
+          {
+            name?: string;
+            file?: string;
+            numNodes?: number;
+            numSeeds?: number;
+            minSeed?: number;
+            maxSeed?: number;
+            seedStep?: number;
+            localToGlobal?: Record<string, number>;
+          }
+        >;
+        legionPassives?: Record<
+          string,
+          { sd?: string[]; stats?: string[]; kind?: string; mode?: 'add' | 'replace' }
+        >;
+      }
+    | null
+    | undefined;
+  let nodeIdToIdx: Map<number, number> | undefined;
+  let jewelsByName:
+    | Map<
+        string,
+        {
+          file: string;
+          numNodes: number;
+          numSeeds: number;
+          minSeed: number;
+          maxSeed: number;
+          seedStep: number;
+          localToGlobal?: Record<string, number>;
+        }
+      >
+    | undefined;
+  if (tlDataset?.reachableNodeIds && tlDataset.jewels && tlDataset.legionPassives) {
+    nodeIdToIdx = new Map<number, number>();
+    tlDataset.reachableNodeIds.forEach((nid, idx) => {
+      if (typeof nid === 'number') nodeIdToIdx!.set(nid, idx);
+    });
+    jewelsByName = new Map();
+    for (const desc of Object.values(tlDataset.jewels)) {
+      if (
+        desc?.name &&
+        desc.file &&
+        typeof desc.numNodes === 'number' &&
+        typeof desc.numSeeds === 'number' &&
+        typeof desc.minSeed === 'number' &&
+        typeof desc.maxSeed === 'number'
+      ) {
+        jewelsByName.set(desc.name.trim().toLowerCase(), {
+          file: desc.file,
+          numNodes: desc.numNodes,
+          numSeeds: desc.numSeeds,
+          minSeed: desc.minSeed,
+          maxSeed: desc.maxSeed,
+          seedStep: desc.seedStep && desc.seedStep > 0 ? desc.seedStep : 1,
+          localToGlobal: desc.localToGlobal,
+        });
+      }
+    }
+  }
+
   for (const { nodeId, jewel } of jewels) {
     const socketNode = tree.nodes[nodeId];
     if (!socketNode) continue;
@@ -1436,21 +1523,71 @@ function buildTimelessSmallAttrMap(
     const faction = detectPoe1TimelessSmallFaction(jewel, rawLines);
     if (!faction) continue;
 
+    const seed = extractPoe1TimelessSeed(rawLines);
+    const desc = seed !== null && jewelsByName ? jewelsByName.get(FACTION_TO_TIMELESS_NAME[faction]) : undefined;
+    const lutBuf = desc ? getTimelessLutBuffer(desc.file) : null;
+    const seedIdx =
+      desc && seed !== null && seed >= desc.minSeed && seed <= desc.maxSeed && (seed - desc.minSeed) % desc.seedStep === 0
+        ? Math.floor((seed - desc.minSeed) / desc.seedStep)
+        : -1;
+
     const radiusPx = getJewelRadiusPx('Large', 'poe1', tree.version);
     const nodesInRadius = getAllNodesInRadius(socketNode, tree, radiusPx);
     for (const n of nodesInRadius) {
-      if (n.kind !== 'small') continue;
-      const isAttrOrTattoo = nodeOverrides?.[n.id] != null || isPoe1AttributeSmallPassive(n);
-      if (faction === 'karui') {
-        map.set(n.id, { addStr: isAttrOrTattoo ? 2 : 4 });
-      } else if (faction === 'maraketh') {
-        map.set(n.id, { addDex: isAttrOrTattoo ? 2 : 4 });
-      } else if (faction === 'templar') {
-        if (isAttrOrTattoo) {
+      if (n.kind === 'small') {
+        const isAttrOrTattoo = nodeOverrides?.[n.id] != null || isPoe1AttributeSmallPassive(n);
+        if (faction === 'karui') {
+          map.set(n.id, { addStr: isAttrOrTattoo ? 2 : 4 });
+        } else if (faction === 'maraketh') {
+          map.set(n.id, { addDex: isAttrOrTattoo ? 2 : 4 });
+        } else if (faction === 'templar') {
+          if (isAttrOrTattoo) {
+            map.set(n.id, { replaceBaseAttrs: true });
+          }
+        } else if (faction === 'eternal') {
           map.set(n.id, { replaceBaseAttrs: true });
         }
-      } else if (faction === 'eternal') {
-        map.set(n.id, { replaceBaseAttrs: true });
+      } else if (
+        n.kind === 'notable' &&
+        desc &&
+        lutBuf &&
+        nodeIdToIdx &&
+        tlDataset?.legionPassives &&
+        seedIdx >= 0 &&
+        seedIdx < desc.numSeeds
+      ) {
+        // Also evaluate Timeless LUT notable attribute bonuses/replacements (`PassiveSpec.lua:1410-1429`)
+        // so overlapping Transcendent / Tempered jewels observe conquered unallocated notable Str/Dex/Int
+        // (e.g. Lethal Pride +20 Strength on unallocated Notable inside Transcendent Flesh radius).
+        const nodeIdx = nodeIdToIdx.get(n.id);
+        if (nodeIdx === undefined || nodeIdx < 0 || nodeIdx >= desc.numNodes) continue;
+        const byteIndex = nodeIdx * desc.numSeeds + seedIdx;
+        if (byteIndex < 0 || byteIndex >= lutBuf.length) continue;
+        const localId = lutBuf[byteIndex]!;
+        const globalId = desc.localToGlobal?.[String(localId)] ?? localId;
+        const passive = tlDataset.legionPassives[String(globalId)];
+        if (!passive) continue;
+        const adj: TimelessSmallAttrAdjustment = {};
+        if (passive.kind === 'replace' || passive.mode === 'replace' || faction === 'eternal') {
+          adj.replaceBaseAttrs = true;
+        }
+        const passiveStats = Array.isArray(passive.sd)
+          ? passive.sd
+          : Array.isArray(passive.stats)
+            ? passive.stats
+            : [];
+        if (passiveStats.length > 0) {
+          const mods = parseModLines(passiveStats, 'Timeless LUT');
+          for (const mod of mods) {
+            if (mod.type !== 'BASE' || typeof mod.value !== 'number') continue;
+            if (mod.name === 'Str') adj.addStr = (adj.addStr ?? 0) + mod.value;
+            else if (mod.name === 'Dex') adj.addDex = (adj.addDex ?? 0) + mod.value;
+            else if (mod.name === 'Int') adj.addInt = (adj.addInt ?? 0) + mod.value;
+          }
+        }
+        if (adj.replaceBaseAttrs || adj.addStr || adj.addDex || adj.addInt) {
+          map.set(n.id, adj);
+        }
       }
     }
   }
@@ -1508,6 +1645,8 @@ function sumBaseAttributeOnNodes(
       total += timelessAdj.addStr;
     } else if (attr === 'Dex' && timelessAdj?.addDex) {
       total += timelessAdj.addDex;
+    } else if (attr === 'Int' && timelessAdj?.addInt) {
+      total += timelessAdj.addInt;
     }
   }
   return total;

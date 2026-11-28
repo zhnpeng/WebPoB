@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Build, Item, PassiveNode, PassiveTreeData } from '@webpob/core';
 import {
+  getTimelessJewelData,
+  registerTimelessJewelData,
+  registerTimelessLutBuffer,
+} from '@webpob/data';
+import {
   applyClusterJewelAllocationFix,
   collectAllocatedAnointNodes,
   computeJewelEffectScale,
@@ -1661,5 +1666,79 @@ describe('PoE 2 The Adorned Sinister Sockets & Undying Hate Conquered Passives',
     );
     expect(farRes.details[0]?.radiusLabel).toBe('Very Large');
     expect(farRes.addedStatLines.flatMap((e) => e.lines)).toContain('8% increased Critical Strike Chance');
+  });
+
+  it('counts Lethal Pride LUT +20 Strength on overlapping unallocated Notables for Transcendent Flesh Crit Multi', () => {
+    const prevDataset = getTimelessJewelData('poe1');
+    const lutFile = 'timeless/test-lp-transcendent.bin';
+    try {
+      registerTimelessJewelData('poe1', {
+        game: 'poe1',
+        reachableNodeIds: [37078],
+        jewels: {
+          lethal_pride: {
+            name: 'Lethal Pride',
+            file: lutFile,
+            numNodes: 1,
+            numSeeds: 1,
+            minSeed: 12315,
+            maxSeed: 12315,
+            seedStep: 1,
+          },
+        },
+        legionPassives: {
+          '1': { dn: 'Add Strength', kind: 'addition', sd: ['+20 to Strength'] },
+        },
+      } as any);
+      registerTimelessLutBuffer(lutFile, new Uint8Array([1]));
+
+      const tree: PassiveTreeData = {
+        game: 'poe1',
+        version: '3_28',
+        bounds: { minX: -2000, maxX: 2000, minY: -2000, maxY: 2000 },
+        nodes: {
+          6230: mkNode(6230, 'Jewel Socket', 'jewel', -770, -437),
+          48768: mkNode(48768, 'Jewel Socket', 'jewel', 776, -439),
+          37078: mkNode(37078, 'Path of the Savant', 'notable', 0, -437, ['+20 to Intelligence']),
+          16775: mkNode(16775, 'Strength', 'small', -770, 0, ['+10 to Strength']),
+        },
+        groups: {},
+        classStartNodeIds: {},
+      };
+      const tf = mkItem({
+        id: 'tf-1',
+        name: 'Transcendent Flesh',
+        baseName: 'Crimson Jewel',
+        rarity: 'UNIQUE',
+        explicits: ['+7% to Critical Strike Multiplier per 10 Strength on Unallocated Passives in Radius'],
+        rawText: 'Rarity: UNIQUE\nTranscendent Flesh\nCrimson Jewel\nRadius: Medium',
+      });
+      const lp = mkItem({
+        id: 'lp-1',
+        name: 'Lethal Pride',
+        baseName: 'Timeless Jewel',
+        rarity: 'UNIQUE',
+        explicits: [
+          'Commanded leadership over 12315 warriors under Kaom',
+          'Passives in radius are Conquered by the Karui',
+        ],
+        rawText: 'Rarity: UNIQUE\nLethal Pride\nTimeless Jewel\nRadius: Large',
+      });
+
+      const res = evaluateRadiusAndDistanceJewels(
+        [
+          { nodeId: 6230, jewel: tf },
+          { nodeId: 48768, jewel: lp },
+        ],
+        tree,
+        new Set([6230, 48768]),
+        1,
+      );
+      const tfLines = res.addedStatLines.find((s) => s.source.includes('Transcendent Flesh'))?.lines ?? [];
+      // 10 Str (small 16775) + 2 Str (LP on small 16775? outside LP 1800px: dist=1607 <= 1800 -> +2) + 20 Str (LP LUT on notable 37078) = 32 Str -> floor(7 * 32 / 10) = +22% Crit Multi!
+      expect(tfLines).toContain('+22% to Critical Strike Multiplier');
+    } finally {
+      if (prevDataset) registerTimelessJewelData('poe1', prevDataset);
+    }
   });
 });
