@@ -2738,6 +2738,59 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
     pattern: /^Damage cannot be Reflected$/i,
     build: (_, src) => [mkMod('CannotTakeReflectedDamage', 'FLAG', true, src)],
   },
+  // Wave 6N: 10-build near-5% sweep + The Grey Wind + Watcher's Eye Crit Pen
+  {
+    pattern: /^Critical Strikes Penetrate (\d+)% of Enemy (Elemental|Fire|Cold|Lightning|Chaos) Resistances?(?: while affected by ([A-Za-z' ]+))?$/i,
+    build: (m, src) => {
+      const val = Number(m[1]);
+      const elem = m[2]!.toLowerCase();
+      const auraTag = m[3]
+        ? [{ type: 'Condition' as const, var: `AffectedBy${m[3].trim().replace(/[^A-Za-z0-9]/g, '')}` }]
+        : undefined;
+      const stats =
+        elem === 'elemental'
+          ? ['CritFirePenetration', 'CritColdPenetration', 'CritLightningPenetration']
+          : [`Crit${capFirst(elem)}Penetration`];
+      return stats.map((st) => ({
+        ...mkMod(st, 'BASE', val, src),
+        ...(auraTag ? { tags: auraTag } : {}),
+      }));
+    },
+  },
+  {
+    pattern: /^Attacks with this Weapon have Added Fire Damage equal to (\d+)% of Player's Maximum Life$/i,
+    build: (m, src) => [mkMod('WeaponAddedFireFromLifePct', 'BASE', Number(m[1]), src, ModFlag.Attack)],
+  },
+  {
+    pattern: /^(\d+)% more Attack Damage for each Non-Instant Spell you've Cast in the past 8 seconds, up to a maximum of (\d+)%$/i,
+    build: (m, src) => {
+      const per = Number(m[1]);
+      const cap = Number(m[2]);
+      return [
+        {
+          ...mkMod('Damage', 'MORE', per, src, ModFlag.Attack),
+          tags: [{ type: 'Multiplier' as const, var: 'NonInstantSpellCastInPast8Sec', limit: Math.round(cap / Math.max(1, per)) }],
+        },
+      ];
+    },
+  },
+  {
+    pattern: /^You have Onslaught while Fortified$/i,
+    build: (_, src) => [
+      {
+        ...mkMod('Onslaught', 'FLAG', true, src),
+        tags: [{ type: 'Condition' as const, var: 'Fortified' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Melee Weapon Hits Inflict (\d+) Withered Debuffs? for \d+ seconds?$/i,
+    build: (_, src) => [mkMod('WitherOnHit', 'FLAG', true, src, ModFlag.Melee)],
+  },
+  {
+    pattern: /^Your Offerings have (\d+)% reduced Effect on you$/i,
+    build: (m, src) => [mkMod('OfferingEffectOnSelf', 'INC', -Number(m[1]), src)],
+  },
 ];
 
 /**

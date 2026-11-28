@@ -1828,4 +1828,38 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       expect.objectContaining({ name: 'GolemBuffEffect:Stone', type: 'INC', value: 36 }),
     ]);
   });
+
+  it('Wave 6N: Watcher Eye Crit Pen, The Grey Wind, Instruments of Virtue, Onslaught while Fortified, WitherOnHit, OfferingEffectOnSelf', () => {
+    expect(
+      parseModLine('Critical Strikes Penetrate 10% of Enemy Elemental Resistances while affected by Zealotry', 'Item'),
+    ).toEqual([
+      expect.objectContaining({ name: 'CritFirePenetration', type: 'BASE', value: 10, tags: [{ type: 'Condition', var: 'AffectedByZealotry' }] }),
+      expect.objectContaining({ name: 'CritColdPenetration', type: 'BASE', value: 10, tags: [{ type: 'Condition', var: 'AffectedByZealotry' }] }),
+      expect.objectContaining({ name: 'CritLightningPenetration', type: 'BASE', value: 10, tags: [{ type: 'Condition', var: 'AffectedByZealotry' }] }),
+    ]);
+    expect(
+      parseModLine("Attacks with this Weapon have Added Fire Damage equal to 12% of Player's Maximum Life", 'Item: The Grey Wind'),
+    ).toEqual([
+      expect.objectContaining({ name: 'WeaponAddedFireFromLifePct', type: 'BASE', value: 12 }),
+    ]);
+    expect(
+      parseModLine("10% more Attack Damage for each Non-Instant Spell you've Cast in the past 8 seconds, up to a maximum of 30%", 'Tree: Instruments of Virtue'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'Damage',
+        type: 'MORE',
+        value: 10,
+        tags: [{ type: 'Multiplier', var: 'NonInstantSpellCastInPast8Sec', limit: 3 }],
+      }),
+    ]);
+    expect(parseModLine('You have Onslaught while Fortified', 'Item')).toEqual([
+      expect.objectContaining({ name: 'Onslaught', type: 'FLAG', value: true, tags: [{ type: 'Condition', var: 'Fortified' }] }),
+    ]);
+    expect(parseModLine('Melee Weapon Hits Inflict 3 Withered Debuffs for 2 seconds', 'Item')).toEqual([
+      expect.objectContaining({ name: 'WitherOnHit', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Your Offerings have 50% reduced Effect on you', 'Tree: Necromancer')).toEqual([
+      expect.objectContaining({ name: 'OfferingEffectOnSelf', type: 'INC', value: -50 }),
+    ]);
+  });
 });
