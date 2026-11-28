@@ -157,6 +157,11 @@ function evalSingleConditionVar(varExpr: string, ctx?: ModEvalContext): boolean 
     return Number.isFinite(thresh) && resolveSkillDistance(ctx) < thresh;
   }
   if (!ctx) return false;
+  if (varExpr === 'EnemyFireExposure' && ctx.conditions.CanApplyFireExposure === false) return false;
+  if (varExpr === 'EnemyColdExposure' && ctx.conditions.CanApplyColdExposure === false) return false;
+  if (varExpr === 'EnemyLightningExposure' && ctx.conditions.CanApplyLightningExposure === false) {
+    return false;
+  }
   if (ctx.conditions[varExpr]) return true;
   if (varExpr.startsWith('MultiplierThreshold:')) {
     const parts = varExpr.split(':');
@@ -328,6 +333,9 @@ function evalSingleConditionVar(varExpr: string, ctx?: ModEvalContext): boolean 
   }
   if (varExpr === 'SpellCostsLife') {
     return (ctx.stats.LifeCost ?? 0) > 0;
+  }
+  if (varExpr === 'CritInPast8Sec') {
+    return Boolean(ctx.conditions.CritRecently || ctx.conditions.SkillCritRecently);
   }
   return false;
 }

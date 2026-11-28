@@ -1145,4 +1145,20 @@ describe('parseConditionalSuffix', () => {
       evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'SpellCostsLife' }] }), ctxAllowed).active,
     ).toBe(true);
   });
+
+  it('enforces CanApply*Exposure===false even when Enemy*Exposure is true and derives CritInPast8Sec from CritRecently (Wave 4S)', () => {
+    const ctxBlocked = createEmptyEvalContext();
+    ctxBlocked.conditions.EnemyLightningExposure = true;
+    ctxBlocked.conditions.CanApplyLightningExposure = false;
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'EnemyLightningExposure' }] }), ctxBlocked)
+        .active,
+    ).toBe(false);
+
+    const ctxCrit = createEmptyEvalContext();
+    ctxCrit.conditions.CritRecently = true;
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'CritInPast8Sec' }] }), ctxCrit).active,
+    ).toBe(true);
+  });
 });
