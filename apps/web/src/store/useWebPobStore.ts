@@ -294,7 +294,7 @@ export const useWebPobStore = create<WebPobState>((set, get) => {
         loadOfficialUniques(game),
         game === 'poe1' ? loadOfficialClusterNotables() : Promise.resolve(0),
       ])
-        .then(() => {
+        .then(async () => {
           const cur = get().build;
           if (cur.game === game) {
             set({ treeRevision: get().treeRevision + 1 });

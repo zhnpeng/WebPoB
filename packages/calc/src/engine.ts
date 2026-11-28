@@ -4201,8 +4201,16 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     explicitEnduranceCharges: cfg.enduranceCharges !== 3 ? cfg.enduranceCharges : undefined,
     baseMaxRage: 30,
     extraMaxRage: db.sum('BASE', 'MaximumRage'),
-    useRage: Boolean(cfg.rage && cfg.rage > 0),
-    explicitRage: cfg.rage,
+    useRage: Boolean(
+      (cfg.rage && cfg.rage > 0) ||
+        (typeof cfg.rawInputs?.multiplierRage === 'number' && cfg.rawInputs.multiplierRage > 0),
+    ),
+    explicitRage:
+      cfg.rage && cfg.rage > 0
+        ? cfg.rage
+        : typeof cfg.rawInputs?.multiplierRage === 'number' && Number.isFinite(cfg.rawInputs.multiplierRage)
+          ? cfg.rawInputs.multiplierRage
+          : cfg.rage,
   });
 
   const extraMaxPowerVal = db.sum('BASE', 'MaxPowerCharges');
@@ -5356,7 +5364,7 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     const alreadyHasArcaneCloakLightning = db
       .calcStat('LightningMax', ModFlag.Hit)
       .sources.some((s) => /arcane cloak/i.test(s.source));
-    const cloakLightning = Math.floor(spentMana * 0.14);
+    const cloakLightning = Math.floor(spentMana * 0.10);
     if (!alreadyHasArcaneCloakLightning && cloakLightning > 0) {
       db.addMod({
         name: 'LightningMin',
@@ -6209,14 +6217,8 @@ function computeGroupOffence(
   let isDiallasMalefaction = false;
   if (build.game === 'poe1' && slotItem) {
     isDiallasMalefaction = slotItem.name.trim().toLowerCase() === "dialla's malefaction";
-    if (
-      isDiallasMalefaction ||
-      [...slotItem.implicits, ...slotItem.explicits].some((l) =>
-        /Gems can be Socketed in this Item ignoring Socket Colour/i.test(l),
-      )
-    ) {
-      slotAlwaysMatchesSocketColor = true;
-    }
+    // Note: "Gems can be Socketed in this Item ignoring Socket Colour" (Dialla's Malefaction) allows
+    // off-colour socketing but does NOT grant +10% matching-colour socket quality to mismatched colours.
     if (slotItem.sockets) {
       for (const ch of slotItem.sockets.toUpperCase()) {
         if (ch === 'R' || ch === 'G' || ch === 'B' || ch === 'W' || ch === 'A') {
@@ -6485,7 +6487,21 @@ function computeGroupOffence(
       Math.min(effectiveActiveCandidates.length - 1, (mainGroup.mainActiveSkillIndex ?? 1) - 1),
     );
     const chosen = effectiveActiveCandidates[pickIdx]!;
-    activeDef = chosen.def;
+    // Generic wrapper -> secondary payload skill delegation (e.g. PoE 1 Frozen Legion -> Frozen Sweep)
+    const SECONDARY_PAYLOAD_SKILL_ID: Record<string, string> = {
+      poe1_frozenlegion: 'poe1_frozensweep',
+    };
+    const delegatedId = SECONDARY_PAYLOAD_SKILL_ID[chosen.def.id];
+    const delegatedDef = delegatedId ? getGemById(build.game, delegatedId) : undefined;
+    activeDef = delegatedDef
+      ? {
+          ...delegatedDef,
+          skillData: {
+            ...(chosen.def.skillData ?? {}),
+            ...(delegatedDef.skillData ?? {}),
+          },
+        }
+      : chosen.def;
     chosenActiveInst = chosen.inst;
     activeBaseLevel = chosen.inst.level;
 
@@ -7028,9 +7044,14 @@ function computeGroupOffence(
       }
     }
 
-    const activeSock = chosen.inst.fromItem
-      ? { qualBonus: 0, diallaLevelBonus: 0, diallaQualBonus: 0 }
-      : consumeMatchingSocketBonus(chosen.def, chosen.inst.instanceId);
+    const isSupportGrantedActive =
+      build.game === 'poe1' &&
+      (chosen.def.id.startsWith('poe1_triggeredsupport') ||
+        chosen.def.id === 'poe1_supportbluntweaponshockwave');
+    const activeSock =
+      chosen.inst.fromItem || isSupportGrantedActive
+        ? { qualBonus: 0, diallaLevelBonus: 0, diallaQualBonus: 0 }
+        : consumeMatchingSocketBonus(chosen.def, chosen.inst.instanceId);
     const defForBonus =
       (chosen as { fromVaalGem?: boolean }).fromVaalGem &&
       !chosen.def.tags.some((t) => t.toLowerCase() === 'vaal')
@@ -7053,7 +7074,8 @@ function computeGroupOffence(
     });
     const prismBonus =
       uniqueGearResult?.skillSpecificGemLevels[chosen.def.name.en.trim().toLowerCase()] ?? 0;
-    const isFixedLevelItemSkill = Boolean(chosen.inst.fromItem) && build.game === 'poe1';
+    const isFixedLevelItemSkill =
+      (Boolean(chosen.inst.fromItem) || isSupportGrantedActive) && build.game === 'poe1';
     const effGemLevelBonus = isFixedLevelItemSkill
       ? 0
       : activeBonus.levelBonus + activeSock.diallaLevelBonus;
@@ -7069,7 +7091,7 @@ function computeGroupOffence(
       chosen.inst.quality + effActiveQualityBonus + enhanceQualityBonus + activeSock.diallaQualBonus + activeSock.qualBonus;
     const prePartIsTotem =
       effectiveSkillTypeSet.has('totem') || effectiveSkillTypeSet.has('summonsattacktotem');
-    resolvedPartStats = resolveActiveSkillPartAndStats(chosen.def, chosen.inst, mainGroup, activeLevel, {
+    resolvedPartStats = resolveActiveSkillPartAndStats(activeDef, chosen.inst, mainGroup, activeLevel, {
       enemyLevel: build.config.enemyLevel,
       game: build.game,
       playerMaxLife: _defence.life,
@@ -7088,23 +7110,23 @@ function computeGroupOffence(
       mainGroup,
       resolvedPartStats.skillData,
     );
-    const chosenLevelEntry = resolveGemLevelEntry(chosen.def, activeLevel);
+    const chosenLevelEntry = resolveGemLevelEntry(activeDef, activeLevel);
     const hasPartOverride = Boolean(
       resolvedPartStats.selectedPart || resolvedPartStats.corpseExplosionDamageType,
     );
     const activeCmods =
       hasPartOverride && resolvedPartStats.compiledMods.length > 0
         ? resolvedPartStats.compiledMods
-        : (chosenLevelEntry?.compiledMods ?? chosen.def.compiledMods);
-    const chosenEffectiveStats = chosenLevelEntry?.stats ?? chosen.def.stats;
+        : (chosenLevelEntry?.compiledMods ?? activeDef.compiledMods);
+    const chosenEffectiveStats = chosenLevelEntry?.stats ?? activeDef.stats;
     activeQuality = applyGemQualityStats(
-      chosen.def,
+      activeDef,
       chosen.inst.quality + effActiveQualityBonus + enhanceQualityBonus + activeSock.diallaQualBonus,
       'Skill',
       activeSock.qualBonus,
       activeCmods,
     );
-    const skillSrc = `Skill: ${chosen.def.name.en}`;
+    const skillSrc = `Skill: ${activeDef.name.en}`;
     if (activeCmods && activeCmods.length > 0) {
       injectCompiledGemMods(skillDb, groupEnemyDb, groupMinionDb, activeCmods, skillSrc, {
         game: build.game,
@@ -9089,6 +9111,27 @@ function computeGroupOffence(
         if (baseMin[dt] === 0 && baseMax[dt] === 0) {
           baseMin[dt] = sMin;
           baseMax[dt] = sMax;
+        }
+      }
+    }
+    // PoE 1 Blade Blast of Dagger Detonation (`gainPercentBaseDaggerDamageToSpells`, e.g. 675% of main-hand dagger base damage)
+    const daggerPct = activeSkillData.gainPercentBaseDaggerDamageToSpells;
+    if (
+      build.game === 'poe1' &&
+      !isAttack &&
+      typeof daggerPct === 'number' &&
+      daggerPct > 0 &&
+      mainWeaponStats?.weaponType === 'Dagger'
+    ) {
+      const mult = daggerPct / 100;
+      baseMin.Physical += mainWeaponStats.physicalMin * mult;
+      baseMax.Physical += mainWeaponStats.physicalMax * mult;
+      if (mainWeaponStats.elementalDamage) {
+        for (const [el, range] of Object.entries(mainWeaponStats.elementalDamage)) {
+          if (!range) continue;
+          const dt = el as DamageType;
+          baseMin[dt] += range[0] * mult;
+          baseMax[dt] += range[1] * mult;
         }
       }
     }
@@ -11174,20 +11217,6 @@ function computeGroupOffence(
           ? activeSkillData.boltCount
           : skillDb.sum('BASE', 'CrossbowBoltCount', flags, kwFlags))
       : 0;
-  // PoE 2 Grenade Activate Twice (`CalcOffence.lua:1281-1284`): `GrenadeActivateTwice` BASE -> `DPS MORE`
-  if (build.game === 'poe2' && (effectiveSkillTypeSet.has('grenade') || activeDef.tags.some((t) => t.toLowerCase() === 'grenade'))) {
-    const detonateTwice = Math.min(100, Math.max(0, skillDb.sum('BASE', 'GrenadeActivateTwice', flags, kwFlags)));
-    if (detonateTwice > 0) {
-      skillDb.addMod({
-        name: 'DPS',
-        type: 'MORE',
-        value: detonateTwice,
-        flags: 0,
-        keywordFlags: 0,
-        source: 'Grenade Activate Twice',
-      });
-    }
-  }
   const crossbowBaseReloadTable: Record<string, number> = {
     'makeshift crossbow': 0.8,
     'tense crossbow': 0.85,
@@ -11238,8 +11267,14 @@ function computeGroupOffence(
           : 0
       : 0;
   if (crossbowBaseReload > 0 && crossbowBoltCount > 0 && speedExact > 0) {
-    const noConsumePct = Math.min(100, Math.max(0, skillDb.sum('BASE', 'ChanceToNotConsumeAmmo', flags, kwFlags)));
-    const instantReloadPct = Math.min(100, Math.max(0, skillDb.sum('BASE', 'InstantReloadChance', flags, kwFlags)));
+    const noConsumePct = Math.min(
+      100,
+      Math.max(0, skillDb.sum('BASE', ['ChanceToNotConsumeAmmo', 'CrossbowNoConsumeAmmoChance'], flags, kwFlags)),
+    );
+    const instantReloadPct = Math.min(
+      100,
+      Math.max(0, skillDb.sum('BASE', ['InstantReloadChance', 'CrossbowInstantReloadChance'], flags, kwFlags)),
+    );
     if (noConsumePct < 100) {
       const effBolts = crossbowBoltCount / Math.max(0.01, 1 - noConsumePct / 100);
       const reloadInc = skillDb.sum('INC', ['ReloadSpeed', 'Speed'], flags, kwFlags);

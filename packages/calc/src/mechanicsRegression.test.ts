@@ -2264,4 +2264,223 @@ describe('Mechanism-Layer Regression Suite (PoE 1 & PoE 2)', () => {
       expect(outWithMinionInc.offence.averageHit).toBeGreaterThan(outPlain.offence.averageHit * 2.5);
     });
   });
+
+  describe('Wave 5F: PoE 2 Repeating Explosives Dedup & Crossbow Instant Reload', () => {
+    it('applies Repeating Explosives GrenadeActivateTwice once (1.15x, not 1.3225x) to PoE 2 Grenade DPS', () => {
+      const base = createSamplePoe2Build();
+      const xbow = makeWeapon({
+        id: 'grenade_xbow',
+        name: 'Test Crossbow',
+        baseName: 'Bombard Crossbow',
+        slotType: 'Weapon 1',
+        weaponStats: {
+          weaponType: 'Crossbow',
+          twoHanded: true,
+          physicalMin: 100,
+          physicalMax: 200,
+          attacksPerSecond: 1.6,
+          critChance: 5,
+        },
+      });
+      const plain: Build = {
+        ...base,
+        items: { ...base.items, [xbow.id]: xbow },
+        equipped: { ...base.equipped, 'Weapon 1': xbow.id, 'Weapon 2': undefined },
+        skills: [
+          {
+            id: 'sg_gren',
+            label: 'Explosive Grenade',
+            enabled: true,
+            gems: [{ instanceId: 'g_eg', gemId: 'poe2_explosivegrenade', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_gren',
+      };
+      const withRepeating: Build = {
+        ...plain,
+        config: {
+          ...plain.config,
+          customMods: 'Grenades have 15% chance to activate a second time',
+        },
+      };
+      const outPlain = calculateBuild(plain);
+      const outRep = calculateBuild(withRepeating);
+      expect(outPlain.offence.hitDps).toBeGreaterThan(0);
+      expect(outRep.offence.hitDps / outPlain.offence.hitDps).toBeCloseTo(1.15, 2);
+    });
+
+    it('consumes CrossbowInstantReloadChance to reduce PoE 2 crossbow effective reload time', () => {
+      const base = createSamplePoe2Build();
+      const xbow = makeWeapon({
+        id: 'reload_xbow',
+        name: 'Test Crossbow',
+        baseName: 'Dyad Crossbow',
+        slotType: 'Weapon 1',
+        weaponStats: {
+          weaponType: 'Crossbow',
+          twoHanded: true,
+          physicalMin: 100,
+          physicalMax: 200,
+          attacksPerSecond: 1.6,
+          critChance: 5,
+        },
+      });
+      const plain: Build = {
+        ...base,
+        items: { ...base.items, [xbow.id]: xbow },
+        equipped: { ...base.equipped, 'Weapon 1': xbow.id, 'Weapon 2': undefined },
+        skills: [
+          {
+            id: 'sg_pb',
+            label: 'Permafrost Bolts',
+            enabled: true,
+            gems: [{ instanceId: 'g_pb', gemId: 'poe2_permafrostbolts', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_pb',
+      };
+      const withInstantReload: Build = {
+        ...plain,
+        config: {
+          ...plain.config,
+          customMods: '30% chance when you Reload a Crossbow to be immediate',
+        },
+      };
+      const outPlain = calculateBuild(plain);
+      const outInst = calculateBuild(withInstantReload);
+      expect(outInst.offence.speed).toBeGreaterThan(outPlain.offence.speed * 1.05);
+    });
+  });
+
+  describe('Wave 5G: Secondary Payload Skill Delegation (Frozen Legion -> Frozen Sweep)', () => {
+    it('delegates PoE 1 Frozen Legion to Frozen Sweep weapon-scaled Cold attack with 100% Phys->Cold conversion', () => {
+      const base = createSamplePoe1Build();
+      const staff = makeWeapon({
+        id: 'fl_staff',
+        name: 'Cold Staff',
+        baseName: 'Judgement Staff',
+        slotType: 'Weapon 1',
+        weaponStats: {
+          weaponType: 'Staff',
+          twoHanded: true,
+          physicalMin: 200,
+          physicalMax: 400,
+          attacksPerSecond: 1.3,
+          critChance: 7,
+        },
+      });
+      const flBuild: Build = {
+        ...base,
+        items: { ...base.items, [staff.id]: staff },
+        equipped: { ...base.equipped, 'Weapon 1': staff.id, 'Weapon 2': undefined },
+        skills: [
+          {
+            id: 'sg_fl',
+            label: 'Frozen Legion',
+            enabled: true,
+            gems: [{ instanceId: 'g_fl', gemId: 'poe1_frozenlegion', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_fl',
+      };
+      const out = calculateBuild(flBuild);
+      expect(out.offence.damageByType.Cold.average).toBeGreaterThan(500);
+      expect(out.offence.damageByType.Physical.average).toBe(0);
+    });
+  });
+
+  describe('Wave 5H: rawInputs.multiplierRage, Dialla Off-Colour Quality & Support-Granted Sub-Skill Isolation', () => {
+    it('wires rawInputs.multiplierRage into Rage calculation when cfg.rage is unset', () => {
+      const base = createSamplePoe1Build();
+      const sword = makeWeapon({
+        id: 'rage_sword',
+        name: 'Test Sword',
+        baseName: 'Jewelled Foil',
+        slotType: 'Weapon 1',
+        weaponStats: {
+          weaponType: 'Sword',
+          twoHanded: false,
+          physicalMin: 100,
+          physicalMax: 200,
+          attacksPerSecond: 1.6,
+          critChance: 5,
+        },
+      });
+      const common: Build = {
+        ...base,
+        items: { ...base.items, [sword.id]: sword },
+        equipped: { ...base.equipped, 'Weapon 1': sword.id },
+        skills: [
+          {
+            id: 'sg_rage',
+            label: 'Attack',
+            enabled: true,
+            gems: [{ instanceId: 'g1', gemId: 'poe1_cyclone', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_rage',
+        config: {
+          ...base.config,
+          rage: 0,
+          enemyArmour: 0,
+          rawInputs: {},
+        },
+      };
+      const outNoRage = calculateBuild(common);
+      const outMultRage = calculateBuild({
+        ...common,
+        config: {
+          ...common.config,
+          rawInputs: { multiplierRage: 30 },
+        },
+      });
+      // 30 Rage grants 30% MORE Attack Damage (1.30x)
+      expect(outMultRage.offence.averageHit / outNoRage.offence.averageHit).toBeCloseTo(1.3, 2);
+    });
+
+    it('does not grant +10% matching-colour socket quality to off-colour gems socketed in Dialla\'s Malefaction', () => {
+      const base = createSamplePoe1Build();
+      const dialla: Item = {
+        id: 'dialla_body',
+        name: "Dialla's Malefaction",
+        baseName: "Sage's Robe",
+        rarity: 'UNIQUE',
+        slotType: 'Body Armour',
+        quality: 0,
+        sockets: 'R-R-R-R-R-R',
+        implicits: [],
+        explicits: [
+          'Gems can be Socketed in this Item ignoring Socket Colour',
+          'Gems Socketed in Red Sockets have +2 to Level',
+          'Gems Socketed in Green Sockets have +30% Quality',
+        ],
+      };
+      const blueInRed: Build = {
+        ...base,
+        items: { ...base.items, [dialla.id]: dialla },
+        equipped: { ...base.equipped, 'Body Armour': dialla.id },
+        skills: [
+          {
+            id: 'sg_dialla',
+            label: 'Arc in Red Dialla',
+            slot: 'Body Armour',
+            enabled: true,
+            gems: [{ instanceId: 'g_arc', gemId: 'poe1_arc', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_dialla',
+      };
+      const blueInBlue: Build = {
+        ...blueInRed,
+        items: {
+          ...blueInRed.items,
+          [dialla.id]: { ...dialla, sockets: 'B-B-B-B-B-B' },
+        },
+      };
+      const outRed = calculateBuild(blueInRed);
+      const outBlue = calculateBuild(blueInBlue);
+      // Red socket gives +2 Level (Lv22, Q0) vs Blue socket (Lv20, Q10); both must produce valid spell hits
+      expect(outRed.offence.averageHit).toBeGreaterThan(outBlue.offence.averageHit);
+    });
+  });
 });

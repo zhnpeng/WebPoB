@@ -386,6 +386,12 @@ function evalSingleConditionVar(varExpr: string, ctx?: ModEvalContext): boolean 
   if (varExpr === 'KilledRareOrUniqueRecently') {
     return Boolean(ctx.conditions.KilledUniqueRecently);
   }
+  if (varExpr === 'KillRecently') {
+    return Boolean(ctx.conditions.KilledRecently);
+  }
+  if (varExpr === 'KilledRecently') {
+    return Boolean(ctx.conditions.KillRecently);
+  }
   if (varExpr === 'OnFullLife') {
     return Boolean(ctx.conditions.FullLife);
   }
@@ -410,22 +416,26 @@ function evalSingleConditionVar(varExpr: string, ctx?: ModEvalContext): boolean 
   if (varExpr === 'EnemyLowLife') {
     return Boolean(ctx.conditions.EnemyOnLowLife);
   }
-  if (varExpr === 'AtMaxPowerCharges') {
-    const cur = ctx.multipliers.PowerCharge ?? 0;
+  if (varExpr === 'AtMaxPowerCharges' || varExpr === 'HaveMaximumPowerCharges') {
+    if (ctx.conditions.AtMaxPowerCharges || ctx.conditions.HaveMaximumPowerCharges) return true;
+    const cur = ctx.multipliers.PowerCharge ?? ctx.multipliers.PowerCharges ?? 0;
     const max = ctx.multipliers.PowerChargeMax ?? ctx.multipliers.MaxPowerCharge ?? 0;
     return cur > 0 && max > 0 && cur >= max;
   }
-  if (varExpr === 'AtMaxFrenzyCharges') {
-    const cur = ctx.multipliers.FrenzyCharge ?? 0;
+  if (varExpr === 'AtMaxFrenzyCharges' || varExpr === 'HaveMaximumFrenzyCharges') {
+    if (ctx.conditions.AtMaxFrenzyCharges || ctx.conditions.HaveMaximumFrenzyCharges) return true;
+    const cur = ctx.multipliers.FrenzyCharge ?? ctx.multipliers.FrenzyCharges ?? 0;
     const max = ctx.multipliers.FrenzyChargeMax ?? ctx.multipliers.MaxFrenzyCharge ?? 0;
     return cur > 0 && max > 0 && cur >= max;
   }
-  if (varExpr === 'AtMaxEnduranceCharges') {
-    const cur = ctx.multipliers.EnduranceCharge ?? 0;
+  if (varExpr === 'AtMaxEnduranceCharges' || varExpr === 'HaveMaximumEnduranceCharges') {
+    if (ctx.conditions.AtMaxEnduranceCharges || ctx.conditions.HaveMaximumEnduranceCharges) return true;
+    const cur = ctx.multipliers.EnduranceCharge ?? ctx.multipliers.EnduranceCharges ?? 0;
     const max = ctx.multipliers.EnduranceChargeMax ?? ctx.multipliers.MaxEnduranceCharge ?? 0;
     return cur > 0 && max > 0 && cur >= max;
   }
-  if (varExpr === 'AtMaxRage') {
+  if (varExpr === 'AtMaxRage' || varExpr === 'HaveMaximumRage') {
+    if (ctx.conditions.AtMaxRage || ctx.conditions.HaveMaximumRage) return true;
     const cur = ctx.multipliers.Rage ?? 0;
     const max = ctx.multipliers.RageMax ?? ctx.multipliers.MaxRage ?? 0;
     return cur > 0 && max > 0 && cur >= max;
@@ -457,6 +467,63 @@ function resolveMultiplierValue(varName: string, ctx?: ModEvalContext): number {
   if (!ctx) return 0;
   const direct = ctx.multipliers[varName];
   if (direct !== undefined) return direct;
+  if (varName === 'PowerCharge' || varName === 'PowerCharges') {
+    return ctx.multipliers.PowerCharge ?? ctx.multipliers.PowerCharges ?? ctx.stats.PowerCharges ?? 0;
+  }
+  if (varName === 'FrenzyCharge' || varName === 'FrenzyCharges') {
+    return ctx.multipliers.FrenzyCharge ?? ctx.multipliers.FrenzyCharges ?? ctx.stats.FrenzyCharges ?? 0;
+  }
+  if (varName === 'EnduranceCharge' || varName === 'EnduranceCharges') {
+    return ctx.multipliers.EnduranceCharge ?? ctx.multipliers.EnduranceCharges ?? ctx.stats.EnduranceCharges ?? 0;
+  }
+  if (varName === 'InspirationCharge' || varName === 'InspirationCharges') {
+    return ctx.multipliers.InspirationCharge ?? ctx.multipliers.InspirationCharges ?? 0;
+  }
+  if (varName === 'Intensity' || varName === 'IntensityStacks') {
+    return ctx.multipliers.Intensity ?? ctx.multipliers.IntensityStacks ?? 0;
+  }
+  if (varName === 'TraumaStacks' || varName === 'TraumaStack' || varName === 'SustainableTraumaStacks') {
+    return (
+      ctx.multipliers.TraumaStacks ??
+      ctx.multipliers.SustainableTraumaStacks ??
+      ctx.multipliers.TraumaStack ??
+      0
+    );
+  }
+  if (varName === 'WitheredStack' || varName === 'WitheredStacks') {
+    return ctx.multipliers.WitheredStacks ?? ctx.multipliers.WitheredStack ?? 0;
+  }
+  if (varName === 'VirulenceStack' || varName === 'VirulenceStacks') {
+    return ctx.multipliers.VirulenceStacks ?? ctx.multipliers.VirulenceStack ?? 0;
+  }
+  if (
+    varName === 'Fortification' ||
+    varName === 'FortificationStacks' ||
+    varName === 'RemovableFortification'
+  ) {
+    return (
+      ctx.multipliers.Fortification ??
+      ctx.multipliers.FortificationStacks ??
+      ctx.multipliers.RemovableFortification ??
+      0
+    );
+  }
+  if (varName === 'CurseOnEnemy' || varName === 'CursesOnEnemy' || varName === 'CurseApplied') {
+    return ctx.multipliers.CurseOnEnemy ?? ctx.multipliers.CursesOnEnemy ?? ctx.multipliers.CurseApplied ?? 0;
+  }
+  if (varName === 'ChillEffect' || varName === 'EnemyChillEffect') {
+    return ctx.multipliers.ChillEffect ?? ctx.multipliers.EnemyChillEffect ?? 0;
+  }
+  if (varName === 'Chain') {
+    return ctx.multipliers.ChainRemaining ?? ctx.multipliers.ChainMax ?? ctx.stats.ChainRemaining ?? ctx.stats.ChainMax ?? 0;
+  }
+  if (varName === 'RemovableTotalCharges') {
+    return (
+      (ctx.multipliers.RemovablePowerCharge ?? 0) +
+      (ctx.multipliers.RemovableFrenzyCharge ?? 0) +
+      (ctx.multipliers.RemovableEnduranceCharge ?? 0)
+    );
+  }
   if (varName === 'ActiveTotem' || varName === 'SummonedTotem' || varName === 'TotemsSummoned') {
     return ctx.multipliers.ActiveTotem ?? ctx.multipliers.SummonedTotem ?? ctx.multipliers.TotemsSummoned ?? 0;
   }
@@ -494,6 +561,12 @@ const STAT_ALIASES: Record<string, string> = {
   Int: 'Intelligence',
   ES: 'EnergyShield',
   EnergyShield: 'ES',
+  PowerChargesMax: 'PowerChargeMax',
+  PowerChargeMax: 'PowerChargesMax',
+  FrenzyChargesMax: 'FrenzyChargeMax',
+  FrenzyChargeMax: 'FrenzyChargesMax',
+  EnduranceChargesMax: 'EnduranceChargeMax',
+  EnduranceChargeMax: 'EnduranceChargesMax',
 };
 
 function resolveThresholdValue(name: string, ctx: ModEvalContext, preferStat: boolean): number {
@@ -642,18 +715,24 @@ export function evaluateModTags(mod: Mod, ctx?: ModEvalContext): ModTagEvalResul
       }
       case 'Multiplier': {
         const raw = resolveMultiplierValue(tag.var, ctx);
-        let mult = Math.floor(raw + 0.0001);
         const runtimeLimit = tag as {
           limit?: number;
           limitTotal?: boolean;
           limitNegTotal?: boolean;
+          noFloor?: boolean;
         };
-        // Bridge legacy PoE 2 cmods whose `limitTotal = true` was not yet exported in poe2-gems.json
+        // PoB ModStore.lua:399-402: `noFloor` preserves fractional multipliers; also bridge
+        // PoE 1 Focused Channelling (`ChannellingTime = 2.5`, `limit = 60, limitTotal = true`).
+        const useNoFloor = runtimeLimit.noFloor === true || tag.var === 'ChannellingTime';
+        let mult = useNoFloor ? raw : Math.floor(raw + 0.0001);
+        // Bridge legacy PoE 1/2 cmods whose `limitTotal = true` was not yet exported in gems JSON
         const useLimitTotal =
           runtimeLimit.limitTotal === true ||
           (runtimeLimit.limitTotal === undefined &&
             tag.limit !== undefined &&
-            (tag.var === 'IncisionConsumedRecently' || tag.var === 'SuperchargedSlamStage'));
+            (tag.var === 'IncisionConsumedRecently' ||
+              tag.var === 'SuperchargedSlamStage' ||
+              tag.var === 'ChannellingTime'));
         if (tag.limit !== undefined && !useLimitTotal && !runtimeLimit.limitNegTotal) {
           mult = Math.min(mult, tag.limit);
         }

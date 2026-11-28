@@ -51,6 +51,8 @@ function getWorker(): Worker | null {
         p.reject(new Error(err.message || 'Calc worker error'));
       }
       pending.clear();
+      workerInstance?.terminate();
+      workerInstance = null;
     };
   }
   return workerInstance;

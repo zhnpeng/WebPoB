@@ -2927,6 +2927,163 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     pattern: /^(\d+)% increased Area of Effect of Aftershocks(?: you create yourself)?$/i,
     build: (m, src) => [mkMod('AftershockAreaOfEffect', 'INC', Number(m[1]), src, ModFlag.Area)],
   },
+  // Wave 6F: High-frequency PoE 2 0.5 / wegame-cn semantic flags & mods (197-build sweep)
+  {
+    pattern: /^All Mage's Legacies have (\d+)% increased effect per duplicate Mage's Legacy you have$/i,
+    build: (m, src) => [mkMod('MagesLegacyEffectPerDuplicate', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Legacy of (Quicksilver|Silver|Bismuth|Gold|Diamond|Sulphur|Jade|Granite|Amethyst)$/i,
+    build: (m, src) => [mkMod(`MagesLegacy:${m[1]!.charAt(0).toUpperCase()}${m[1]!.slice(1).toLowerCase()}`, 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Idols socketed in this item gain the benefits of their Bonded modifiers$/i,
+    build: (_, src) => [mkMod('IdolsGainBondedModifiers', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^(\d+)% increased effect of Socketed (?:Augment )?Items$/i,
+    build: (m, src) => [mkMod('SocketedItemsEffect', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^(\d+)% increased effect of Socketed Runes$/i,
+    build: (m, src) => [mkMod('SocketedRunesEffect', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^(\d+)% increased Effect of (Suffix|Prefix)(?: Modifiers|es)$/i,
+    build: (m, src) => [
+      mkMod(
+        m[2]!.toLowerCase() === 'suffix' ? 'ItemSuffixEffect' : 'ItemPrefixEffect',
+        'INC',
+        Number(m[1]),
+        src,
+      ),
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased Explicit Resistance Modifier magnitudes$/i,
+    build: (m, src) => [mkMod('ExplicitResistanceModMagnitude', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Reflects (?:opposite|your other) Ring$/i,
+    build: (_, src) => [mkMod('ReflectsOppositeRing', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^(\d+)% increased bonuses gained from Equipped Rings$/i,
+    build: (m, src) => [mkMod('EquippedRingBonusEffect', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Your Critical Hit Chance cannot be Rerolled$/i,
+    build: (_, src) => [mkMod('CritChanceCannotBeRerolled', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Chance to Block Damage is Lucky$/i,
+    build: (_, src) => [mkMod('BlockChanceIsLucky', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Enemies in your Presence Resist Elemental Damage based on their Lowest Resistance$/i,
+    build: (_, src) => [mkMod('EnemyResistElementalBasedOnLowest', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Allies in your Presence Regenerate (\d+(?:\.\d+)?)% of their Maximum Life per second$/i,
+    build: (m, src) => [mkMod('AllyLifeRegenPercent', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^(\d+)% chance to gain Onslaught on Killing Hits with this Weapon$/i,
+    build: (m, src) => [mkMod('OnslaughtOnKillChance', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Spell Hits Gain (\d+)% of Damage as Extra (Physical|Fire|Cold|Lightning|Chaos) Damage per Curse on target$/i,
+    build: (m, src) => {
+      const elem = m[2]!.charAt(0).toUpperCase() + m[2]!.slice(1).toLowerCase();
+      return [
+        {
+          ...mkMod(`DamageGainAs${elem}`, 'BASE', Number(m[1]), src, ModFlag.Spell | ModFlag.Hit),
+          tags: [{ type: 'Multiplier', var: 'CurseOnEnemy' }],
+        },
+      ];
+    },
+  },
+  {
+    pattern: /^Inflict Elemental Exposure on Hit, lowering Total Elemental Resistances by (\d+)%$/i,
+    build: (m, src) => [mkMod('ElementalExposureOnHit', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Minions gain (\d+)% of their Physical Damage as Extra (Fire|Cold|Lightning|Chaos) Damage$/i,
+    build: (m, src) => {
+      const elem = m[2]!.charAt(0).toUpperCase() + m[2]!.slice(1).toLowerCase();
+      return [mkMod(`MinionPhysicalDamageGainAs${elem}`, 'BASE', Number(m[1]), src, 0, KeywordFlag.Minion)];
+    },
+  },
+  {
+    pattern: /^(\d+)% increased Movement Speed per (\d+) Spirit(?:, up to a maximum of (\d+)%)?$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('MovementSpeed', 'INC', Number(m[1]), src),
+        tags: [
+          {
+            type: 'PerStat',
+            stat: 'Spirit',
+            div: Number(m[2]),
+            ...(m[3] ? { limit: Number(m[3]) } : {}),
+          },
+        ],
+      },
+    ],
+  },
+  {
+    pattern: /^\+(\d+)% of Armour also applies to Chaos Damage$/i,
+    build: (m, src) => [mkMod('ArmourAppliesToChaosDamage', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^You are considered on Low Life while at (\d+)% of maximum Life or below instead$/i,
+    build: (m, src) => [mkMod('LowLifePercentage', 'OVERRIDE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Enemies take (\d+)% increased Damage for each Elemental Ailment type among(?: your Ailments on them)?$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('EnemyDamageTaken', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Multiplier', var: 'EnemyElementalAilmentCount' }],
+      },
+    ],
+  },
+  // Wave 6G: poe2-regression-bugs semantic flags & mods
+  {
+    pattern: /^Grants (\d+) Rage on Hit$/i,
+    build: (m, src) => [mkMod('RageOnHit', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Cannot Leech Mana$/i,
+    build: (_, src) => [mkMod('CannotLeechMana', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Maim on Critical Hit$/i,
+    build: (_, src) => [mkMod('MaimOnCrit', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Can't use Body Armour$/i,
+    build: (_, src) => [mkMod('DisablesSlot:Body Armour', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^This item gains bonuses from Socketed Items as though it was a Body Armour$/i,
+    build: (_, src) => [mkMod('SocketedItemsAsBodyArmour', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Your speed is unaffected by Slows$/i,
+    build: (_, src) => [mkMod('ActionSpeedCannotBeReducedBelowBase', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Lightning damage from Hits Contributes to Electrocution Buildup$/i,
+    build: (_, src) => [mkMod('LightningDamageContributesToElectrocution', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Physical damage from Hits Contributes to Chill Magnitude and Freeze Buildup$/i,
+    build: (_, src) => [mkMod('PhysicalDamageContributesToChillAndFreeze', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Attacks consume an Endurance Charge to Critically Hit$/i,
+    build: (_, src) => [mkMod('AttacksConsumeEnduranceChargeToCrit', 'FLAG', true, src)],
+  },
 
   // =========================================================================
   // 5. PoE 2 Skill-Specific & Tag Gem Level Scaling (+X to Level of all <SkillName|Nova|...> Skills)

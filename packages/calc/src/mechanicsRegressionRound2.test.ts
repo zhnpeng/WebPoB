@@ -7,6 +7,7 @@ import {
   hydrateCompactTree,
   registerGemsData,
   resolveGemFromPobRef,
+  resolveTreeFileFromManifest,
   setRegisteredGems,
 } from '@webpob/data';
 import { parseItemText } from '@webpob/codec';
@@ -1955,6 +1956,60 @@ Implicits: 1
         ).toBe(2.5);
       } finally {
         setRegisteredGems('poe1', prevPoe1);
+      }
+    });
+
+    it('resolves *_alternate historical trees and hydrates distilled anoints across PoE 2 versions (Wave 6G)', () => {
+      const mockManifest = {
+        schemaVersion: 1,
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        source: 'test',
+        games: {
+          poe1: {
+            latestTreeVersion: '3_30',
+            trees: {
+              '3_26': 'poe1-tree-3_26.json',
+              '3_28_alternate': 'poe1-tree-3_28_alternate.json',
+              '3_30': 'poe1-tree-3_30.json',
+            },
+            classes: 'poe1-classes.json',
+            gems: 'poe1-gems.json',
+            bases: 'poe1-bases.json',
+            uniques: 'poe1-uniques.json',
+          },
+          poe2: {
+            latestTreeVersion: '0_5',
+            trees: {
+              '0_2': 'poe2-tree-0_2.json',
+              '0_5': 'poe2-tree-0_5.json',
+            },
+            classes: 'poe2-classes.json',
+            gems: 'poe2-gems.json',
+            bases: 'poe2-bases.json',
+            uniques: 'poe2-uniques.json',
+          },
+        },
+      };
+
+      // Unlisted *_alternate version falls back to latest *_alternate rather than standard 3_30
+      expect(resolveTreeFileFromManifest(mockManifest, 'poe1', '3_27_alternate')).toBe(
+        'poe1-tree-3_28_alternate.json',
+      );
+      expect(resolveTreeFileFromManifest(mockManifest, 'poe1', '3_26')).toBe('poe1-tree-3_26.json');
+      expect(resolveTreeFileFromManifest(mockManifest, 'poe2', '0_2')).toBe('poe2-tree-0_2.json');
+
+      // Hydrate PoE 2 0_2 and 0_5 compact trees: both must hydrate distilled anoint notables
+      for (const ver of ['0_2', '0_5']) {
+        const tree = hydrateCompactTree({
+          game: 'poe2',
+          version: ver,
+          bounds: { minX: 0, maxX: 100, minY: 0, maxY: 100 },
+          classStartNodeIds: {},
+          groups: {},
+          nodes: [],
+        });
+        expect(tree.nodes[20686]?.name.en).toBe('Paragon');
+        expect(tree.nodes[20686]?.stats).toEqual(['+5% to Quality of all Skills', '+5 to all Attributes']);
       }
     });
   });

@@ -9,6 +9,11 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./lite": {
+      "types": "./src/lite.ts",
+      "import": "./src/lite.ts",
+      "default": "./dist/lite.js"
     }
   },
   "dependencies": {

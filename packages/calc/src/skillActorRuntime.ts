@@ -1496,7 +1496,10 @@ function serializeModTagsKey(tags: readonly ModTag[] | undefined): string {
  * `Boneshatter of Complex Trauma` 15% + Q20 5% = 20% more Damage per Trauma).
  */
 function coalesceSameGemQualityMoreMod(targetDb: ModDB, mod: Mod): boolean {
-  if (mod.type !== 'MORE' || typeof mod.value !== 'number') return false;
+  // Raw gem quality MORE values from `Math.trunc(qm.value * effectiveQuality)` are exact integers;
+  // non-integer values (e.g. `((100 + base + v) / (100 + base) - 1) * 100` from engine.ts) have
+  // ALREADY been converted into exact relative multipliers and must multiply, never re-sum.
+  if (mod.type !== 'MORE' || typeof mod.value !== 'number' || !Number.isInteger(mod.value)) return false;
   const modSrc = mod.source ?? '';
   if (!modSrc) return false;
   const baseSrc = modSrc.replace(GEM_QUALITY_SOURCE_SUFFIX_RE, '');
@@ -1508,7 +1511,7 @@ function coalesceSameGemQualityMoreMod(targetDb: ModDB, mod: Mod): boolean {
     if (key !== mod.name) continue;
     for (let i = 0; i < bucket.length; i++) {
       const existing = bucket[i]!;
-      if (existing.type !== 'MORE' || typeof existing.value !== 'number') continue;
+      if (existing.type !== 'MORE' || typeof existing.value !== 'number' || !Number.isInteger(existing.value)) continue;
       if (existing.flags !== mod.flags || existing.keywordFlags !== mod.keywordFlags) continue;
       if ((existing.condition ?? '') !== modCond) continue;
       const existingSrc = existing.source ?? '';

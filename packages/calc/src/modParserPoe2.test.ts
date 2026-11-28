@@ -2025,5 +2025,96 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
         expect.objectContaining({ name: 'AftershockAreaOfEffect', type: 'INC', value: 40 }),
       ]);
     });
+
+    it('parses Wave 6F high-frequency PoE 2 0.5 & wegame-cn item mods (Mage Legacy, Bonded Idols, Socketed Effect, Curse Gain, Exposure, Spirit MS)', () => {
+      expect(
+        parseModLine("All Mage's Legacies have 40% increased effect per duplicate Mage's Legacy you have", 'Item:Belt'),
+      ).toEqual([expect.objectContaining({ name: 'MagesLegacyEffectPerDuplicate', type: 'BASE', value: 40 })]);
+      expect(parseModLine('Legacy of Bismuth', 'Item:Belt')).toEqual([
+        expect.objectContaining({ name: 'MagesLegacy:Bismuth', type: 'FLAG', value: true }),
+      ]);
+      expect(
+        parseModLine('Idols socketed in this item gain the benefits of their Bonded modifiers', 'Item:Belt'),
+      ).toEqual([expect.objectContaining({ name: 'IdolsGainBondedModifiers', type: 'FLAG', value: true })]);
+      expect(parseModLine('98% increased effect of Socketed Augment Items', 'Item:Belt')).toEqual([
+        expect.objectContaining({ name: 'SocketedItemsEffect', type: 'INC', value: 98 }),
+      ]);
+      expect(parseModLine('200% increased effect of Socketed Runes', 'Item:Weapon 1')).toEqual([
+        expect.objectContaining({ name: 'SocketedRunesEffect', type: 'INC', value: 200 }),
+      ]);
+      expect(parseModLine('47% increased Effect of Suffixes', 'Item:Jewel')).toEqual([
+        expect.objectContaining({ name: 'ItemSuffixEffect', type: 'INC', value: 47 }),
+      ]);
+      expect(parseModLine('27% increased Explicit Resistance Modifier magnitudes', 'Item:Ring 1')).toEqual([
+        expect.objectContaining({ name: 'ExplicitResistanceModMagnitude', type: 'INC', value: 27 }),
+      ]);
+      expect(parseModLine('Reflects opposite Ring', 'Item:Ring 2')).toEqual([
+        expect.objectContaining({ name: 'ReflectsOppositeRing', type: 'FLAG', value: true }),
+      ]);
+      expect(parseModLine('77% increased bonuses gained from Equipped Rings', 'Item:Belt')).toEqual([
+        expect.objectContaining({ name: 'EquippedRingBonusEffect', type: 'INC', value: 77 }),
+      ]);
+      expect(
+        parseModLine('Spell Hits Gain 28% of Damage as Extra Chaos Damage per Curse on target', 'Item:Weapon 1'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'DamageGainAsChaos',
+          type: 'BASE',
+          value: 28,
+          tags: [{ type: 'Multiplier', var: 'CurseOnEnemy' }],
+        }),
+      ]);
+      expect(
+        parseModLine('Inflict Elemental Exposure on Hit, lowering Total Elemental Resistances by 60%', 'Item:Weapon 1'),
+      ).toEqual([expect.objectContaining({ name: 'ElementalExposureOnHit', type: 'BASE', value: 60 })]);
+      expect(
+        parseModLine('1% increased Movement Speed per 15 Spirit, up to a maximum of 40%', 'Item:Boots'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'MovementSpeed',
+          type: 'INC',
+          value: 1,
+          tags: [{ type: 'PerStat', stat: 'Spirit', div: 15, limit: 40 }],
+        }),
+      ]);
+      expect(parseModLine('+10% of Armour also applies to Chaos Damage', 'Item:Body Armour')).toEqual([
+        expect.objectContaining({ name: 'ArmourAppliesToChaosDamage', type: 'BASE', value: 10 }),
+      ]);
+      expect(
+        parseModLine('You are considered on Low Life while at 91% of maximum Life or below instead', 'Item:Belt'),
+      ).toEqual([expect.objectContaining({ name: 'LowLifePercentage', type: 'OVERRIDE', value: 91 })]);
+      expect(
+        parseModLine('Enemies take 19% increased Damage for each Elemental Ailment type among', 'Item:Amulet'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'EnemyDamageTaken',
+          type: 'INC',
+          value: 19,
+          tags: [{ type: 'Multiplier', var: 'EnemyElementalAilmentCount' }],
+        }),
+      ]);
+      // Wave 6G: poe2-regression-bugs semantic flags & mods
+      expect(parseModLine('Grants 1 Rage on Hit', 'Item:Weapon 1')).toEqual([
+        expect.objectContaining({ name: 'RageOnHit', type: 'BASE', value: 1 }),
+      ]);
+      expect(parseModLine('Cannot Leech Mana', 'Item:Gloves')).toEqual([
+        expect.objectContaining({ name: 'CannotLeechMana', type: 'FLAG', value: true }),
+      ]);
+      expect(parseModLine('Maim on Critical Hit', 'Item:Weapon 1')).toEqual([
+        expect.objectContaining({ name: 'MaimOnCrit', type: 'FLAG', value: true }),
+      ]);
+      expect(parseModLine("Can't use Body Armour", 'Item:Helmet')).toEqual([
+        expect.objectContaining({ name: 'DisablesSlot:Body Armour', type: 'FLAG', value: true }),
+      ]);
+      expect(
+        parseModLine('This item gains bonuses from Socketed Items as though it was a Body Armour', 'Item:Helmet'),
+      ).toEqual([expect.objectContaining({ name: 'SocketedItemsAsBodyArmour', type: 'FLAG', value: true })]);
+      expect(parseModLine('Your speed is unaffected by Slows', 'Item:Boots')).toEqual([
+        expect.objectContaining({ name: 'ActionSpeedCannotBeReducedBelowBase', type: 'FLAG', value: true }),
+      ]);
+      expect(parseModLine('Attacks consume an Endurance Charge to Critically Hit', 'Item:Weapon 1')).toEqual([
+        expect.objectContaining({ name: 'AttacksConsumeEnduranceChargeToCrit', type: 'FLAG', value: true }),
+      ]);
+    });
   });
 });

@@ -251,6 +251,16 @@ export function resolveTreeFileFromManifest(
   if (key) {
     const match = Object.keys(entry.trees).find((k) => normalizeVersionKey(k) === key);
     if (match) return entry.trees[match];
+    // Alternate/Phrecia historical trees (e.g. `3_27_alternate`) should fall back to the
+    // latest `*_alternate` tree in the manifest rather than the standard tree so alternate
+    // ascendancy nodes remain resolvable.
+    if (key.endsWith('_alternate')) {
+      const altKeys = Object.keys(entry.trees)
+        .filter((k) => normalizeVersionKey(k).endsWith('_alternate'))
+        .sort();
+      const latestAlt = altKeys[altKeys.length - 1];
+      if (latestAlt && entry.trees[latestAlt]) return entry.trees[latestAlt];
+    }
   }
   const latest = entry.latestTreeVersion;
   if (latest && entry.trees[latest]) return entry.trees[latest];
@@ -393,7 +403,7 @@ export function hydrateCompactTree(payload: CompactTreePayload): PassiveTreeData
         };
       }
     }
-  } else if (payload.game === 'poe2' && payload.version === '0_5') {
+  } else if (payload.game === 'poe2') {
     for (const dn of POE2_DISTILLED_ANOINT_NOTABLES) {
       if (!nodes[dn.id]) {
         nodes[dn.id] = {

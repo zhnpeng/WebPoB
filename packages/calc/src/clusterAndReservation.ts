@@ -2631,6 +2631,16 @@ export function evaluateAurasAndWatchersEye(
     }
   }
 
+  // Sync EnemyLowLife onto enemyDb (`Condition:LowLife`) so Punishment's enemy cmod
+  // ("Cursed enemies take X% increased Damage while on Low Life") activates when configured.
+  if (
+    build.config.rawInputs?.conditionEnemyLowLife ||
+    playerDb.getEvalContext().conditions.EnemyLowLife
+  ) {
+    playerDb.setCondition('EnemyLowLife', true);
+    enemyDb.setCondition('LowLife', true);
+  }
+
   const savedPlayerCtx = playerDb.getEvalContext();
   playerDb.setEvalContext({
     ...savedPlayerCtx,
@@ -3669,6 +3679,13 @@ export function evaluateAurasAndWatchersEye(
             })
             .filter((m): m is NonNullable<typeof m> => m !== null)
         : [];
+    // PoE 2 Hex gems (`Despair`, `Elemental Weakness`, `Vulnerability`, `Temporal Chains`, `Enfeeble`,
+    // `Flammability`, `Frostbite`, `Conductivity`) grant `+0.5%` increased Curse Effect per 1% Quality
+    // in upstream PoB2 (`act_int.lua` `qualityStats = { { "curse_effect_+%", 0.5 } }`), even when `qcm`
+    // is omitted from compact `poe2-gems.json`.
+    if (build.game === 'poe2' && isCurseOrMark && !isMark && effQuality > 0 && qualCurseEffInc === 0) {
+      qualCurseEffInc += Math.trunc(effQuality * 0.5 + 1e-9);
+    }
     const rawCombinedMods =
       baseCompiledMods && baseCompiledMods.length > 0
         ? [...baseCompiledMods, ...scaledQualityMods]
@@ -4040,7 +4057,17 @@ export function evaluateAurasAndWatchersEye(
           : lowerAuraName === 'aspect of the spider'
             ? spiderWebStacks
             : (1 + auraEffectPctForPlayer / 100) * supremeEgoMoreMult;
-        injectCompiledGemMods(playerDb, enemyDb, minionDb, enemyCmods, sourceLabel, {
+        const enemyLowLifeNow = Boolean(enemyDb.getEvalContext().conditions.LowLife);
+        const resolvedEnemyCmods = enemyLowLifeNow
+          ? enemyCmods.map((m) => {
+              if (!m.tags || !m.tags.some((t) => t.type === 'Condition' && t.var === 'LowLife' && !t.neg)) {
+                return m;
+              }
+              const nextTags = m.tags.filter((t) => !(t.type === 'Condition' && t.var === 'LowLife' && !t.neg));
+              return { ...m, tags: nextTags.length > 0 ? nextTags : undefined };
+            })
+          : enemyCmods;
+        injectCompiledGemMods(playerDb, enemyDb, minionDb, resolvedEnemyCmods, sourceLabel, {
           game: build.game,
           effectMultiplier: enemyMult,
           scaleMore: !isCurseOrMark,
@@ -4564,9 +4591,30 @@ export function evaluateAurasAndWatchersEye(
             Boolean(mainActiveDef.skillData?.baseDotDamage);
 
           // Estimate main spell cast speed & repeats for PoB Pact uptime calculation
+          // (CalcOffence.lua:2940 includes ActionSpeed + Onslaught/Frenzy cast speed)
           const baseCastTime = Math.max(0.1, mainActiveDef.castTime ?? 0.7);
-          const spellSpdInc = playerDb.sum('INC', 'Speed', ModFlag.Spell, KeywordFlag.Spell);
+          let spellSpdInc = playerDb.sum('INC', 'Speed', ModFlag.Spell, KeywordFlag.Spell);
           const spellSpdMore = playerDb.more('Speed', ModFlag.Spell, KeywordFlag.Spell);
+          const actionSpeedMult = Math.max(0.1, 1 + playerDb.sum('INC', 'ActionSpeed') / 100);
+          const hasOnslaughtSpeedAlready = hasStatSource(playerDb, 'Speed', 'INC', 'Onslaught');
+          if (!hasOnslaughtSpeedAlready) {
+            const hasSilverFlask = Object.entries(build.equipped).some(([slot, itemId]) => {
+              if (!itemId || !/^Flask\s+\d$/i.test(slot)) return false;
+              const it = build.items[itemId];
+              return Boolean(it && /\bsilver flask\b/i.test(`${it.name} ${it.baseName}`));
+            });
+            if (build.config.onslaught || playerDb.getEvalContext().conditions.Onslaught || hasSilverFlask) {
+              const onslaughtEff = Math.max(0, 1 + playerDb.sum('INC', 'OnslaughtEffect') / 100);
+              spellSpdInc += Math.floor(20 * onslaughtEff + 1e-9);
+            }
+          }
+          if (build.config.useFrenzyCharges && !hasStatSource(playerDb, 'Speed', 'INC', 'Frenzy')) {
+            const frenzyCount = Math.max(
+              0,
+              build.config.frenzyCharges ?? (3 + playerDb.sum('BASE', 'FrenzyChargesMax')),
+            );
+            spellSpdInc += frenzyCount * 4;
+          }
           const hasSpellEcho = Boolean(
             mainGrp?.gems.some((g) => {
               if (!g.enabled) return false;
@@ -4578,7 +4626,11 @@ export function evaluateAurasAndWatchersEye(
           const echoSpeedMult = hasSpellEcho ? 1.54 : 1;
           const repeats = hasSpellEcho ? 2 : 1;
           const estMainSpeed =
-            (1 / baseCastTime) * Math.max(0.1, 1 + spellSpdInc / 100) * spellSpdMore * echoSpeedMult;
+            (1 / baseCastTime) *
+            Math.max(0.1, 1 + spellSpdInc / 100) *
+            spellSpdMore *
+            actionSpeedMult *
+            echoSpeedMult;
           const empoweredUseRate = estMainSpeed / repeats;
           const pactMaxHit = Boolean(build.config.rawInputs?.conditionPactMaxHit);
 
@@ -4601,7 +4653,7 @@ export function evaluateAurasAndWatchersEye(
             );
             const cooldown = baseCd / Math.max(0.1, 1 + totalCdr / 100);
             const pactCastRate =
-              (1 / 0.8) * Math.max(0.1, 1 + spellSpdInc / 100) * spellSpdMore;
+              (1 / 0.8) * Math.max(0.1, 1 + spellSpdInc / 100) * spellSpdMore * actionSpeedMult;
             const pactCastTime = 1 / Math.min(pactCastRate, 30.303);
             const count =
               pact.key === 'Beidat'

@@ -115,6 +115,10 @@ export default defineConfig({
   resolve: {
     alias: [
       {
+        find: '@webpob/calc/lite',
+        replacement: path.resolve(__dirname, '../../packages/calc/src/lite.ts'),
+      },
+      {
         find: '@webpob/calc/diagnostics',
         replacement: path.resolve(__dirname, '../../packages/calc/src/diagnostics.ts'),
       },

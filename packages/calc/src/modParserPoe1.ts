@@ -2535,6 +2535,97 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
       return [mkMod('VaalSoulCost', 'MORE', val, src)];
     },
   },
+  // Wave 6F: Frequency-sorted PoE 1 >5% build sweep (AdditionalPoisonChance, Onslaught on Hit, Doryani's Prototype, Aegis Aurora, Triad Grip, Legacy of Fury)
+  {
+    pattern: /^(\d+)% chance to inflict an additional Poison on the same Target when you inflict Poison$/i,
+    build: (m, src) => [mkMod('AdditionalPoisonChance', 'BASE', Number(m[1]), src, 0, KeywordFlag.Poison)],
+  },
+  {
+    pattern: /^(?:You )?(?:\d+% chance to )?gain Onslaught for \d+ seconds on Hit$/i,
+    build: (_, src) => {
+      const tags = [
+        { type: 'Condition' as const, var: 'HitRecently' },
+        { type: 'Condition' as const, var: 'Onslaught', neg: true },
+      ];
+      return [
+        { ...mkMod('Speed', 'INC', 20, src, ModFlag.Attack | ModFlag.Spell), tags },
+        { ...mkMod('MovementSpeed', 'INC', 20, src), tags },
+      ];
+    },
+  },
+  {
+    pattern: /^Armour also applies to Lightning Damage taken from Hits$/i,
+    build: (_, src) => [mkMod('ArmourAppliesToLightning', 'BASE', 100, src)],
+  },
+  {
+    pattern: /^Lightning Resistance does not affect Lightning Damage taken$/i,
+    build: (_, src) => [mkMod('LightningResDoesNotAffectTaken', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Nearby Enemies have Lightning Resistance equal to yours$/i,
+    build: (_, src) => [mkMod('EnemyLightningResEqualsYours', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Recover Energy Shield equal to (\d+)% of Armour when you Block$/i,
+    build: (m, src) => [mkMod('EsRecoverOnBlockPctArmour', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Minions gain added Resistances equal to (\d+)% of your Resistances$/i,
+    build: (m, src) => [mkMod('MinionResFromPlayerPct', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Removed life is Regenerated as Energy Shield over (\d+) seconds$/i,
+    build: (_, src) => [mkMod('RemovedLifeRegenAsEs', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^(\d+)% of Damage Taken from Hits is Leeched as Life during Effect$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('DamageTakenLeechedAsLife', 'BASE', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'UsingFlask' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased Attack Damage per (\d+) of the lowest of Armour and Evasion Rating$/i,
+    build: (_, src) => [mkMod('PerseveranceAttackDamage', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^(\d+)% increased Duration of Shrine Effects on you$/i,
+    build: (m, src) => [mkMod('ShrineEffectDuration', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Life Recovery from Flasks also applies to Energy Shield during Effect$/i,
+    build: (_, src) => [
+      {
+        ...mkMod('LifeFlaskRecoveryAppliesToEs', 'FLAG', true, src),
+        tags: [{ type: 'Condition' as const, var: 'UsingFlask' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Minions convert (\d+)% of Physical Damage to (Fire|Cold|Lightning|Chaos) Damage per (Red|Green|Blue|White) Socket$/i,
+    build: (m, src) => {
+      const elem = m[2]![0]!.toUpperCase() + m[2]!.slice(1).toLowerCase();
+      const color = m[3]![0]!.toUpperCase() + m[3]!.slice(1).toLowerCase();
+      return [mkMod(`MinionPhysConvertTo${elem}Per${color}Socket`, 'BASE', Number(m[1]), src)];
+    },
+  },
+  {
+    pattern: /^(\d+)% chance to avoid Projectiles$/i,
+    build: (m, src) => [mkMod('AvoidProjectilesChance', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Nearby Enemies are Scorched$/i,
+    build: (_, src) => [mkMod('EnemyScorched', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^All Damage can (Ignite|Chill|Freeze|Poison|Bleed)$/i,
+    build: (m, src) => {
+      const kind = m[1]![0]!.toUpperCase() + m[1]!.slice(1).toLowerCase();
+      return [mkMod(`AllDamageCan${kind}`, 'FLAG', true, src)];
+    },
+  },
 ];
 
 /**

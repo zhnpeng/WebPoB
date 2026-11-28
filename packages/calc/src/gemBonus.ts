@@ -387,6 +387,26 @@ export function resolveSupportGemLevelBonus(
   supportLevel = 1,
   opts?: { isCorrupted?: boolean },
 ): { levelBonus: number; qualityBonus: number } {
+  // 0. Classic PoE 1 Empower / Enhance level-scaled support bonuses MUST run before static
+  // `compiledMods` (which store a single reference-level snapshot such as Empower L3=+2,
+  // Awakened Empower L20=+19, Enhance L3=+16%, Awakened Enhance L20=+152%). Strictly applies
+  // to active skill gems only.
+  if (supportDef.game === 'poe1') {
+    const supName = supportDef.name.en.trim().toLowerCase();
+    if (/^(?:awakened\s+)?empower(?:\s+support)?$/i.test(supName)) {
+      return {
+        levelBonus: targetDef.category === 'active' ? Math.max(0, supportLevel - 1) : 0,
+        qualityBonus: 0,
+      };
+    }
+    if (/^(?:awakened\s+)?enhance(?:\s+support)?$/i.test(supName)) {
+      return {
+        levelBonus: 0,
+        qualityBonus: targetDef.category === 'active' ? Math.max(0, supportLevel - 1) * 8 : 0,
+      };
+    }
+  }
+
   let levelBonus = 0;
   let qualityBonus = 0;
 
@@ -447,16 +467,6 @@ export function resolveSupportGemLevelBonus(
           }
         }
       }
-    }
-  }
-
-  // 3. Classic PoE 1 Empower / Enhance level-scaled support bonuses (active target gems only)
-  if (levelBonus === 0 && targetDef.category === 'active' && supportDef.game === 'poe1') {
-    const supName = supportDef.name.en.trim().toLowerCase();
-    if (/^(?:awakened\s+)?empower(?:\s+support)?$/i.test(supName)) {
-      levelBonus += Math.max(0, supportLevel - 1);
-    } else if (/^(?:awakened\s+)?enhance(?:\s+support)?$/i.test(supName)) {
-      qualityBonus += Math.max(0, supportLevel - 1) * 8;
     }
   }
 
