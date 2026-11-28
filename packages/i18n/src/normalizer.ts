@@ -786,6 +786,71 @@ const ZH_TO_EN_RULES: StatRewriteRule[] = [
   { zhPattern: /^钢铁意志$/, toEn: () => 'Iron Will' },
   { zhPattern: /^零点射击$/, toEn: () => 'Point Blank' },
   { zhPattern: /^巨人之血$/, toEn: () => "Giant's Blood" },
+  // PoE 2 WeGame CN high-frequency item & passive lines (Wave 6G Addendum)
+  {
+    zhPattern: /^(?:(?:暴击几率|暴击率)\s*\+(\d+(?:\.\d+)?)%|\+(\d+(?:\.\d+)?)%\s*(?:暴击几率|暴击率))$/,
+    toEn: (_, a, b) => `+${a || b}% to Critical Hit Chance`,
+  },
+  {
+    zhPattern: /^(暴击|狂怒|耐力)球数量上限\s*\+?(\d+)$/,
+    toEn: (_, charge, v) => {
+      const map: Record<string, string> = { 暴击: 'Power', 狂怒: 'Frenzy', 耐力: 'Endurance' };
+      return `+${v} to Maximum ${map[charge] ?? charge} Charges`;
+    },
+  },
+  {
+    zhPattern: /^召唤生物的?伤害(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `Minions deal ${v}% increased Damage`,
+  },
+  {
+    zhPattern: /^投射物速度(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Projectile Speed`,
+  },
+  {
+    zhPattern: /^获得相当于闪避值\s*(\d+)%\s*的偏转值$/,
+    toEn: (_, v) => `Gain Deflection Rating equal to ${v}% of Evasion Rating`,
+  },
+  {
+    zhPattern: /^将所受伤害的\s*(\d+(?:\.\d+)?)%\s*吸纳为(生命|魔力|能量护盾)$/,
+    toEn: (_, v, pool) => {
+      const map: Record<string, string> = { 生命: 'Life', 魔力: 'Mana', 能量护盾: 'Energy Shield' };
+      return `${v}% of Damage Taken Recouped as ${map[pool] ?? pool}`;
+    },
+  },
+  {
+    zhPattern: /^生命每秒再生\s*(\d+(?:\.\d+)?)%$/,
+    toEn: (_, v) => `Regenerate ${v}% of Life per second`,
+  },
+  {
+    zhPattern: /^生命每秒再生\s*(\d+(?:\.\d+)?)$/,
+    toEn: (_, v) => `Regenerate ${v} Life per second`,
+  },
+  {
+    zhPattern: /^在场的友军获得相当于伤害\s*(\d+)%\s*的额外(物理|火焰|冰霜|冰冷|闪电|混沌)伤害$/,
+    toEn: (_, v, el) =>
+      `Allies in your Presence Gain ${v}% of Damage as Extra ${ZH_DAMAGE_TYPE_TO_EN[el] ?? el} Damage`,
+  },
+  {
+    zhPattern: /^在场的敌人根据最低的抗性抵抗元素伤害$/,
+    toEn: () => 'Enemies in your Presence resist Elemental Damage based on their Lowest Resistance',
+  },
+  {
+    zhPattern: /^属性需求(?:降低|减少)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% reduced Attribute Requirements`,
+  },
+  {
+    zhPattern: /^你受到的诅咒效果(提高|增加|降低|减少)\s*(\d+)%$/,
+    toEn: (_, dir, v) =>
+      `${v}% ${dir === '提高' || dir === '增加' ? 'increased' : 'reduced'} Effect of Curses on you`,
+  },
+  {
+    zhPattern: /^晕眩阈值(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Stun Threshold`,
+  },
+  {
+    zhPattern: /^(?:\+(\d+)\s*晕眩阈值|晕眩阈值\s*\+(\d+))$/,
+    toEn: (_, a, b) => `+${a || b} to Stun Threshold`,
+  },
 ];
 
 const EN_TO_ZH_RULES: EnToZhRule[] = [
@@ -1165,6 +1230,55 @@ const EN_TO_ZH_RULES: EnToZhRule[] = [
   { enPattern: /^Iron Will$/i, toZh: () => `钢铁意志` },
   { enPattern: /^Point Blank$/i, toZh: () => `零点射击` },
   { enPattern: /^Giant's Blood$/i, toZh: () => `巨人之血` },
+  // PoE 2 WeGame CN high-frequency item & passive lines (Wave 6G Addendum)
+  {
+    enPattern: /^\+(\d+(?:\.\d+)?)% to Critical Hit Chance$/i,
+    toZh: (_, v) => `暴击几率 +${v}%`,
+  },
+  {
+    enPattern: /^Minions deal (\d+)% increased Damage$/i,
+    toZh: (_, v) => `召唤生物的伤害提高 ${v}%`,
+  },
+  {
+    enPattern: /^(\d+)% increased Projectile Speed$/i,
+    toZh: (_, v) => `投射物速度提高 ${v}%`,
+  },
+  {
+    enPattern: /^Gain Deflection Rating equal to (\d+)% of Evasion Rating$/i,
+    toZh: (_, v) => `获得相当于闪避值 ${v}% 的偏转值`,
+  },
+  {
+    enPattern: /^(\d+(?:\.\d+)?)% of Damage Taken Recouped as (Life|Mana|Energy Shield)$/i,
+    toZh: (_, v, pool) => {
+      const map: Record<string, string> = { Life: '生命', Mana: '魔力', 'Energy Shield': '能量护盾' };
+      return `将所受伤害的${v}%吸纳为${map[pool] ?? pool}`;
+    },
+  },
+  {
+    enPattern: /^Allies in your Presence Gain (\d+)% of Damage as Extra (Physical|Fire|Cold|Lightning|Chaos) Damage$/i,
+    toZh: (_, v, el) => `在场的友军获得相当于伤害 ${v}% 的额外${EN_DAMAGE_TYPE_TO_ZH[el] ?? el}伤害`,
+  },
+  {
+    enPattern: /^Enemies in your Presence resist Elemental Damage based on their Lowest Resistance$/i,
+    toZh: () => `在场的敌人根据最低的抗性抵抗元素伤害`,
+  },
+  {
+    enPattern: /^(\d+)% reduced Attribute Requirements$/i,
+    toZh: (_, v) => `属性需求降低 ${v}%`,
+  },
+  {
+    enPattern: /^(\d+)% (increased|reduced) Effect of Curses on you$/i,
+    toZh: (_, v, dir) =>
+      `你受到的诅咒效果${dir.toLowerCase() === 'increased' ? '提高' : '降低'} ${v}%`,
+  },
+  {
+    enPattern: /^(\d+)% increased Stun Threshold$/i,
+    toZh: (_, v) => `晕眩阈值提高 ${v}%`,
+  },
+  {
+    enPattern: /^\+(\d+) to Stun Threshold$/i,
+    toZh: (_, v) => `+${v} 晕眩阈值`,
+  },
 ];
 
 /**

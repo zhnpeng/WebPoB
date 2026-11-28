@@ -90,4 +90,38 @@ describe('normalizer bilingual parity (PoE 1 & PoE 2)', () => {
       '法术暴击伤害加成提高 18%',
     );
   });
+
+  it('normalizes and localizes top 12 poe2-wegame-cn Chinese mod lines (Wave 6G Addendum)', () => {
+    const wegameCases: Array<{ zh: string; en: string }> = [
+      { zh: '暴击几率 +7.79%', en: '+7.79% to Critical Hit Chance' },
+      { zh: '暴击球数量上限 +1', en: '+1 to Maximum Power Charges' },
+      { zh: '召唤生物的伤害提高 47%', en: 'Minions deal 47% increased Damage' },
+      { zh: '投射物速度提高 23%', en: '23% increased Projectile Speed' },
+      {
+        zh: '获得相当于闪避值 21% 的偏转值',
+        en: 'Gain Deflection Rating equal to 21% of Evasion Rating',
+      },
+      { zh: '将所受伤害的10%吸纳为生命', en: '10% of Damage Taken Recouped as Life' },
+      { zh: '生命每秒再生 22.4', en: 'Regenerate 22.4 Life per second' },
+      {
+        zh: '在场的友军获得相当于伤害 28% 的额外火焰伤害',
+        en: 'Allies in your Presence Gain 28% of Damage as Extra Fire Damage',
+      },
+      {
+        zh: '在场的敌人根据最低的抗性抵抗元素伤害',
+        en: 'Enemies in your Presence resist Elemental Damage based on their Lowest Resistance',
+      },
+      { zh: '属性需求降低 15%', en: '15% reduced Attribute Requirements' },
+      { zh: '你受到的诅咒效果降低 50%', en: '50% reduced Effect of Curses on you' },
+      { zh: '晕眩阈值提高 20%', en: '20% increased Stun Threshold' },
+      { zh: '+361 晕眩阈值', en: '+361 to Stun Threshold' },
+    ];
+
+    for (const { zh, en } of wegameCases) {
+      expect(normalizeStatLineToEn(zh)).toBe(en);
+      const zhCn = localizeStatLine(en, 'zh-CN');
+      expect(zhCn).not.toBe(en);
+      expect(normalizeStatLineToEn(zhCn)).toBe(en);
+    }
+  });
 });
