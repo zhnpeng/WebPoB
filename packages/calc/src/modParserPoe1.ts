@@ -2688,6 +2688,11 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
     pattern: /^Curses are inflicted on you instead of Linked targets$/i,
     build: (_, src) => [mkMod('CursesRedirectedFromLinkedTarget', 'FLAG', true, src)],
   },
+  // Wave 6J: Archdemon Crown negative/positive Socketed Support Gem level
+  {
+    pattern: /^([+-]\d+) to Level of Socketed Support Gems$/i,
+    build: (m, src) => [mkMod('SocketedGemLevel:support', 'BASE', Number(m[1]), src)],
+  },
 ];
 
 /**

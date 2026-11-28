@@ -372,12 +372,14 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       }),
     ]);
 
-    // RC-9: Withered Effect (excludes defensive "on you")
+    // RC-9: Withered Effect & WitheredMagnitude parity (excludes defensive "on you")
     expect(parseModLine('20% increased Effect of Withered', 'tree')).toEqual([
       expect.objectContaining({ name: 'WitherEffect', type: 'INC', value: 20, flags: 0 }),
+      expect.objectContaining({ name: 'WitheredMagnitude', type: 'INC', value: 20, flags: 0 }),
     ]);
     expect(parseModLine('Withered you inflict has 15% increased Effect', 'item')).toEqual([
       expect.objectContaining({ name: 'WitherEffect', type: 'INC', value: 15, flags: 0 }),
+      expect.objectContaining({ name: 'WitheredMagnitude', type: 'INC', value: 15, flags: 0 }),
     ]);
     expect(parseModLine('65% reduced Effect of Withered on you', 'tree')).toEqual([]);
 
@@ -1753,6 +1755,16 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       parseModLine('Enemies Taunted by you deal 20% less Damage with Hits and Ailments against other targets', 'Tree: Bring the Battle'),
     ).toEqual([
       expect.objectContaining({ name: 'TauntedEnemyLessDamageOtherTargets', type: 'BASE', value: 20 }),
+    ]);
+  });
+
+  it('Wave 6J: WitheredMagnitude parity and Archdemon Crown support gem level', () => {
+    expect(parseModLine('20% increased Effect of Withered', 'Tree')).toEqual([
+      expect.objectContaining({ name: 'WitherEffect', type: 'INC', value: 20 }),
+      expect.objectContaining({ name: 'WitheredMagnitude', type: 'INC', value: 20 }),
+    ]);
+    expect(parseModLine('-2 to Level of Socketed Support Gems', 'Item: Archdemon Crown')).toEqual([
+      expect.objectContaining({ name: 'SocketedGemLevel:support', type: 'BASE', value: -2 }),
     ]);
   });
 });

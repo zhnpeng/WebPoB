@@ -723,10 +723,16 @@ const PARSER_RULES: ParserRule[] = [
       ];
     },
   },
-  // Wave 4M-B: Withered Effect (RC-9; excludes defensive "on you")
+  // Wave 4M-B / 6J: Withered Effect & WitheredMagnitude parity (RC-9; excludes defensive "on you")
   {
     pattern: /^(?:(\d+)% increased Effect of Withered|Withered you inflict has (\d+)% increased Effect)$/i,
-    build: (m, src) => [mkMod('WitherEffect', 'INC', Number(m[1] ?? m[2]), src)],
+    build: (m, src) => {
+      const val = Number(m[1] ?? m[2]);
+      return [
+        mkMod('WitherEffect', 'INC', val, src),
+        mkMod('WitheredMagnitude', 'INC', val, src),
+      ];
+    },
   },
   // Wave 4M-B: Champion Unstoppable Hero / Fortitude > 20, Rage Mastery Intimidate, Ascendant Necro, Rite of Ruin, The Taming, Shroud of the Lightless (RC-10)
   {
