@@ -159,6 +159,8 @@ describe('normalizer bilingual parity (PoE 1 & PoE 2)', () => {
       ['Bonded: 变形时伤害提高 40%', 'Bonded: 40% increased Damage while Shapeshifted'],
       ['效果期间获得猛攻', 'Gain Onslaught during Effect'],
       ['具有 2 个咒符位', 'Has 2 Charm Slots'],
+      ['对稀有或传奇敌人的攻击伤害提高 30%', '30% increased Attack Damage against Rare or Unique Enemies'],
+      ['对稀有或传奇敌人的伤害提高 25%', '25% increased Damage against Rare or Unique Enemies'],
     ];
 
     for (const [zh, en] of cases) {

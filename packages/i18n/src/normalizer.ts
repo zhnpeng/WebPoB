@@ -1006,6 +1006,21 @@ const ZH_TO_EN_RULES: StatRewriteRule[] = [
     zhPattern: /^生命回复总降\s*(\d+)%$/,
     toEn: (_, v) => `${v}% less Life Recovery`,
   },
+  // Wave 6I: Rare/Unique enemy conditional damage (caught on poe2-wegame-254w8rfct6)
+  {
+    zhPattern: /^对稀有或传奇敌人的(攻击|法术)?伤害(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, scope, v) => {
+      const scopeEn = scope === '攻击' ? 'Attack ' : scope === '法术' ? 'Spell ' : '';
+      return `${v}% increased ${scopeEn}Damage against Rare or Unique Enemies`;
+    },
+  },
+  {
+    zhPattern: /^对传奇敌人的(攻击|法术)?伤害(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, scope, v) => {
+      const scopeEn = scope === '攻击' ? 'Attack ' : scope === '法术' ? 'Spell ' : '';
+      return `${v}% increased ${scopeEn}Damage against Unique Enemies`;
+    },
+  },
 ];
 
 const EN_TO_ZH_RULES: EnToZhRule[] = [
@@ -1433,6 +1448,13 @@ const EN_TO_ZH_RULES: EnToZhRule[] = [
   {
     enPattern: /^\+(\d+) to Stun Threshold$/i,
     toZh: (_, v) => `+${v} 晕眩阈值`,
+  },
+  {
+    enPattern: /^(\d+)% increased (Attack |Spell )?Damage against Rare or Unique Enemies$/i,
+    toZh: (_, v, scope) => {
+      const scopeZh = scope?.trim().toLowerCase() === 'attack' ? '攻击' : scope?.trim().toLowerCase() === 'spell' ? '法术' : '';
+      return `对稀有或传奇敌人的${scopeZh}伤害提高 ${v}%`;
+    },
   },
 ];
 

@@ -2012,5 +2012,40 @@ Implicits: 1
         expect(tree.nodes[20686]?.stats).toEqual(['+5% to Quality of all Skills', '+5 to all Attributes']);
       }
     });
+
+    it('verifies Wave 6I gem data fixes (Mamba DW f:0, LeapSlam showAverage, PoE2 Flameblast AilmentMagnitude)', () => {
+      const db = new ModDB();
+      // PoE 2 Flameblast altQualityStats: MORE AilmentMagnitude 2/Q * FlameblastStage with k = Poison|Bleed|Ignite
+      const ailmentKw = KeywordFlag.Poison | KeywordFlag.Bleed | KeywordFlag.Ignite;
+      db.addMod({
+        name: 'AilmentMagnitude',
+        type: 'MORE',
+        value: 2 * 26, // Q26
+        flags: 0,
+        keywordFlags: ailmentKw,
+        tags: [{ type: 'Multiplier', var: 'FlameblastStage' }],
+        source: 'Gem: Flameblast Quality',
+      });
+      db.setEvalContext({ conditions: {}, multipliers: { FlameblastStage: 10 }, stats: {} });
+      // Must apply 520% MORE (6.2x) to Ignite magnitude query
+      expect(db.more('AilmentMagnitude', ModFlag.Spell | ModFlag.Ailment, KeywordFlag.Ignite)).toBeCloseTo(6.2, 4);
+      // Must NOT apply to non-damaging Shock query
+      expect(db.more('AilmentMagnitude', ModFlag.Spell, KeywordFlag.Lightning)).toBe(1);
+
+      // PoE 1 Viper Strike of the Mamba DualWielding -20% MORE Damage with f:0 applies to both Hit & Poison
+      const mambaDb = new ModDB();
+      mambaDb.addMod({
+        name: 'Damage',
+        type: 'MORE',
+        value: -20,
+        flags: 0,
+        keywordFlags: 0,
+        tags: [{ type: 'Condition', var: 'DualWielding' }],
+        source: 'Gem: Viper Strike of the Mamba',
+      });
+      mambaDb.setEvalContext({ conditions: { DualWielding: true }, multipliers: {}, stats: {} });
+      expect(mambaDb.more('Damage', ModFlag.Attack | ModFlag.Melee | ModFlag.Ailment, KeywordFlag.Poison)).toBeCloseTo(0.8, 4);
+      expect(mambaDb.more('Damage', ModFlag.Attack | ModFlag.Melee | ModFlag.Hit, 0)).toBeCloseTo(0.8, 4);
+    });
   });
 });
