@@ -1288,4 +1288,49 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       }),
     ]);
   });
+
+  it('Wave 4Y: Bloodline (Catarina/Farrul), Plaguebringer, Opportunistic & Armour/Evasion 4-slot Masteries', () => {
+    expect(
+      parseModLine('Minions deal 20% more Damage while they are on Low Life', 'Tree: Prolonged Servitude'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'MinionDamage',
+        type: 'MORE',
+        value: 20,
+        tags: [{ type: 'Condition', var: 'MinionLowLife' }],
+      }),
+    ]);
+    expect(
+      parseModLine('Minions deal 80% increased Damage if you have Warcried Recently', 'Tree: Primal Roar'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'MinionDamage',
+        type: 'INC',
+        value: 80,
+        tags: [{ type: 'Condition', var: 'UsedWarcryRecently' }],
+      }),
+    ]);
+    expect(parseModLine('Maximum number of Raised Spectres is 1', 'Tree: Farrul')).toEqual([
+      expect.objectContaining({ name: 'ActiveSpectreLimit', type: 'OVERRIDE', value: 1 }),
+    ]);
+    expect(
+      parseModLine(
+        '+1% to all maximum Elemental Resistances if Equipped Helmet, Body Armour, Gloves, and Boots all have Armour',
+        'Tree: Armour Mastery',
+      ),
+    ).toHaveLength(3);
+    expect(
+      parseModLine(
+        '+15% chance to Suppress Spell Damage if Equipped Helmet, Body Armour, Gloves, and Boots all have Evasion Rating',
+        'Tree: Evasion Mastery',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'SpellSuppressionChance',
+        type: 'BASE',
+        value: 15,
+        tags: [{ type: 'Condition', var: 'AllFourArmourSlotsHaveEvasion' }],
+      }),
+    ]);
+  });
 });

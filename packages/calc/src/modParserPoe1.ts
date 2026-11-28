@@ -1894,6 +1894,68 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
       },
     ],
   },
+  // Wave 4Y: Bloodline (Catarina/Farrul), Necromancer Plaguebringer, Assassin Opportunistic, Armour/Evasion 4-slot Masteries
+  {
+    pattern: /^Minions deal (\d+)% more Damage while they are on Low Life$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('MinionDamage', 'MORE', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'MinionLowLife' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Minions deal (\d+)% increased Damage if you have Warcried Recently$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('MinionDamage', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'UsedWarcryRecently' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Maximum number of Raised Spectres is (\d+)$/i,
+    build: (m, src) => [mkMod('ActiveSpectreLimit', 'OVERRIDE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^With at least one corpse within \d+ metres, Enemies within \d+ metres deal (\d+)% reduced Damage$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('EnemyDamageDealt', 'INC', -Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'NearbyCorpse' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% less Damage taken while there are at least two Rare or Unique Enemies within \d+ metres$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('DamageTaken', 'MORE', -Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'TwoRareOrUniqueNearby' }],
+      },
+    ],
+  },
+  {
+    pattern: /^\+(\d+)% to all maximum Elemental Resistances if Equipped Helmet, Body Armour, Gloves, and Boots all have Armour$/i,
+    build: (m, src) => {
+      const val = Number(m[1]);
+      const tags = [{ type: 'Condition' as const, var: 'AllFourArmourSlotsHaveArmour' }];
+      return [
+        { ...mkMod('FireResistMax', 'BASE', val, src), tags },
+        { ...mkMod('ColdResistMax', 'BASE', val, src), tags },
+        { ...mkMod('LightningResistMax', 'BASE', val, src), tags },
+      ];
+    },
+  },
+  {
+    pattern: /^\+(\d+)% chance to Suppress Spell Damage if Equipped Helmet, Body Armour, Gloves, and Boots all have Evasion Rating$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('SpellSuppressionChance', 'BASE', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'AllFourArmourSlotsHaveEvasion' }],
+      },
+    ],
+  },
 ];
 
 /**
