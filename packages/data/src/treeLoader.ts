@@ -527,6 +527,38 @@ function hydrateSkillParts(
   });
 }
 
+const UPSTREAM_MISSING_SKILL_COMPILED_MODS: Readonly<
+  Record<GameId, Readonly<Record<string, readonly CompiledGemMod[]>>>
+> = {
+  poe1: {
+    // Upstream PoB1 3.30 Data/Skills/act_str.lua & act_int.lua:
+    // active_skill_additive_spell_damage_modifiers_apply_to_attack_damage_at_%_value
+    poe1_heavystrikealty: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 150, flags: 0, keywordFlags: 0 }],
+    poe1_kineticblastaltx: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 150, flags: 0, keywordFlags: 0 }],
+    poe1_kineticbolt: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 200, flags: 0, keywordFlags: 0 }],
+    poe1_kineticfusillade: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 150, flags: 0, keywordFlags: 0 }],
+    poe1_kineticfusilladealtx: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 150, flags: 0, keywordFlags: 0 }],
+    poe1_kineticrain: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 200, flags: 0, keywordFlags: 0 }],
+    poe1_kineticrainaltx: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 200, flags: 0, keywordFlags: 0 }],
+    poe1_kineticrainkineticinstability: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 200, flags: 0, keywordFlags: 0 }],
+    poe1_powersiphon: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 150, flags: 0, keywordFlags: 0 }],
+    poe1_powersiphonaltx: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 150, flags: 0, keywordFlags: 0 }],
+    poe1_vaalpowersiphonaltx: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 150, flags: 0, keywordFlags: 0 }],
+    poe1_somaticshell: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 150, flags: 0, keywordFlags: 0 }],
+  },
+  poe2: {},
+};
+
+const UPSTREAM_SKILL_DATA_OVERRIDES: Readonly<
+  Record<GameId, Readonly<Record<string, Readonly<Record<string, number>>>>>
+> = {
+  poe1: {
+    // Upstream PoB1 3.30 Data/Skills/act_int.lua: lightning_tendrils_channelled_larger_pulse_interval = 3
+    poe1_lightningtendrils: { pulseInterval: 3 },
+  },
+  poe2: {},
+};
+
 const UPSTREAM_MISSING_QUALITY_COMPILED_MODS: Readonly<
   Record<GameId, Readonly<Record<string, readonly CompiledGemMod[]>>>
 > = {
@@ -685,7 +717,18 @@ function synthesizeGemDefinition(
   const requireSkillTypes = hydrateStringList(entry.reqTypes);
   const addSkillTypes = hydrateStringList(entry.addTypes);
   const excludeSkillTypes = hydrateStringList(entry.excTypes);
-  const compiledMods = hydrateCompiledMods(entry.cmods);
+  const rawCompiledMods = hydrateCompiledMods(entry.cmods);
+  const extraSkillMods = UPSTREAM_MISSING_SKILL_COMPILED_MODS[game][entry.id];
+  const compiledMods = (() => {
+    if (!extraSkillMods || extraSkillMods.length === 0) return rawCompiledMods;
+    const merged = rawCompiledMods ? [...rawCompiledMods] : [];
+    for (const em of extraSkillMods) {
+      if (!merged.some((m) => m.name === em.name && m.type === em.type)) {
+        merged.push({ ...em });
+      }
+    }
+    return merged.length > 0 ? merged : undefined;
+  })();
   const rawQualityCompiledMods = hydrateCompiledMods(entry.qmods);
   const qualityStats = hydrateQualityStats(entry.qs);
   const fallbackQualityMods =
@@ -696,7 +739,16 @@ function synthesizeGemDefinition(
   const qualityCompiledMods =
     rawQualityCompiledMods ??
     (fallbackQualityMods ? fallbackQualityMods.map((m) => ({ ...m })) : undefined);
-  const skillData = hydrateSkillData(entry.sdata);
+  const rawSkillData = hydrateSkillData(entry.sdata);
+  const extraSkillData = UPSTREAM_SKILL_DATA_OVERRIDES[game][entry.id];
+  const skillData = (() => {
+    if (!extraSkillData) return rawSkillData;
+    const merged: Record<string, number> = rawSkillData ? { ...rawSkillData } : {};
+    for (const [k, v] of Object.entries(extraSkillData)) {
+      if (merged[k] === undefined) merged[k] = v;
+    }
+    return Object.keys(merged).length > 0 ? merged : undefined;
+  })();
   const minionBase = hydrateMinionBase(entry.mb);
   const levelScaling = hydrateLevelScaling(entry.ls);
   const parts = hydrateSkillParts(entry.parts);

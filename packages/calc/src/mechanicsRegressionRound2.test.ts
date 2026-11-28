@@ -1438,5 +1438,65 @@ describe('Mechanism-Layer Regression Suite — Round 2 (Upstream PoB spec/System
         setRegisteredGems('poe2', prevPoe2);
       }
     });
+
+    it('injects upstream PoB1 3.30 ImprovedSpellDamageAppliesToAttacks & Lightning Tendrils pulseInterval in treeLoader (Wave 4U)', () => {
+      const prevPoe1 = getGemsForGame('poe1');
+      try {
+        const hydrated = registerGemsData('poe1', {
+          game: 'poe1',
+          count: 3,
+          gems: [
+            {
+              id: 'poe1_kineticblastaltx',
+              en: 'Kinetic Blast of Clustering',
+              cat: 'active',
+              color: 'blue',
+              tags: ['attack', 'projectile', 'area'],
+              cmods: [{ n: 'SpellDamageAppliesToAttacks', t: 'FLAG', v: true }],
+            },
+            {
+              id: 'poe1_kineticbolt',
+              en: 'Kinetic Bolt',
+              cat: 'active',
+              color: 'blue',
+              tags: ['attack', 'projectile'],
+              cmods: [{ n: 'SpellDamageAppliesToAttacks', t: 'FLAG', v: true }],
+            },
+            {
+              id: 'poe1_lightningtendrils',
+              en: 'Lightning Tendrils',
+              cat: 'active',
+              color: 'blue',
+              tags: ['spell', 'area', 'channelling', 'lightning'],
+              sdata: { CritChance: 6, DamageEffectiveness: 1.9 },
+            },
+          ],
+        });
+        const kbc = hydrated.find((g) => g.id === 'poe1_kineticblastaltx')!;
+        expect(kbc.compiledMods).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              name: 'ImprovedSpellDamageAppliesToAttacks',
+              type: 'BASE',
+              value: 150,
+            }),
+          ]),
+        );
+        const kb = hydrated.find((g) => g.id === 'poe1_kineticbolt')!;
+        expect(kb.compiledMods).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              name: 'ImprovedSpellDamageAppliesToAttacks',
+              type: 'BASE',
+              value: 200,
+            }),
+          ]),
+        );
+        const lt = hydrated.find((g) => g.id === 'poe1_lightningtendrils')!;
+        expect(lt.skillData?.pulseInterval).toBe(3);
+      } finally {
+        setRegisteredGems('poe1', prevPoe1);
+      }
+    });
   });
 });
