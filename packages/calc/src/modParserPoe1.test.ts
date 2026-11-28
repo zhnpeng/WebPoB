@@ -873,4 +873,59 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
     expect(total).toBeGreaterThan(3500);
     expect(coverage).toBeGreaterThanOrEqual(0.68);
   });
+
+  it('Wave 4O-B: dual-element TakenAs, Minions Phys-as-Chaos without Extra, Companion Damage, GemlingQuality & Removes all mana', () => {
+    // 1. Purity of Fire Watcher's Eye dual-element TakenAs (bare + conditional)
+    expect(parseModLine('10% of Cold and Lightning Damage taken as Fire Damage', 'item')).toEqual([
+      expect.objectContaining({ name: 'ColdDamageTakenAsFire', type: 'BASE', value: 10 }),
+      expect.objectContaining({ name: 'LightningDamageTakenAsFire', type: 'BASE', value: 10 }),
+    ]);
+    expect(
+      parseModLine(
+        '15% of Cold and Lightning Damage taken as Fire Damage while affected by Purity of Fire',
+        'item',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'ColdDamageTakenAsFire',
+        type: 'BASE',
+        value: 15,
+        tags: [{ type: 'Condition', var: 'AffectedByPurityOfFire' }],
+      }),
+      expect.objectContaining({
+        name: 'LightningDamageTakenAsFire',
+        type: 'BASE',
+        value: 15,
+        tags: [{ type: 'Condition', var: 'AffectedByPurityOfFire' }],
+      }),
+    ]);
+
+    // 2. Minions gain X% of Physical Damage as Chaos Damage (without "Extra")
+    expect(parseModLine('Minions gain 20% of Physical Damage as Chaos Damage', 'item')).toEqual([
+      expect.objectContaining({
+        name: 'MinionPhysicalDamageGainAsChaos',
+        type: 'BASE',
+        value: 20,
+      }),
+    ]);
+
+    // 3. Companion Damage applies to / affects you
+    expect(parseModLine('Increases and Reductions to Companion Damage also apply to you', 'tree')).toEqual([
+      expect.objectContaining({ name: 'CompanionDamageAppliesToPlayer', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Increases and Reductions to Companion Damage also affect you', 'tree')).toEqual([
+      expect.objectContaining({ name: 'CompanionDamageAppliesToPlayer', type: 'FLAG', value: true }),
+    ]);
+
+    // 4. GemlingQuality & preservation of "Removes all mana"
+    expect(parseModLine('Gem Quality grants Socketed Skills an additional effect', 'tree')).toEqual([
+      expect.objectContaining({ name: 'GemlingQuality', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Removes all mana', 'tree')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'BloodMagic', type: 'FLAG', value: true }),
+        expect.objectContaining({ name: 'Mana', type: 'OVERRIDE', value: 0 }),
+      ]),
+    );
+  });
 });

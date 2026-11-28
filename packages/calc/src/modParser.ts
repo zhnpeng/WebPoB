@@ -288,6 +288,14 @@ const PARSER_RULES: ParserRule[] = [
     pattern: /^Increases and Reductions to Minion Damage also affect you$/i,
     build: (_, src) => [mkMod('SpiritualAid', 'FLAG', true, src)],
   },
+  {
+    pattern: /^Increases and Reductions to Companion Damage also (?:apply to|affect) you$/i,
+    build: (_, src) => [mkMod('CompanionDamageAppliesToPlayer', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Gem Quality grants Socketed Skills an additional effect$/i,
+    build: (_, src) => [mkMod('GemlingQuality', 'FLAG', true, src)],
+  },
   // NOTE: SpiritualCommand ("Increases and Reductions to Minion Attack Speed also affect you") is
   // deferred to Coordinator handoff because skillActorRuntime.ts:1241 currently routes SpiritualCommand
   // to both ModFlag.Attack and ModFlag.Spell (leaking Minion Attack Speed onto Spells & double-counting hybrids).

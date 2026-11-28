@@ -470,7 +470,19 @@ function applyPoe2PreStatAscendancies(
   }
 
   if (nodes.has('eldritch empowerment')) {
-    addMod(db, 'Damage', 'MORE', 30, 'Ascendancy: Eldritch Empowerment', ModFlag.Spell);
+    const src = 'Ascendancy: Eldritch Empowerment';
+    addMod(db, 'EldritchEmpowerment', 'FLAG', true, src);
+    if (!hasRawSourceMod(db, 'Damage', 'eldritch empowerment')) {
+      db.addMod({
+        name: 'Damage',
+        type: 'MORE',
+        value: 30,
+        flags: ModFlag.Spell,
+        keywordFlags: 0,
+        source: src,
+        tags: [{ type: 'Condition', var: 'EldritchEmpowermentSacrifice' }],
+      });
+    }
   }
 
   if (nodes.has('price of power')) {
@@ -487,6 +499,27 @@ function applyPoe2PreStatAscendancies(
   if (nodes.has('enhanced effectiveness')) {
     const src = 'Ascendancy: Enhanced Effectiveness';
     addMod(db, 'DoubleAttributeBonuses', 'FLAG', true, src);
+  }
+
+  if (nodes.has('advanced thaumaturgy')) {
+    addMod(db, 'GemlingQuality', 'FLAG', true, 'Ascendancy: Advanced Thaumaturgy');
+  }
+
+  if (nodes.has('adaptive capability')) {
+    addMod(
+      db,
+      'GemAttributeRequirementsSatisfiedByHighestAttribute',
+      'FLAG',
+      true,
+      'Ascendancy: Adaptive Capability',
+    );
+  }
+
+  if (nodes.has('crystalline potential')) {
+    const src = 'Ascendancy: Crystalline Potential';
+    if (!hasRawSourceMod(db, 'GemQuality:all', 'crystalline potential')) {
+      addMod(db, 'GemQuality:all', 'BASE', 10, src);
+    }
   }
 
   if (nodes.has('gem studded')) {
@@ -1147,6 +1180,78 @@ function applyPoe1PreStatAscendancies(
       });
     }
   }
+
+  // --- PoE 1 Phrecia Alternate Ascendancies: Aristocrat / Paladin / Whisperer ---
+  if (nodes.has('illicit gains') && !hasRawSourceMod(db, 'Str', 'illicit gains')) {
+    addMod(db, 'Str', 'INC', 40, 'Ascendancy: Illicit Gains');
+  }
+  if (nodes.has('private tuition') && !hasRawSourceMod(db, 'Int', 'private tuition')) {
+    addMod(db, 'Int', 'INC', 40, 'Ascendancy: Private Tuition');
+  }
+  if (nodes.has('fancy foil') && !hasRawSourceMod(db, 'Dex', 'fancy foil')) {
+    addMod(db, 'Dex', 'INC', 40, 'Ascendancy: Fancy Foil');
+  }
+  if (nodes.has('family heirlooms') && !hasRawSourceMod(db, 'GemLevel:all', 'family heirlooms')) {
+    addMod(db, 'GemLevel:all', 'BASE', 1, 'Ascendancy: Family Heirlooms');
+  }
+  if (nodes.has('centerpiece') && !hasRawSourceMod(db, 'GemQuality:all', 'centerpiece')) {
+    addMod(db, 'GemQuality:all', 'BASE', 20, 'Ascendancy: Centerpiece');
+  }
+  if (nodes.has('light of divinity') && !hasRawSourceMod(db, 'ElementalDamageTaken', 'light of divinity')) {
+    db.addMod({
+      name: 'ElementalDamageTaken',
+      type: 'INC',
+      value: 25,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Ascendancy: Light of Divinity',
+      target: 'enemy',
+    });
+  }
+  if (nodes.has('bring the battle') && !hasRawSourceMod(db, 'DamageTaken', 'bring the battle')) {
+    db.addMod({
+      name: 'DamageTaken',
+      type: 'INC',
+      value: 20,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Ascendancy: Bring the Battle',
+      target: 'enemy',
+      tags: [{ type: 'Condition', var: 'EnemyTaunted' }],
+    });
+  }
+  if (nodes.has('field medicine') && !hasRawSourceMod(db, 'FlaskEffect', 'field medicine')) {
+    addMod(db, 'FlaskEffect', 'INC', 40, 'Ascendancy: Field Medicine');
+  }
+  if (nodes.has('absolution') && !hasRawSourceMod(db, 'AuraEffect', 'absolution')) {
+    db.addMod({
+      name: 'AuraEffect',
+      type: 'INC',
+      value: 40,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Ascendancy: Absolution',
+      tags: [{ type: 'Condition', var: 'HaveLinkedTarget' }],
+    });
+  }
+  if (nodes.has('there is more')) {
+    const src = 'Ascendancy: there is more';
+    if (!hasRawSourceMod(db, 'MinFrenzyCharges', 'there is more')) {
+      addMod(db, 'MinFrenzyCharges', 'BASE', 4, src);
+    }
+    if (!hasRawSourceMod(db, 'MinPowerCharges', 'there is more')) {
+      addMod(db, 'MinPowerCharges', 'BASE', 4, src);
+    }
+    if (!hasRawSourceMod(db, 'MaxFrenzyCharges', 'there is more')) {
+      addMod(db, 'MaxFrenzyCharges', 'BASE', 1, src);
+    }
+    if (!hasRawSourceMod(db, 'MaxPowerCharges', 'there is more')) {
+      addMod(db, 'MaxPowerCharges', 'BASE', 1, src);
+    }
+  }
+  if (nodes.has('an infinite pursuit')) {
+    addMod(db, 'NoIntManaBonus', 'FLAG', true, 'Ascendancy: an infinite pursuit');
+  }
 }
 
 /**
@@ -1290,6 +1395,28 @@ function applyPoe2PostLifeAscendancies(
     }
     if (int > 0 && !db.flag('NoIntManaBonus')) {
       addMod(db, 'Mana', 'BASE', Math.floor(int * 2), src);
+    }
+  }
+
+  // --- Gemling Legionnaire: Thaumaturgical Infusion ---
+  // +1% to Maximum Fire/Lightning/Cold Resistance per 3 Red/Green/Blue Support Gems Socketed
+  if (nodes.has('thaumaturgical infusion')) {
+    const src = 'Ascendancy: Thaumaturgical Infusion';
+    const mults = db.getEvalContext().multipliers;
+    const redGems = Math.max(0, mults.StrengthMoteSkillCount ?? 0);
+    const greenGems = Math.max(0, mults.DexterityMoteSkillCount ?? 0);
+    const blueGems = Math.max(0, mults.IntelligenceMoteSkillCount ?? 0);
+    const fireBonus = Math.floor(redGems / 3);
+    const lightBonus = Math.floor(greenGems / 3);
+    const coldBonus = Math.floor(blueGems / 3);
+    if (fireBonus > 0 && !hasRawSourceMod(db, 'FireResistMax', 'thaumaturgical infusion')) {
+      addMod(db, 'FireResistMax', 'BASE', fireBonus, src);
+    }
+    if (lightBonus > 0 && !hasRawSourceMod(db, 'LightningResistMax', 'thaumaturgical infusion')) {
+      addMod(db, 'LightningResistMax', 'BASE', lightBonus, src);
+    }
+    if (coldBonus > 0 && !hasRawSourceMod(db, 'ColdResistMax', 'thaumaturgical infusion')) {
+      addMod(db, 'ColdResistMax', 'BASE', coldBonus, src);
     }
   }
 
@@ -1503,6 +1630,30 @@ function applyPoe1PostLifeAscendancies(
       if (activePower >= maxPower && !hasSourceMod(db, 'BaseCritChance', 'deadly infusion')) {
         addMod(db, 'BaseCritChance', 'BASE', 1.5, src);
       }
+    }
+  }
+
+  // --- Phrecia Aristocrat: Dreadful Attitude (8% increased Damage per 5 of your lowest Attribute) ---
+  if (nodes.has('dreadful attitude') && !hasRawSourceMod(db, 'Damage', 'dreadful attitude')) {
+    const lowestAttr = Math.max(0, Math.min(input.str, input.dex, input.int));
+    const dmgInc = Math.floor(lowestAttr / 5) * 8;
+    if (dmgInc > 0) {
+      addMod(db, 'Damage', 'INC', dmgInc, 'Ascendancy: Dreadful Attitude');
+    }
+  }
+
+  // --- Phrecia Whisperer: an infinite pursuit (+1 to Maximum Mana per Dexterity) ---
+  if (nodes.has('an infinite pursuit') && input.dex > 0 && !hasRawSourceMod(db, 'Mana', 'an infinite pursuit')) {
+    addMod(db, 'Mana', 'BASE', Math.floor(input.dex), 'Ascendancy: an infinite pursuit');
+  }
+
+  // --- Phrecia Whisperer: we know all (Attack Skills have Added Lightning Damage equal to 6% of max Mana) ---
+  if (nodes.has('we know all') && input.maxMana > 0 && !hasRawSourceMod(db, 'LightningMin', 'we know all')) {
+    const addedLight = Math.floor(input.maxMana * 0.06);
+    if (addedLight > 0) {
+      const src = 'Ascendancy: we know all';
+      addMod(db, 'LightningMin', 'BASE', addedLight, src, ModFlag.Attack);
+      addMod(db, 'LightningMax', 'BASE', addedLight, src, ModFlag.Attack);
     }
   }
 }

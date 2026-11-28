@@ -343,4 +343,57 @@ Implicits: 1
     expect(build.config.rawInputs?.conditionImpaledEnemyRecently).toBe(true);
     expect(build.config.rawInputs?.buffAdrenaline).toBe(true);
   });
+
+  it('Wave 4O-B: aligns multi-loadout activeSpec / activeItemSet / ConfigSet, legacy direct Slots & Phrecia _alternate nodes', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding>
+  <Build className="Duelist" ascendClassName="Aristocrat" level="100" mainSocketGroup="1" />
+  <Tree activeSpec="2">
+    <Spec title="Early" treeVersion="3_27_alternate" nodes="1,2748" />
+    <Spec title="Endgame" treeVersion="3_27_alternate" nodes="1,2748,50743" />
+  </Tree>
+  <Skills activeSkillSet="1">
+    <SkillSet id="1">
+      <Skill enabled="true"><Gem nameSpec="Blade Flurry" level="20" quality="20" enabled="true" /></Skill>
+    </SkillSet>
+  </Skills>
+  <Items activeItemSet="2" useSecondWeaponSet="false">
+    <Item id="1">Rarity: RARE\nTest Helm A\nHubris Circlet\n+50 to maximum Life</Item>
+    <Item id="2">Rarity: RARE\nTest Helm B\nHubris Circlet\n+100 to maximum Life</Item>
+    <ItemSet id="3" title="Entering Maps"><Slot name="Helmet" itemId="1" /></ItemSet>
+    <ItemSet id="2" title="Mid Game"><Slot name="Helmet" itemId="2" /></ItemSet>
+  </Items>
+  <Config activeConfigSet="2">
+    <ConfigSet id="3"><Input name="usePowerCharges" boolean="false" /></ConfigSet>
+    <ConfigSet id="2"><Input name="usePowerCharges" boolean="true" /></ConfigSet>
+  </Config>
+  <Notes>Stray tag in notes should be ignored: &lt;ItemSet id="99"&gt;&lt;Slot name="Helmet" itemId="1"/&gt;&lt;/ItemSet&gt;</Notes>
+</PathOfBuilding>`;
+
+    const build = xmlToBuild(xml);
+    expect(build.activeTreeSpecIndex).toBe(1);
+    expect(build.tree.title).toBe('Endgame');
+    expect(build.activeItemSetIndex).toBe(1);
+    expect(build.equipped['Helmet']).toBe('imp_item_2');
+    expect(build.config.usePowerCharges).toBe(true);
+    // Phrecia 3_27_alternate Aristocrat nodes (2748 Illicit Gains + 50743 Private Tuition) hydrated into customMods
+    expect(build.config.customMods).toContain('40% increased Strength');
+    expect(build.config.customMods).toContain('40% increased Intelligence');
+
+    // Legacy PoB XML without <ItemSet> wrappers still parses direct <Slot> children & useSecondWeaponSet
+    const legacyXml = `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding>
+  <Build className="Witch" level="90" mainSocketGroup="1" />
+  <Tree activeSpec="1"><Spec title="Default" nodes="1" /></Tree>
+  <Skills><Skill enabled="true"><Gem nameSpec="Arc" level="20" quality="0" enabled="true" /></Skill></Skills>
+  <Items useSecondWeaponSet="true">
+    <Item id="1">Rarity: RARE\nLegacy Wand\nOpal Wand\n+20 to Intelligence</Item>
+    <Slot name="Weapon 1" itemId="1" />
+  </Items>
+  <Config />
+</PathOfBuilding>`;
+    const legacyBuild = xmlToBuild(legacyXml);
+    expect(legacyBuild.equipped['Weapon 1']).toBe('imp_item_1');
+    expect(legacyBuild.activeWeaponSet).toBe(2);
+  });
 });

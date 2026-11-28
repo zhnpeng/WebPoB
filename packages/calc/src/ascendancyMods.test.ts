@@ -332,7 +332,7 @@ describe('ascendancyMods', () => {
       expect(db05.sum('INC', 'ArcaneSurgeEffect')).toBe(0);
     });
 
-    it('Lich (PoE 2): Soulless Form & Eldritch Empowerment', () => {
+    it('Lich (PoE 2): Soulless Form & Eldritch Empowerment (condition-gated)', () => {
       const db = new ModDB();
       const nodes = [
         mkNode('Soulless Form', [], 'Lich', 1),
@@ -341,6 +341,10 @@ describe('ascendancyMods', () => {
       applyPreStatAscendancyMechanics({ game: 'poe2', db, allocatedNodes: nodes });
       expect(db.flag('NoInherentManaRegen')).toBe(true);
       expect(db.sum('BASE', 'DamageBypassEs')).toBe(10);
+      expect(db.flag('EldritchEmpowerment')).toBe(true);
+      // Gated by Condition:EldritchEmpowermentSacrifice (PoB 2 ModParser.lua:3191-3194)
+      expect(db.more('Damage', ModFlag.Spell)).toBeCloseTo(1.0, 5);
+      db.setCondition('EldritchEmpowermentSacrifice', true);
       expect(db.more('Damage', ModFlag.Spell)).toBeCloseTo(1.3, 5);
 
       applyPostLifeAscendancyMechanics({
@@ -389,6 +393,79 @@ describe('ascendancyMods', () => {
       expect(db.sum('BASE', 'Life')).toBe(800); // Extra +2 Life/Str -> total 4/Str
       expect(db.sum('BASE', 'Accuracy')).toBe(1000); // Extra +5 Acc/Dex -> total 10/Dex
       expect(db.sum('BASE', 'Mana')).toBe(600); // Extra +2 Mana/Int -> total 4/Int
+    });
+
+    it('Gemling Legionnaire (PoE 2): Advanced Thaumaturgy, Adaptive Capability, Crystalline Potential & Thaumaturgical Infusion', () => {
+      const db = new ModDB();
+      db.setMultiplier('StrengthMoteSkillCount', 6);
+      db.setMultiplier('DexterityMoteSkillCount', 4);
+      db.setMultiplier('IntelligenceMoteSkillCount', 9);
+      const nodes = [
+        mkNode('Advanced Thaumaturgy', [], 'Gemling Legionnaire', 1),
+        mkNode('Adaptive Capability', [], 'Gemling Legionnaire', 2),
+        mkNode('Crystalline Potential', [], 'Gemling Legionnaire', 3),
+        mkNode('Thaumaturgical Infusion', [], 'Gemling Legionnaire', 4),
+      ];
+      applyPreStatAscendancyMechanics({ game: 'poe2', db, allocatedNodes: nodes });
+      expect(db.flag('GemlingQuality')).toBe(true);
+      expect(db.flag('GemAttributeRequirementsSatisfiedByHighestAttribute')).toBe(true);
+      expect(db.sum('BASE', 'GemQuality:all')).toBe(10);
+
+      applyPostLifeAscendancyMechanics({
+        game: 'poe2',
+        db,
+        allocatedNodes: nodes,
+        str: 200,
+        dex: 200,
+        int: 200,
+        maxLife: 2000,
+        maxMana: 1000,
+      });
+      expect(db.sum('BASE', 'FireResistMax')).toBe(2); // floor(6/3)
+      expect(db.sum('BASE', 'LightningResistMax')).toBe(1); // floor(4/3)
+      expect(db.sum('BASE', 'ColdResistMax')).toBe(3); // floor(9/3)
+    });
+
+    it('Phrecia Alternate Ascendancies (PoE 1): Aristocrat, Paladin & Whisperer', () => {
+      const db = new ModDB();
+      const nodes = [
+        mkNode('Illicit Gains', [], 'Aristocrat', 1),
+        mkNode('Private Tuition', [], 'Aristocrat', 2),
+        mkNode('Fancy Foil', [], 'Aristocrat', 3),
+        mkNode('Dreadful Attitude', [], 'Aristocrat', 4),
+        mkNode('Light of Divinity', [], 'Paladin', 5),
+        mkNode('Bring the Battle', [], 'Paladin', 6),
+        mkNode('Field Medicine', [], 'Paladin', 7),
+        mkNode('there is more', [], 'Whisperer', 8),
+        mkNode('an infinite pursuit', [], 'Whisperer', 9),
+        mkNode('we know all', [], 'Whisperer', 10),
+      ];
+      applyPreStatAscendancyMechanics({ game: 'poe1', db, allocatedNodes: nodes });
+      expect(db.sum('INC', 'Str')).toBe(40);
+      expect(db.sum('INC', 'Int')).toBe(40);
+      expect(db.sum('INC', 'Dex')).toBe(40);
+      expect(db.sum('INC', 'FlaskEffect')).toBe(40);
+      expect(db.sum('BASE', 'MinFrenzyCharges')).toBe(4);
+      expect(db.sum('BASE', 'MinPowerCharges')).toBe(4);
+      expect(db.flag('NoIntManaBonus')).toBe(true);
+
+      applyPostLifeAscendancyMechanics({
+        game: 'poe1',
+        db,
+        allocatedNodes: nodes,
+        str: 300,
+        dex: 250,
+        int: 400,
+        maxLife: 4000,
+        maxMana: 2000,
+      });
+      // Dreadful Attitude: floor(min(300,250,400)/5) * 8 = 50 * 8 = 400%
+      expect(db.sum('INC', 'Damage')).toBe(400);
+      // an infinite pursuit: +1 Mana per Dex = 250
+      expect(db.sum('BASE', 'Mana')).toBe(250);
+      // we know all: 6% of 2000 maxMana = 120 added Lightning Damage to Attacks
+      expect(db.sum('BASE', 'LightningMin', ModFlag.Attack)).toBe(120);
+      expect(db.sum('BASE', 'LightningMax', ModFlag.Attack)).toBe(120);
     });
 
     it('Amazon (PoE 2): Critical Strike & Predatory Instinct', () => {

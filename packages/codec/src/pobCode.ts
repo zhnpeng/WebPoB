@@ -429,6 +429,52 @@ function matchGemId(
 }
 
 /**
+ * PoE 1 Legacy of Phrecia (`*_alternate`) ascendancy node stats for Aristocrat, Paladin, and Whisperer.
+ * Used when an imported build references a `3_25_alternate`..`3_28_alternate` tree whose alternate
+ * ascendancy node IDs are absent from the standard PoE 1 passive tree JSON.
+ */
+const PHRECIA_ALTERNATE_NODE_STATS: Readonly<Record<number, readonly string[]>> = {
+  // Aristocrat (alternate Duelist / Slayer slot)
+  2748: ['40% increased Strength'], // Illicit Gains
+  50743: ['40% increased Intelligence'], // Private Tuition
+  11154: ['40% increased Dexterity'], // Fancy Foil
+  30851: ['+20% to Quality of all Skill Gems'], // Centerpiece
+  46836: ['+1 to Level of all Skill Gems'], // Family Heirlooms
+  35022: ['+4 to Level of all non-Exceptional Support Gems'], // Gem-lined Cap
+  // Paladin (alternate Duelist / Champion slot)
+  2134: ['Regenerate 0.5% of Life per second', '5% increased effect of Non-Curse Auras from your Skills'],
+  2437: ['Regenerate 0.5% of Life per second', '5% increased effect of Non-Curse Auras from your Skills'],
+  38874: ['Regenerate 0.5% of Life per second', '5% increased effect of Non-Curse Auras from your Skills'],
+  49271: ['Regenerate 0.5% of Life per second', '5% increased effect of Non-Curse Auras from your Skills'],
+  11127: ['Regenerate 0.5% of Life per second', '5% increased effect of Non-Curse Auras from your Skills'],
+  363: ['Regenerate 0.5% of Life per second', '5% increased effect of Non-Curse Auras from your Skills'],
+  29126: ['Regenerate 0.5% of Life per second', '5% increased effect of Non-Curse Auras from your Skills'],
+  54067: ['Regenerate 0.5% of Life per second', '5% increased effect of Non-Curse Auras from your Skills'],
+  43835: ['Regenerate 0.5% of Life per second', '5% increased effect of Non-Curse Auras from your Skills'],
+  13763: ['Nearby Enemies take 25% increased Elemental Damage'], // Light of Divinity
+  42396: ['Magic Utility Flasks applied to you have 40% increased Effect'], // Field Medicine
+  40171: ['40% increased Effect of Non-Curse Auras from your Skills while you have a Linked Target'], // Absolution
+  46492: ['Enemies Taunted by you take 20% increased Damage'], // Bring the Battle
+  // Whisperer (alternate Ranger / Deadeye slot)
+  1116: ['10% increased Attack Damage', '6% increased maximum Mana'],
+  21095: ['10% increased Attack Damage', '6% increased maximum Mana'],
+  540: ['10% increased Attack Damage', '6% increased maximum Mana'],
+  24726: ['10% increased Attack Damage', '6% increased maximum Mana'],
+  15390: ['10% increased Attack Damage', '6% increased maximum Mana'],
+  9982: ['10% increased Attack Damage', '6% increased maximum Mana'],
+  27553: ['10% increased Attack Damage', '6% increased maximum Mana'],
+  17123: ['10% increased Attack Damage', '6% increased maximum Mana'],
+  30419: ['10% increased Attack Damage', '6% increased maximum Mana'],
+  2266: [
+    '+4 to Minimum Frenzy Charges',
+    '+4 to Minimum Power Charges',
+    '+1 to Maximum Frenzy Charges',
+    '+1 to Maximum Power Charges',
+  ], // there is more
+  26415: ['20% of Damage taken Recouped as Mana', '100% of Physical Damage is taken from Mana before Life'], // don't panic yet
+};
+
+/**
  * Parses official Path of Building XML (PoE 1 or PoE 2) into a WebPoB `Build` object.
  */
 export function xmlToBuild(xml: string): Build {
@@ -497,22 +543,24 @@ export function xmlToBuild(xml: string): Build {
     }
   }
 
-  // Parse <Items activeItemSet="..."> & all <ItemSet> blocks
-  const itemsHeaderMatch = xml.match(/<Items\b([^>]*)>/i);
-  const itemsHeaderAttrs = itemsHeaderMatch ? parseAttributes(itemsHeaderMatch[1]!) : {};
+  // Parse <Items activeItemSet="..."> & all <ItemSet> blocks (scoped to <Items>...</Items>)
+  const itemsSectionMatch = xml.match(/<Items\b([^>]*?)(?:\/>|>([\s\S]*?)<\/Items>)/i);
+  const itemsHeaderAttrs = itemsSectionMatch ? parseAttributes(itemsSectionMatch[1]!) : {};
+  const itemsSectionXml = itemsSectionMatch?.[2] ?? xml;
   const requestedItemSetId = itemsHeaderAttrs.activeItemSet || '1';
   const itemSets: ItemSetSpec[] = [];
   const itemSetWsFlags: boolean[] = [];
-  const itemSetBlockRegex = /<ItemSet\b([^>]*?)(?:\/>|>([\s\S]*?)<\/ItemSet>)/gi;
-  let isMatch: RegExpExecArray | null;
-  while ((isMatch = itemSetBlockRegex.exec(xml)) !== null) {
-    const isAttrs = parseAttributes(isMatch[1]!);
-    const isInner = isMatch[2] ?? '';
+  const parseSlotsFromBlock = (
+    blockXml: string,
+  ): {
+    eq: Partial<Record<EquipmentSlotId, string>>;
+    fl: Partial<Record<EquipmentSlotId, boolean>>;
+  } => {
     const eq: Partial<Record<EquipmentSlotId, string>> = {};
     const fl: Partial<Record<EquipmentSlotId, boolean>> = {};
     const slotRegex = /<Slot\b([^>]*)\/?>/gi;
     let slotMatch: RegExpExecArray | null;
-    while ((slotMatch = slotRegex.exec(isInner)) !== null) {
+    while ((slotMatch = slotRegex.exec(blockXml)) !== null) {
       const attrs = parseAttributes(slotMatch[1]!);
       const slotName = attrs.name as EquipmentSlotId | undefined;
       const itemId = attrs.itemId ? numIdToItemId.get(attrs.itemId) : undefined;
@@ -523,6 +571,14 @@ export function xmlToBuild(xml: string): Build {
         }
       }
     }
+    return { eq, fl };
+  };
+  const itemSetBlockRegex = /<ItemSet\b([^>]*?)(?:\/>|>([\s\S]*?)<\/ItemSet>)/gi;
+  let isMatch: RegExpExecArray | null;
+  while ((isMatch = itemSetBlockRegex.exec(itemsSectionXml)) !== null) {
+    const isAttrs = parseAttributes(isMatch[1]!);
+    const isInner = isMatch[2] ?? '';
+    const { eq, fl } = parseSlotsFromBlock(isInner);
     itemSets.push({
       id: isAttrs.id || String(itemSets.length + 1),
       title: isAttrs.title || (itemSets.length === 0 ? 'Default' : `Set ${itemSets.length + 1}`),
@@ -530,6 +586,19 @@ export function xmlToBuild(xml: string): Build {
       ...(Object.keys(fl).length > 0 ? { activeFlaskSlots: fl } : {}),
     });
     itemSetWsFlags.push(isAttrs.useSecondWeaponSet === 'true');
+  }
+  if (itemSets.length === 0) {
+    // Legacy PoB XML without <ItemSet> wrappers: parse direct <Slot> children of <Items>
+    const { eq, fl } = parseSlotsFromBlock(itemsSectionXml);
+    if (Object.keys(eq).length > 0) {
+      itemSets.push({
+        id: '1',
+        title: 'Default',
+        equipped: eq,
+        ...(Object.keys(fl).length > 0 ? { activeFlaskSlots: fl } : {}),
+      });
+      itemSetWsFlags.push(itemsHeaderAttrs.useSecondWeaponSet === 'true');
+    }
   }
   let activeItemSetIndex = itemSets.findIndex((s) => s.id === requestedItemSetId);
   if (activeItemSetIndex < 0) {
@@ -543,19 +612,27 @@ export function xmlToBuild(xml: string): Build {
     ? { ...activeItemSet.activeFlaskSlots }
     : {};
   const activeWeaponSet: WeaponSetId =
-    buildAttrs.activeWeaponSet === '2' || itemSetWsFlags[activeItemSetIndex] ? 2 : 1;
+    buildAttrs.activeWeaponSet === '2' ||
+    itemSetWsFlags[activeItemSetIndex] ||
+    itemsHeaderAttrs.useSecondWeaponSet === 'true'
+      ? 2
+      : 1;
 
-  // Parse <Tree activeSpec="..."> & ALL <Spec> elements (supports PoB multi-spec & historical versioned trees!)
+  // Parse <Tree activeSpec="..."> & ALL <Spec> elements (scoped to <Tree>...</Tree>)
   const defaultTree = getTreeForGame(game);
   const defaultStartNodeId = defaultTree.classStartNodeIds[classDef.id];
-  const treeHeaderMatch = xml.match(/<Tree\b([^>]*)>/i);
-  const treeHeaderAttrs = treeHeaderMatch ? parseAttributes(treeHeaderMatch[1]!) : {};
-  const requestedSpecIdx = Math.max(1, Number(treeHeaderAttrs.activeSpec ?? 1) || 1) - 1;
+  const treeSectionMatch = xml.match(/<Tree\b([^>]*?)(?:\/>|>([\s\S]*?)<\/Tree>)/i);
+  const treeHeaderAttrs = treeSectionMatch ? parseAttributes(treeSectionMatch[1]!) : {};
+  const treeSectionXml = treeSectionMatch?.[2] ?? xml;
+  const requestedSpecId = treeHeaderAttrs.activeSpec || '1';
+  const requestedSpecIdx = Math.max(1, Number(requestedSpecId) || 1) - 1;
 
   const treeSpecs: TreeSpec[] = [];
+  const treeSpecIds: Array<string | undefined> = [];
+  const treeSpecPhreciaModLines: string[][] = [];
   const specBlockRegex = /<Spec\b([^>]*?)(?:\/>|>([\s\S]*?)<\/Spec>)/gi;
   let spMatch: RegExpExecArray | null;
-  while ((spMatch = specBlockRegex.exec(xml)) !== null) {
+  while ((spMatch = specBlockRegex.exec(treeSectionXml)) !== null) {
     const specAttrs = parseAttributes(spMatch[1]!);
     const specInner = spMatch[2] ?? '';
     const specTree = getTreeForGame(game, specAttrs.treeVersion);
@@ -573,6 +650,16 @@ export function xmlToBuild(xml: string): Build {
     let allocatedNodeIds = rawSpecNodes.filter(
       (id) => Boolean(specTree.nodes[id]) && !wsExclusiveSet.has(id),
     );
+    const phreciaModLines: string[] = [];
+    if (game === 'poe1' && /_alternate$/i.test(specAttrs.treeVersion ?? '')) {
+      for (const id of rawSpecNodes) {
+        if (specTree.nodes[id]) continue;
+        const altStats = PHRECIA_ALTERNATE_NODE_STATS[id];
+        if (altStats) {
+          phreciaModLines.push(...altStats);
+        }
+      }
+    }
     const clusterNodeIds =
       game === 'poe1' ? rawSpecNodes.filter((id) => id >= 65536 && !specTree.nodes[id]) : [];
     if (specStartNodeId && !allocatedNodeIds.includes(specStartNodeId)) {
@@ -617,6 +704,8 @@ export function xmlToBuild(xml: string): Build {
         ? { nodeOverrides: specNodeOverrides }
         : {}),
     });
+    treeSpecIds.push(specAttrs.id);
+    treeSpecPhreciaModLines.push(phreciaModLines);
   }
   if (treeSpecs.length === 0) {
     treeSpecs.push({
@@ -627,9 +716,14 @@ export function xmlToBuild(xml: string): Build {
       weaponSet2NodeIds: [],
       masteryEffects: {},
     });
+    treeSpecIds.push(undefined);
+    treeSpecPhreciaModLines.push([]);
   }
-  const activeTreeSpecIndex = Math.max(0, Math.min(treeSpecs.length - 1, requestedSpecIdx));
+  const specIdMatchIdx = treeSpecIds.findIndex((id) => id !== undefined && id === requestedSpecId);
+  const activeTreeSpecIndex =
+    specIdMatchIdx >= 0 ? specIdMatchIdx : Math.max(0, Math.min(treeSpecs.length - 1, requestedSpecIdx));
   const activeTreeSpec = treeSpecs[activeTreeSpecIndex]!;
+  const activeSpecPhreciaModLines = treeSpecPhreciaModLines[activeTreeSpecIndex] ?? [];
 
   // Parse <Skills activeSkillSet="..."> & all <SkillSet> blocks
   // Track exact 1-based XML <Skill> ordinal so `mainSocketGroup` never shifts when empty or item-source <Skill/> tags precede it.
@@ -869,14 +963,15 @@ export function xmlToBuild(xml: string): Build {
     };
   };
 
-  const skillsHeaderMatch = xml.match(/<Skills\b([^>]*)>/i);
-  const skillsHeaderAttrs = skillsHeaderMatch ? parseAttributes(skillsHeaderMatch[1]!) : {};
+  const skillsSectionMatch = xml.match(/<Skills\b([^>]*?)(?:\/>|>([\s\S]*?)<\/Skills>)/i);
+  const skillsHeaderAttrs = skillsSectionMatch ? parseAttributes(skillsSectionMatch[1]!) : {};
+  const skillsSectionXml = skillsSectionMatch?.[2] ?? xml;
   const requestedSkillSetId = skillsHeaderAttrs.activeSkillSet || '1';
   const skillSets: SkillSetSpec[] = [];
   const skillSetMineCounts: Map<string, number>[] = [];
   const skillSetBlockRegex = /<SkillSet\b([^>]*?)(?:\/>|>([\s\S]*?)<\/SkillSet>)/gi;
   let ssMatch: RegExpExecArray | null;
-  while ((ssMatch = skillSetBlockRegex.exec(xml)) !== null) {
+  while ((ssMatch = skillSetBlockRegex.exec(skillsSectionXml)) !== null) {
     const ssAttrs = parseAttributes(ssMatch[1]!);
     const ssInner = ssMatch[2] ?? '';
     const setId = ssAttrs.id || String(skillSets.length + 1);
@@ -954,7 +1049,7 @@ export function xmlToBuild(xml: string): Build {
   let explicitEnemyChaosRes = false;
   let explicitEnemyArmour = false;
   let explicitEnemyEvasion = false;
-  const questCustomModLines: string[] = [];
+  const questCustomModLines: string[] = [...activeSpecPhreciaModLines];
   const rawInputs: Record<string, boolean | number | string> = {};
   let selfCurseCount = 0;
   const activeConfigXml = extractActiveConfigSetXml(xml);

@@ -559,9 +559,10 @@ function matchPostPeelStructural(state: PeelState, source: string): Mod[] | null
     );
   }
 
-  // Gain as Extra Damage: "Gain X% of [Src] [Scope] Damage as Extra <Dst> Damage"
+  // Gain as Extra Damage: "Gain X% of [Src] [Scope] Damage as [Extra] <Dst> Damage"
+  // Also handles minion phrasing without "Extra" (e.g. "Minions gain 20% of Physical Damage as Chaos Damage").
   m = s.match(
-    /^(?:Gain |Gains )?(\d+(?:\.\d+)?)% of (?:(Physical|Lightning|Cold|Fire|Elemental|Non-Chaos)(?:\s+(Attack|Spell|Wand|Melee))?\s+)?Damage as Extra (Physical|Lightning|Cold|Fire|Chaos|Elemental) Damage$/i,
+    /^(?:Gain |Gains )?(\d+(?:\.\d+)?)% of (?:(Physical|Lightning|Cold|Fire|Elemental|Non-Chaos)(?:\s+(Attack|Spell|Wand|Melee))?\s+)?Damage as (?:Extra )?(Physical|Lightning|Cold|Fire|Chaos|Elemental) Damage$/i,
   );
   if (m) {
     const val = Number(m[1]);
@@ -671,6 +672,21 @@ function matchPostPeelStructural(state: PeelState, source: string): Mod[] | null
     const prefix = m[2] ? capFirst(m[2]) : '';
     return [
       emitScopedMod(`${prefix}DamageTakenFromManaBeforeLife`, 'BASE', Number(m[1]), source, state),
+    ];
+  }
+
+  // Dual-element Damage Taken As (e.g. Purity of Fire Watcher's Eye: "15% of Cold and Lightning Damage taken as Fire Damage")
+  m = s.match(
+    /^(\d+(?:\.\d+)?)% of (Physical|Fire|Cold|Lightning|Chaos) and (Physical|Fire|Cold|Lightning|Chaos) Damage(?: from Hits)? taken as (Physical|Fire|Cold|Lightning|Chaos) Damage$/i,
+  );
+  if (m) {
+    const val = Number(m[1]);
+    const src1 = capFirst(m[2]!);
+    const src2 = capFirst(m[3]!);
+    const dst = capFirst(m[4]!);
+    return [
+      emitScopedMod(`${src1}DamageTakenAs${dst}`, 'BASE', val, source, state),
+      emitScopedMod(`${src2}DamageTakenAs${dst}`, 'BASE', val, source, state),
     ];
   }
 
