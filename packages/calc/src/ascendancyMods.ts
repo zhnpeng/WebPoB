@@ -278,9 +278,20 @@ export function computeSmallPassiveEffectMultiplier(allocatedNodes: readonly Pas
 
 /**
  * Scales numeric BASE/INC/MORE values on small passive modifiers using PoB's integer truncation.
+ * Matches upstream PoB 2 `CalcSetup.lua:397` (`not node.isAttribute`): pure attribute travel nodes
+ * (`Tree: Attribute|Strength|Dexterity|Intelligence`) are NOT scaled by Titan `Hulking Form`.
  */
 export function scaleSmallPassiveMods(mods: readonly Mod[], multiplier: number): Mod[] {
   if (multiplier === 1) return [...mods];
+  const isAttributeTravelNode =
+    mods.length > 0 &&
+    mods.every(
+      (m) =>
+        m.type === 'BASE' &&
+        (m.name === 'Str' || m.name === 'Dex' || m.name === 'Int') &&
+        /^Tree:\s*(?:Attribute|Strength|Dexterity|Intelligence)$/i.test(m.source ?? ''),
+    );
+  if (isAttributeTravelNode) return [...mods];
   return mods.map((mod) => {
     if (
       typeof mod.value === 'number' &&
@@ -823,12 +834,40 @@ function applyPoe1PreStatAscendancies(
     addMod(db, 'ElementalDamage', 'MORE', 30, 'Ascendancy: Heart of Destruction');
   }
 
-  if (nodes.has('liege of the primordial')) {
+  const liegeNode = nodes.get('liege of the primordial');
+  if (liegeNode) {
     const src = 'Ascendancy: Liege of the Primordial';
-    addMod(db, 'MaxGolems', 'BASE', 2, src);
-    addMod(db, 'GolemBuffEffect', 'INC', 100, src);
-    if (activeGolemCount > 0) {
-      addMod(db, 'GolemBuffEffect', 'INC', activeGolemCount * 25, src);
+    if (!hasRawSourceMod(db, 'MaxGolems', 'liege of the primordial')) {
+      addMod(db, 'MaxGolems', 'BASE', 2, src);
+    }
+    const liegeStats = liegeNode.stats ?? [];
+    // PoE 1 3.28+ removed GolemBuffEffect from Liege of the Primordial (0%);
+    // 3.27 had 50% flat; <=3.26 had 100% flat + 25% per active golem.
+    const hasFlatGolemBuff =
+      liegeStats.length === 0 ||
+      liegeStats.some((s) => /increased effect of buffs granted by your golems/i.test(s));
+    if (hasFlatGolemBuff && !hasRawSourceMod(db, 'GolemBuffEffect', 'liege of the primordial')) {
+      const flatPct = extractNumberFromStats(
+        liegeStats,
+        /(\d+)% increased effect of buffs granted by your golems(?:\s|$)/i,
+        100,
+      );
+      if (flatPct > 0) {
+        addMod(db, 'GolemBuffEffect', 'INC', flatPct, src);
+      }
+      const hasPerGolemBuff =
+        liegeStats.length === 0 ||
+        liegeStats.some((s) => /effect of buffs granted by your golems for each summoned golem/i.test(s));
+      if (hasPerGolemBuff && activeGolemCount > 0) {
+        const perGolemPct = extractNumberFromStats(
+          liegeStats,
+          /(\d+)% increased effect of buffs granted by your golems for each summoned golem/i,
+          25,
+        );
+        if (perGolemPct > 0) {
+          addMod(db, 'GolemBuffEffect', 'INC', activeGolemCount * perGolemPct, src);
+        }
+      }
     }
   }
 

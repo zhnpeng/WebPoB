@@ -1225,6 +1225,78 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
       },
     ],
   },
+  // Wave 4P: Slayer Headsman on-kill Attack/Cast/Movement Speed
+  {
+    pattern: /^Gain (\d+)% increased (Attack|Cast|Movement) Speed for \d+ seconds when you Kill a Rare or Unique Enemy$/i,
+    build: (m, src) => {
+      const kind = m[2]!.toLowerCase();
+      const val = Number(m[1]);
+      const cond = { type: 'Condition' as const, var: 'KilledRareOrUniqueRecently' };
+      if (kind === 'movement') {
+        return [{ ...mkMod('MovementSpeed', 'INC', val, src), tags: [cond] }];
+      }
+      return [
+        {
+          ...mkMod('Speed', 'INC', val, src, kind === 'attack' ? ModFlag.Attack : ModFlag.Spell),
+          tags: [cond],
+        },
+      ];
+    },
+  },
+  {
+    pattern: /^Gain (\d+)% increased (Attack|Cast|Movement) Speed for \d+ seconds when you Kill an Enemy$/i,
+    build: (m, src) => {
+      const kind = m[2]!.toLowerCase();
+      const val = Number(m[1]);
+      const cond = { type: 'Condition' as const, var: 'KilledRecently' };
+      if (kind === 'movement') {
+        return [{ ...mkMod('MovementSpeed', 'INC', val, src), tags: [cond] }];
+      }
+      return [
+        {
+          ...mkMod('Speed', 'INC', val, src, kind === 'attack' ? ModFlag.Attack : ModFlag.Spell),
+          tags: [cond],
+        },
+      ];
+    },
+  },
+  // Wave 4P: Pathfinder Master Distiller flask-charge bonuses
+  {
+    pattern: /^If Bismuth Flask Charges are consumed, Penetrate (\d+)% Elemental Resistances$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('ElementalPenetration', 'BASE', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'UsedBismuthFlaskRecently' }],
+      },
+    ],
+  },
+  {
+    pattern: /^If Amethyst Flask Charges are consumed, (\d+)% of Physical Damage as Extra Chaos Damage$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('PhysicalDamageGainAsChaos', 'BASE', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'UsedAmethystFlaskRecently' }],
+      },
+    ],
+  },
+  {
+    pattern: /^If Diamond Flask Charges are consumed, \+(\d+)% to Critical Strike Multiplier$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritMultiplier', 'BASE', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'UsedDiamondFlaskRecently' }],
+      },
+    ],
+  },
+  // Wave 4P: Dismembering (Maim on Crit with Attacks) & Badge of the Brotherhood
+  {
+    pattern: /^(\d+)% chance to Maim Enemies on Critical Strike with Attacks$/i,
+    build: (m, src) => [mkMod('MaimChance', 'BASE', Number(m[1]), src, ModFlag.Attack)],
+  },
+  {
+    pattern: /^Your Maximum Frenzy Charges is equal to your Maximum Power Charges$/i,
+    build: (_, src) => [mkMod('MaxFrenzyEqualsMaxPower', 'FLAG', true, src)],
+  },
 ];
 
 /**

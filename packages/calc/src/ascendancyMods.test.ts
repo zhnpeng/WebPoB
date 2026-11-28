@@ -54,6 +54,16 @@ describe('ascendancyMods', () => {
       expect(scaled[0]?.value).toBe(22); // Math.trunc(15 * 1.5) = 22
       expect(scaled[1]?.value).toBe(12); // Math.trunc(8 * 1.5) = 12
       expect(scaled[2]?.value).toBe(true);
+
+      // PoE 2 CalcSetup.lua:397 (`not node.isAttribute`): pure attribute travel nodes are NOT scaled
+      const attrTravelMods: Mod[] = [
+        { name: 'Str', type: 'BASE', value: 5, flags: 0, keywordFlags: 0, source: 'Tree: Attribute' },
+      ];
+      expect(scaleSmallPassiveMods(attrTravelMods, mult)[0]?.value).toBe(5);
+      const strTravelMods: Mod[] = [
+        { name: 'Str', type: 'BASE', value: 8, flags: 0, keywordFlags: 0, source: 'Tree: Strength' },
+      ];
+      expect(scaleSmallPassiveMods(strTravelMods, mult)[0]?.value).toBe(8);
     });
   });
 
@@ -749,7 +759,49 @@ describe('ascendancyMods', () => {
       expect(db.sum('BASE', 'ExtraExposure')).toBe(25);
       expect(db.more('ElementalDamage')).toBeCloseTo(1.3, 5);
       expect(db.sum('BASE', 'MaxGolems')).toBe(2);
-      expect(db.sum('INC', 'GolemBuffEffect')).toBe(200); // 100 base + 4 * 25
+      expect(db.sum('INC', 'GolemBuffEffect')).toBe(200); // Legacy synthetic fallback: 100 base + 4 * 25
+
+      // PoE 3.28+ / 3.30 Liege of the Primordial: GolemBuffEffect removed (0%)
+      const db330 = new ModDB();
+      applyPreStatAscendancyMechanics({
+        game: 'poe1',
+        db: db330,
+        allocatedNodes: [
+          mkNode(
+            'Liege of the Primordial',
+            [
+              'Summoned Golems are Immune to Elemental Damage',
+              'Summoned Golems are Resummoned 4 seconds after being Killed',
+              '+2 to maximum number of Summoned Golems',
+            ],
+            'Elementalist',
+            4,
+          ),
+        ],
+        activeGolemCount: 4,
+      });
+      expect(db330.sum('BASE', 'MaxGolems')).toBe(2);
+      expect(db330.sum('INC', 'GolemBuffEffect')).toBe(0);
+
+      // PoE 3.27 Liege of the Primordial: 50% flat GolemBuffEffect, 0% per golem
+      const db327 = new ModDB();
+      applyPreStatAscendancyMechanics({
+        game: 'poe1',
+        db: db327,
+        allocatedNodes: [
+          mkNode(
+            'Liege of the Primordial',
+            [
+              '+2 to maximum number of Summoned Golems',
+              '50% increased Effect of Buffs granted by your Golems',
+            ],
+            'Elementalist',
+            4,
+          ),
+        ],
+        activeGolemCount: 4,
+      });
+      expect(db327.sum('INC', 'GolemBuffEffect')).toBe(50);
     });
 
     it('Necromancer: Commander of Darkness, Unnatural Strength & Mindless Aggression', () => {

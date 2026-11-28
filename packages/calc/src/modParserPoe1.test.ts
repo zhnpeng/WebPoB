@@ -928,4 +928,67 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       ]),
     );
   });
+
+  it('Wave 4P: SpiritualCommand, Headsman on-kill speed, Master Distiller, Dismembering & Badge of the Brotherhood', () => {
+    expect(parseModLine('Increases and Reductions to Minion Attack Speed also affect you', 'tree')).toEqual([
+      expect.objectContaining({ name: 'SpiritualCommand', type: 'FLAG', value: true }),
+    ]);
+    expect(
+      parseModLine('Gain 10% increased Attack Speed for 20 seconds when you Kill a Rare or Unique Enemy', 'tree'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'Speed',
+        type: 'INC',
+        value: 10,
+        flags: ModFlag.Attack,
+        tags: [{ type: 'Condition', var: 'KilledRareOrUniqueRecently' }],
+      }),
+    ]);
+    expect(
+      parseModLine('Gain 10% increased Movement Speed for 20 seconds when you Kill an Enemy', 'tree'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'MovementSpeed',
+        type: 'INC',
+        value: 10,
+        tags: [{ type: 'Condition', var: 'KilledRecently' }],
+      }),
+    ]);
+    expect(
+      parseModLine('If Bismuth Flask Charges are consumed, Penetrate 30% Elemental Resistances', 'tree'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'ElementalPenetration',
+        type: 'BASE',
+        value: 30,
+        tags: [{ type: 'Condition', var: 'UsedBismuthFlaskRecently' }],
+      }),
+    ]);
+    expect(
+      parseModLine('If Amethyst Flask Charges are consumed, 47% of Physical Damage as Extra Chaos Damage', 'tree'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'PhysicalDamageGainAsChaos',
+        type: 'BASE',
+        value: 47,
+        tags: [{ type: 'Condition', var: 'UsedAmethystFlaskRecently' }],
+      }),
+    ]);
+    expect(
+      parseModLine('If Diamond Flask Charges are consumed, +100% to Critical Strike Multiplier', 'tree'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'CritMultiplier',
+        type: 'BASE',
+        value: 100,
+        tags: [{ type: 'Condition', var: 'UsedDiamondFlaskRecently' }],
+      }),
+    ]);
+    expect(parseModLine('20% chance to Maim Enemies on Critical Strike with Attacks', 'tree')).toEqual([
+      expect.objectContaining({ name: 'MaimChance', type: 'BASE', value: 20, flags: ModFlag.Attack }),
+    ]);
+    expect(
+      parseModLine('Your Maximum Frenzy Charges is equal to your Maximum Power Charges', 'item'),
+    ).toEqual([expect.objectContaining({ name: 'MaxFrenzyEqualsMaxPower', type: 'FLAG', value: true })]);
+  });
 });

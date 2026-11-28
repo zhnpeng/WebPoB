@@ -289,6 +289,10 @@ const PARSER_RULES: ParserRule[] = [
     build: (_, src) => [mkMod('SpiritualAid', 'FLAG', true, src)],
   },
   {
+    pattern: /^Increases and Reductions to Minion Attack Speed also affect you$/i,
+    build: (_, src) => [mkMod('SpiritualCommand', 'FLAG', true, src)],
+  },
+  {
     pattern: /^Increases and Reductions to Companion Damage also (?:apply to|affect) you$/i,
     build: (_, src) => [mkMod('CompanionDamageAppliesToPlayer', 'FLAG', true, src)],
   },
