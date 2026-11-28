@@ -592,6 +592,17 @@ const UPSTREAM_MISSING_QUALITY_COMPILED_MODS: Readonly<
         keywordFlags: 0,
       },
     ],
+    // Upstream PoB2 0.5 Data/Skills/act_str.lua: active_skill_damage_+%_final_vs_fully_broken_armour = 1/qual
+    poe2_leapslam: [
+      {
+        name: 'Damage',
+        type: 'MORE',
+        value: 1,
+        flags: 0,
+        keywordFlags: 0,
+        tags: [{ type: 'Condition', var: 'EnemyArmourBroken' }],
+      },
+    ],
   },
 };
 

@@ -1394,5 +1394,49 @@ describe('Mechanism-Layer Regression Suite — Round 2 (Upstream PoB spec/System
         setRegisteredGems('poe2', prevPoe2);
       }
     });
+
+    it('injects PoE 2 Leap Slam Fully Broken Armour qualityCompiledMod and evaluates it via ModDB (Wave 4T)', () => {
+      const prevPoe2 = getGemsForGame('poe2');
+      try {
+        const hydrated = registerGemsData('poe2', {
+          game: 'poe2',
+          count: 1,
+          gems: [
+            {
+              id: 'poe2_leapslam',
+              en: 'Leap Slam',
+              cat: 'active',
+              color: 'red',
+              tags: ['attack', 'melee', 'area', 'slam'],
+            },
+          ],
+        });
+        const ls = hydrated.find((g) => g.id === 'poe2_leapslam')!;
+        expect(ls.qualityCompiledMods).toEqual([
+          expect.objectContaining({
+            name: 'Damage',
+            type: 'MORE',
+            value: 1,
+            tags: [{ type: 'Condition', var: 'EnemyArmourBroken' }],
+          }),
+        ]);
+        const db = new ModDB();
+        const qMod = ls.qualityCompiledMods![0]!;
+        db.addMod({
+          name: qMod.name,
+          type: qMod.type,
+          value: (qMod.value as number) * 20,
+          flags: qMod.flags,
+          keywordFlags: qMod.keywordFlags,
+          tags: qMod.tags,
+          source: 'Leap Slam Q20',
+        });
+        expect(db.more('Damage')).toBe(1);
+        db.setCondition('EnemyArmourBroken', true);
+        expect(db.more('Damage')).toBeCloseTo(1.2, 4);
+      } finally {
+        setRegisteredGems('poe2', prevPoe2);
+      }
+    });
   });
 });

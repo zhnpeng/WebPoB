@@ -1061,5 +1061,34 @@ describe('Real-World Corpus Coverage (parseModLine + parseModCompositional fallb
         keywordFlags: KeywordFlag.Bleed,
       }),
     ]);
+
+    // Wave 4T PoE 1 Bloodline Ascendancy phrases
+    expect(parseModCompositional('70% increased Ward from Equipped Armour Items', 'tree')).toEqual([
+      expect.objectContaining({
+        name: 'Ward',
+        type: 'INC',
+        value: 70,
+      }),
+    ]);
+    expect(
+      parseModCompositional('50% less Damage Taken from Damage over Time while you have Unbroken Ward', 'tree'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'DamageTakenOverTime',
+        type: 'MORE',
+        value: -50,
+        tags: [{ type: 'Condition', var: 'HaveUnbrokenWard' }],
+      }),
+    ]);
+    expect(
+      parseModCompositional('20% increased Attack Speed while at Maximum Frenzy Charges', 'tree'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'Speed',
+        type: 'INC',
+        value: 20,
+        tags: [{ type: 'Condition', var: 'AtMaxFrenzyCharges' }],
+      }),
+    ]);
   });
 });

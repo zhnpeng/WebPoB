@@ -1169,6 +1169,27 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
     apply: () => ({ tags: [{ type: 'Condition', var: 'Unarmed' }] }),
   },
   {
+    regex: /(?:\s*,\s*|\s+)while\s+you\s+have\s+Unbroken\s+Ward$/i,
+    apply: () => ({ tags: [{ type: 'Condition', var: 'HaveUnbrokenWard' }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)while\s+at\s+(Maximum|Minimum)\s+(Power|Frenzy|Endurance)\s+Charges$/i,
+    apply: (m) => ({
+      tags: [
+        {
+          type: 'Condition',
+          var: `At${m[1]!.toLowerCase() === 'maximum' ? 'Max' : 'Min'}${capFirst(m[2]!)}Charges`,
+        },
+      ],
+    }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)if\s+you\s+have\s+(?:an\s+)?Equipped\s+(Helmet|Body Armour|Gloves|Boots)\s+with\s+no\s+Socketed\s+Gems$/i,
+    apply: (m) => ({
+      tags: [{ type: 'Condition', var: `NoSocketedGemsIn${toPascalCase(m[1]!)}` }],
+    }),
+  },
+  {
     regex: /(?:\s*,\s*|\s+)while\s+Leeching(?:\s+(Life|Mana|Energy Shield))?$/i,
     apply: (m) => ({
       tags: [{ type: 'Condition', var: m[1] ? `Leeching${toPascalCase(m[1])}` : 'Leeching' }],
@@ -1713,6 +1734,7 @@ export const MOD_NAME_TABLE: Record<string, ModNameTarget> = {
   'maximum energy shield': { names: ['EnergyShield'] },
   'global energy shield': { names: ['EnergyShield'] },
   ward: { names: ['Ward'] },
+  'ward from equipped armour items': { names: ['Ward'] },
   'maximum ward': { names: ['Ward'] },
   'runic ward': { names: ['Ward'] },
   'maximum runic ward': { names: ['Ward'] },
