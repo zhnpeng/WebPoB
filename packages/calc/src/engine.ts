@@ -2259,6 +2259,13 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
       if (typeof rawVal === 'boolean') {
         if (rawKey.startsWith('conditionEnemy') && rawKey.length > 'conditionEnemy'.length) {
           const enemyVar = rawKey.slice('conditionEnemy'.length);
+          // PoE 2 Exposure conditions are gated on CanApply<El>Exposure in applyPoe2ExposureCfg (CalcPerform.lua:472-485)
+          if (
+            build.game === 'poe2' &&
+            (enemyVar === 'FireExposure' || enemyVar === 'ColdExposure' || enemyVar === 'LightningExposure')
+          ) {
+            continue;
+          }
           db.setCondition(`Enemy${enemyVar}`, rawVal);
           auraEnemyDb.setCondition(enemyVar, rawVal);
           if (enemyVar === 'Ignited' && rawVal) {
@@ -3397,7 +3404,6 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
         db.flag('ExposureInPresence') ||
         auraEnemyDb.sum('BASE', `${el}Exposure`) > 0 ||
         (auraEnemyDb.max(`${el}Exposure`) ?? 0) > 0 ||
-        auraEnemyDb.getEvalContext().conditions[`${el}Exposure`] === true ||
         build.skills.some((grp) => {
           if (!grp.enabled) return false;
           return grp.gems.some((gm) => {
@@ -4781,7 +4787,8 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     }
   }
   // Champion: Unstoppable Hero (`3% more Armour and Evasion Rating / 3% increased Attack Speed per Fortification above 20`)
-  if (build.game === 'poe1' && (cfg.fortified || db.flag('AlwaysFortified'))) {
+  // Guard against double-counting when the UnstoppableHero flag block above already applied it.
+  if (build.game === 'poe1' && !db.flag('UnstoppableHero') && (cfg.fortified || db.flag('AlwaysFortified'))) {
     const moreDefPerFort = db.sum('BASE', 'MoreArmourEvasionPerFortAbove');
     const asPerFort = db.sum('BASE', 'AttackSpeedPerFortAbove');
     if (moreDefPerFort > 0 || asPerFort > 0) {
@@ -7048,24 +7055,20 @@ function computeGroupOffence(
       }
     }
     // PoE 2 Skill-local Shock Magnitude delta (PoB 2 CalcPerform.lua:3345-3364: max(20 * skillShockEffMult, ShockVal))
+    // Note: `EnemyShockMagnitude` from compiled skill cmods (e.g. Fulminating Concoction `50% more`) routes into `groupEnemyDb`
+    // because its name starts with `Enemy`, so query both `skillDb` and `groupEnemyDb` without double-counting globalDb.
     if (build.config.enemyShocked) {
+      const shockStatNames = ['ShockEffect', 'EnemyShockEffect', 'EnemyShockMagnitude', 'AilmentMagnitude', 'ShockMagnitude'];
       const skillShockEffMult =
         Math.max(
           0,
           1 +
-            skillDb.sum(
-              'INC',
-              ['ShockEffect', 'EnemyShockEffect', 'EnemyShockMagnitude', 'AilmentMagnitude', 'ShockMagnitude'],
-              flags,
-              kwFlags,
-            ) /
+            (skillDb.sum('INC', shockStatNames, flags, kwFlags) +
+              groupEnemyDb.sum('INC', ['EnemyShockMagnitude', 'SelfShockMagnitude', 'AilmentMagnitude'], flags, kwFlags)) /
               100,
         ) *
-        skillDb.more(
-          ['ShockEffect', 'EnemyShockEffect', 'EnemyShockMagnitude', 'AilmentMagnitude', 'ShockMagnitude'],
-          flags,
-          kwFlags,
-        );
+        skillDb.more(shockStatNames, flags, kwFlags) *
+        groupEnemyDb.more(['EnemyShockMagnitude', 'SelfShockMagnitude', 'AilmentMagnitude'], flags, kwFlags);
       const shockStacksLocal = Math.max(1, Number(build.config.rawInputs?.ShockStacks ?? 1));
       const skillShockPct = Math.max(
         0,
@@ -8832,12 +8835,20 @@ function computeGroupOffence(
       skillDb.flag('MaxBoostedUptimeRatio', flags, kwFlags) ||
       skillDb.flag('MaxEmpoweredUptimeRatio', flags, kwFlags);
     const fowCd = skillDb.sum('BASE', 'FistOfWarCooldown', flags, kwFlags);
+    const isSlamBoostEligible =
+      effectiveSkillTypeSet.has('slam') &&
+      !effectiveSkillTypeSet.has('vaal') &&
+      !effectiveSkillTypeSet.has('otherthingusesskill');
+    const fowUptime =
+      fowCd > 0 && estAtkSpd > 0 && isSlamBoostEligible ? Math.min(1, (1 / estAtkSpd) / fowCd) : 0;
+    const hasAncestralEmpowerment =
+      isSlamBoostEligible && skillDb.flag('AncestralEmpowerment', flags, kwFlags);
     const ancestralUptime = skillDb.flag('MaxBoostedUptimeRatio', flags, kwFlags)
       ? 1
-      : fowCd > 0 && estAtkSpd > 0 && effectiveSkillTypeSet.has('slam')
-        ? Math.min(1, (1 / estAtkSpd) / fowCd)
-        : 0;
-    const empoweredUptime = maxEmpFlag ? 1 : ancestralUptime;
+      : hasAncestralEmpowerment
+        ? Math.min(1, 0.5 + fowUptime)
+        : fowUptime;
+    const empoweredUptime = maxEmpFlag ? 1 : Math.max(infernalUptime, ancestralUptime);
     if (empoweredUptime > 0) {
       const empInc = skillDb.sum('INC', ['EmpoweredIncrease', 'ExertIncrease'], flags, kwFlags);
       if (empInc !== 0) {
@@ -8870,7 +8881,7 @@ function computeGroupOffence(
       const ancMoreBase =
         ancExplicitMore > 0
           ? ancExplicitMore * Math.max(1, 1 + ancBoostEffExtra)
-          : !activeSkillData?.showAverage
+          : ancBoostEffExtra > 0 && !activeSkillData?.showAverage
             ? 30 * (1 + ancBoostEffExtra)
             : 0;
       if (ancMoreBase > 0) {
@@ -9263,7 +9274,6 @@ function computeGroupOffence(
     }
     const enemyEvaBase = Math.max(0, build.config.enemyEvasion + groupEnemyDb.sum('BASE', 'Evasion'));
     const enemyBlindMult =
-      build.game === 'poe1' &&
       (build.config.enemyBlinded ||
         groupEnemyDb.getEvalContext().conditions.Blinded ||
         skillDb.getEvalContext().conditions.EnemyBlinded)
@@ -9553,10 +9563,16 @@ function computeGroupOffence(
     critChance = Math.round(postBifurcateCrit * (isAttack ? hitChance / 100 : 1) * 100) / 100;
     const overridePoe1Multi = skillDb.override('CritMultiplierOverride', flags, kwFlags);
     const enemyCritMultiInc = 1 + groupEnemyDb.sum('INC', 'SelfCritMultiplier', flags, kwFlags) / 100;
+    const iceSpearSecondFormQualMulti =
+      (activeNameLower === 'ice spear' || activeNameLower === 'ice spear of splitting') &&
+      ((resolvedPartStats?.partIndex ?? chosenActiveInst?.skillPart ?? 1) === 2 ||
+        (resolvedPartStats?.partIndex ?? chosenActiveInst?.skillPart ?? 1) === 4)
+        ? Math.max(0, activeQuality) * 2
+        : 0;
     const baseExtraCritPct =
       overridePoe1Multi !== null
         ? Math.max(0, overridePoe1Multi - 100)
-        : Math.max(0, (skillDb.sum('BASE', 'CritMultiplier', flags, kwFlags) + seethingFuryCritMulti - 100 + enemyCritMulti) * enemyCritMultiInc);
+        : Math.max(0, (skillDb.sum('BASE', 'CritMultiplier', flags, kwFlags) + seethingFuryCritMulti + iceSpearSecondFormQualMulti - 100 + enemyCritMulti) * enemyCritMultiInc);
     rawPoe1CritMulti = Math.round(100 + baseExtraCritPct);
     let effPoe1CritMulti = rawPoe1CritMulti;
     if (hasBifurcatedCrit && !neverCrit && !noCritExtra && !hasDiamondShrine && postBifurcateCrit > 0) {
