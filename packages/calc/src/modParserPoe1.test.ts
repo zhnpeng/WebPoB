@@ -1474,4 +1474,25 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       parseModLine("Enemies affected by your Spider's Webs have -10% to All Resistances", "Item: Fenumus' Shroud"),
     ).toHaveLength(4);
   });
+
+  it('Wave 5F: Circle Herald Buff Effect, Stampede, Nimis, Warcry Infinite Power, Focus CDR & Azadi Crest', () => {
+    expect(parseModLine('Herald of Ash has 60% increased Buff Effect', 'Item: Circle of Anguish')).toEqual([
+      expect.objectContaining({ name: 'HeraldBuffEffect:Herald of Ash', type: 'INC', value: 60 }),
+    ]);
+    expect(parseModLine('Herald of Purity has 60% increased Buff Effect', 'Item: Circle of Guilt')).toEqual([
+      expect.objectContaining({ name: 'HeraldBuffEffect:Herald of Purity', type: 'INC', value: 60 }),
+    ]);
+    expect(parseModLine('Your Movement Speed is 150% of its base value', 'Item: The Stampede')).toEqual([
+      expect.objectContaining({ name: 'MovementSpeed', type: 'OVERRIDE', value: 150 }),
+    ]);
+    expect(parseModLine('Projectiles Return to you', 'Item: Nimis')).toEqual([
+      expect.objectContaining({ name: 'ProjectilesReturn', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Warcries have infinite Power', 'Tree: Sione')).toEqual([
+      expect.objectContaining({ name: 'WarcryInfinitePower', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Focus has 25% increased Cooldown Recovery Rate', 'Item: Boots')).toEqual([
+      expect.objectContaining({ name: 'CooldownRecovery:Focus', type: 'INC', value: 25 }),
+    ]);
+  });
 });

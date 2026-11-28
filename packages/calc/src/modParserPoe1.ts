@@ -2249,6 +2249,31 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
       }));
     },
   },
+  // Wave 5F: Circle of Anguish/Guilt/Fear/Nostalgia/Regret Herald Buff Effect, Stampede, Nimis, Redblade/Sione, Azadi Crest
+  {
+    pattern: /^(Herald of (?:Ash|Ice|Thunder|Purity|Agony)) has (\d+)% increased Buff Effect$/i,
+    build: (m, src) => [mkMod(`HeraldBuffEffect:${m[1]!.trim()}`, 'INC', Number(m[2]), src)],
+  },
+  {
+    pattern: /^Your Movement Speed is (\d+)% of its base value$/i,
+    build: (m, src) => [mkMod('MovementSpeed', 'OVERRIDE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Projectiles Return to you$/i,
+    build: (_, src) => [mkMod('ProjectilesReturn', 'FLAG', true, src, ModFlag.Projectile)],
+  },
+  {
+    pattern: /^Warcries have infinite Power$/i,
+    build: (_, src) => [mkMod('WarcryInfinitePower', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Focus has (\d+)% increased Cooldown Recovery Rate$/i,
+    build: (m, src) => [mkMod('CooldownRecovery:Focus', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Your Lucky or Unlucky effects use the best or worst from three rolls instead of two$/i,
+    build: (_, src) => [mkMod('LuckyUsesThreeRolls', 'FLAG', true, src)],
+  },
 ];
 
 /**
