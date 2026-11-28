@@ -3533,9 +3533,11 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     }
   }
 
-  const hasExistingOnslaught = db
-    .calcStat('MovementSpeed')
-    .sources.some((s) => s.type === 'INC' && /onslaught/i.test(s.source));
+  const hasExistingOnslaught =
+    db.flag('Onslaught') ||
+    db
+      .calcStat('MovementSpeed')
+      .sources.some((s) => s.type === 'INC' && /onslaught|thrillsteel/i.test(s.source));
   const onslaughtEffInc = db.sum('INC', ['OnslaughtEffect', 'BuffEffectOnSelf']);
   if (cfg.onslaught && !hasExistingOnslaught) {
     const silverFlaskForCfg = flaskEval.perFlask.find((f) => f.baseName === 'Silver Flask');
@@ -7650,6 +7652,45 @@ function computeGroupOffence(
         skillDb.setMultiplier('ShockEffect', skillShockPct / 5);
       }
     }
+    // PoE 2 Attrition Persistent Buff: 1% more Hit Damage per 2s EnemyPresenceSeconds vs Rare/Unique, capped by AttritionMaxDamage
+    const presenceSecs = Number(build.config.rawInputs?.enemyMultiplierEnemyPresenceSeconds ?? 0);
+    const enemyRareOrUnique = Boolean(
+      (build.config.enemyIsBoss && build.config.enemyIsBoss !== 'None') ||
+        skillDb.getEvalContext().conditions.EnemyRareOrUnique ||
+        groupEnemyDb.getEvalContext().conditions.RareOrUnique,
+    );
+    if (Number.isFinite(presenceSecs) && presenceSecs >= 2 && enemyRareOrUnique) {
+      const attGem = build.skills
+        .filter(
+          (g) =>
+            g.enabled &&
+            (!g.weaponSets || g.weaponSets.length === 0 || g.weaponSets.includes(build.activeWeaponSet)),
+        )
+        .flatMap((g) => g.gems)
+        .find((gm) => gm.enabled && getGemById('poe2', gm.gemId)?.id === 'poe2_attrition');
+      if (attGem) {
+        const attDef = getGemById('poe2', attGem.gemId)!;
+        const attLv = Math.min(40, Math.max(1, attGem.level));
+        const attCmods = resolveGemLevelEntry(attDef, attLv)?.compiledMods ?? attDef.compiledMods ?? [];
+        const maxAttr =
+          (attCmods.find((m) => m.name === 'Multiplier:AttritionMaxDamage' && typeof m.value === 'number')
+            ?.value as number | undefined) ?? 59;
+        const attrMore = Math.min(maxAttr, Math.floor(presenceSecs / 2));
+        const alreadyHasAttr = skillDb
+          .calcStat('Damage', flags, kwFlags)
+          .sources.some((s) => s.type === 'MORE' && /attrition/i.test(s.source));
+        if (attrMore > 0 && !alreadyHasAttr) {
+          skillDb.addMod({
+            name: 'Damage',
+            type: 'MORE',
+            value: attrMore,
+            flags: 0,
+            keywordFlags: KeywordFlag.Hit,
+            source: 'Buff: Attrition',
+          });
+        }
+      }
+    }
   }
   // PoE 1 Skill-prefixed Custom Modifiers (`"Ice Shot has 35% more projectile damage with hits"`, etc.)
   if (build.config.customMods.trim()) {
@@ -7873,10 +7914,20 @@ function computeGroupOffence(
     skillDb.setStat('PowerCharges', activePowerCharges);
     skillDb.setMultiplier('RemovablePowerCharge', activePowerCharges);
     if (build.game === 'poe2') {
+      const hasChargeRegulation = build.skills.some(
+        (g) =>
+          g.enabled &&
+          g.gems.some((gm) => {
+            if (!gm.enabled) return false;
+            const gd = getGemById('poe2', gm.gemId);
+            return Boolean(gd && gd.name.en.trim().toLowerCase() === 'charge regulation');
+          }),
+      );
       const hasPowerChargeConsumer =
         activeNameLower === 'flicker strike' ||
         activeNameLower === 'falling thunder' ||
         activeNameLower === 'charged staff' ||
+        hasChargeRegulation ||
         build.skills.some(
           (g) =>
             g.enabled &&
@@ -7891,7 +7942,8 @@ function computeGroupOffence(
       if (
         hasPowerChargeConsumer &&
         (build.config.rawInputs?.conditionConsumedPowerChargeRecently ||
-          activeNameLower === 'flicker strike')
+          activeNameLower === 'flicker strike' ||
+          (hasChargeRegulation && build.config.rawInputs?.conditionConsumedPowerChargeRecently !== false))
       ) {
         skillDb.setCondition('ConsumedPowerChargeRecently', true);
       }
@@ -9062,7 +9114,8 @@ function computeGroupOffence(
             ? expandPoe2LocalRunes(mainSlotLabel, activeWeapons.main)
             : activeWeapons.main;
           let weaponLocalAcc = 0;
-          for (const rawL of [...expandedMain.implicits, ...expandedMain.explicits]) {
+          const mainEnchants = (expandedMain as { enchants?: string[] }).enchants ?? [];
+          for (const rawL of [...mainEnchants, ...expandedMain.implicits, ...expandedMain.explicits]) {
             const cl = rawL.replace(/^\{[^}]*\}/g, '').trim();
             const mAcc = cl.match(/^\+(\d+)\s+to\s+Accuracy\s+Rating$/i);
             if (mAcc) weaponLocalAcc += Number(mAcc[1]);
@@ -9440,7 +9493,8 @@ function computeGroupOffence(
         ? expandPoe2LocalRunes(mainSlotLabel, activeWeapons.main)
         : activeWeapons.main;
       let localWepAcc = 0;
-      for (const rawLine of [...expandedMain.implicits, ...expandedMain.explicits]) {
+      const mainEnchants = (expandedMain as { enchants?: string[] }).enchants ?? [];
+      for (const rawLine of [...mainEnchants, ...expandedMain.implicits, ...expandedMain.explicits]) {
         const clean = rawLine.replace(/\{[^}]*\}/g, '').trim();
         const mAcc = clean.match(/^\+?(\d+) to Accuracy Rating$/i);
         if (mAcc) localWepAcc += Number(mAcc[1]);

@@ -2689,6 +2689,59 @@ describe('Mechanism-Layer Regression Suite (PoE 1 & PoE 2)', () => {
       // Corrupted Added Lightning gets +2 levels (Lv22) vs non-corrupted (Lv20)
       expect(outCorr.offence.averageHit).toBeGreaterThan(outClean.offence.averageHit);
     });
+
+    it('does not double-count Onslaught speed when Thrillsteel and config.onslaught are both active', () => {
+      const base = createSamplePoe2Build();
+      const thrillsteel: Item = {
+        id: 'h_thrillsteel',
+        name: 'Thrillsteel',
+        baseName: 'Spired Greathelm',
+        rarity: 'UNIQUE',
+        slotType: 'Helmet',
+        quality: 0,
+        sockets: '',
+        implicits: [],
+        explicits: ['Onslaught'],
+      };
+      const withItemOnly = calculateBuild({
+        ...base,
+        items: { ...base.items, [thrillsteel.id]: thrillsteel },
+        equipped: { ...base.equipped, Helmet: thrillsteel.id },
+        config: { ...base.config, onslaught: false },
+      });
+      const withBoth = calculateBuild({
+        ...base,
+        items: { ...base.items, [thrillsteel.id]: thrillsteel },
+        equipped: { ...base.equipped, Helmet: thrillsteel.id },
+        config: { ...base.config, onslaught: true },
+      });
+      expect(withBoth.offence.speed).toBeCloseTo(withItemOnly.offence.speed, 2);
+    });
+
+    it('applies PoE 2 Attrition hit MORE scaling from EnemyPresenceSeconds / 2 vs Rare/Unique', () => {
+      const base = createSamplePoe2Build();
+      const mkAttrBuild = (presenceSeconds: number): Build => ({
+        ...base,
+        skills: [
+          ...base.skills,
+          {
+            id: 'sg_attrition',
+            label: 'Attrition',
+            enabled: true,
+            gems: [{ instanceId: 'g_att', gemId: 'poe2_attrition', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        config: {
+          ...base.config,
+          enemyIsBoss: 'Pinnacle',
+          rawInputs: { ...base.config.rawInputs, enemyMultiplierEnemyPresenceSeconds: presenceSeconds },
+        },
+      });
+      const out0 = calculateBuild(mkAttrBuild(0));
+      const out30 = calculateBuild(mkAttrBuild(30));
+      // 30s presence => floor(30 / 2) = +15% MORE Hit Damage
+      expect(out30.offence.averageHit / out0.offence.averageHit).toBeCloseTo(1.15, 2);
+    });
   });
 
   describe('Layer-2 Oracle Expansion Regression Coverage (PoE 1 & PoE 2)', () => {
