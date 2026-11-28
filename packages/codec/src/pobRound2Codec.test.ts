@@ -474,5 +474,23 @@ Bismuth Flask
     expect(distillerBuild.config.rawInputs?.conditionHaveDiamondFlask).toBe(true);
     expect(distillerBuild.config.rawInputs?.conditionHaveBismuthFlask).toBe(true);
     expect(distillerBuild.config.rawInputs?.conditionHaveAmethystFlask).toBeUndefined();
+
+    // Wave 5E: Explicit <Gem corrupted="true|false"/> preserved on GemInstance (prevents false +1 Corrupted Skill Gems)
+    const corruptedGemXml = `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding>
+  <Build className="Witch" ascendClassName="Infernalist" level="95" mainSocketGroup="1" />
+  <Tree activeSpec="1"><Spec title="Default" nodes="1" /></Tree>
+  <Skills>
+    <Skill enabled="true">
+      <Gem nameSpec="Arc" level="21" quality="23" corrupted="false" enabled="true" />
+      <Gem nameSpec="Spell Echo" level="20" quality="20" corrupted="true" enabled="true" />
+    </Skill>
+  </Skills>
+  <Items />
+  <Config />
+</PathOfBuilding>`;
+    const corruptedBuild = xmlToBuild(corruptedGemXml);
+    expect((corruptedBuild.skills[0]!.gems[0] as unknown as { corrupted?: boolean }).corrupted).toBe(false);
+    expect((corruptedBuild.skills[0]!.gems[1] as unknown as { corrupted?: boolean }).corrupted).toBe(true);
   });
 });

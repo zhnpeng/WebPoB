@@ -810,6 +810,8 @@ export function xmlToBuild(xml: string): Build {
           const rawCorruptLevel =
             gAttrs.corruptLevel !== undefined ? Number(gAttrs.corruptLevel) : 0;
           const corruptLevel = Number.isFinite(rawCorruptLevel) ? Math.round(rawCorruptLevel) : 0;
+          const gemCorrupted =
+            gAttrs.corrupted === 'true' ? true : gAttrs.corrupted === 'false' ? false : undefined;
           gems.push({
             instanceId: `${prefix}_g_${groupCounter}_${gemCounter++}`,
             gemId: matchedId,
@@ -817,6 +819,7 @@ export function xmlToBuild(xml: string): Build {
             quality: Number(gAttrs.quality ?? 0) || 0,
             enabled: gAttrs.enabled !== 'false',
             ...(corruptLevel !== 0 ? { corruptLevel } : {}),
+            ...(gemCorrupted !== undefined ? { corrupted: gemCorrupted } : {}),
             ...(Number.isFinite(parsedCount) && parsedCount > 1 ? { count: Math.round(parsedCount) } : {}),
             ...(gemSkillPart !== undefined ? { skillPart: gemSkillPart } : {}),
             ...(gemStatSetIndex !== undefined ? { statSetIndex: gemStatSetIndex } : {}),
@@ -826,7 +829,7 @@ export function xmlToBuild(xml: string): Build {
               : {}),
             ...(enableGlobal1 !== undefined ? { enableGlobal1 } : {}),
             ...(enableGlobal2 !== undefined ? { enableGlobal2 } : {}),
-          });
+          } as GemInstance);
         }
       }
       // PoE 1 3.28+ Imbued Support Gem on <Skill imbuedSupport="..."> (Level 1 support linked to the skill group)
