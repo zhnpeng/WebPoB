@@ -1172,6 +1172,28 @@ function inferClassBaseAttr(
 }
 
 /**
+ * Joins PoB XML multiline-wrapped item modifiers (e.g. The Taming's
+ * `"48% increased Elemental Damage with Hits and Ailments for"` +
+ * `"each type of Elemental Ailment on Enemy"`).
+ */
+function joinWrappedItemLines(lines: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    let cur = lines[i]!;
+    while (
+      i + 1 < lines.length &&
+      /\b(?:for|with|and|of|to|on|while|if|per|from|in|or|when|your|apply|dealing)$/i.test(cur) &&
+      !/^(?:Left|Right) ring slot:/i.test(lines[i + 1]!)
+    ) {
+      i += 1;
+      cur = `${cur} ${lines[i]!}`;
+    }
+    out.push(cur);
+  }
+  return out;
+}
+
+/**
  * Phase A (Pre-Attribute / Pre-Pool): evaluates build-enabling uniques that transform attributes,
  * gem levels/quality, damage conversion, or enemy resistances prior to final pool resolution:
  * - `Crystallised Omniscience`
@@ -1179,6 +1201,8 @@ function inferClassBaseAttr(
  * - `Heart of the Well` (PoE 2 Diamond)
  * - `Original Sin`
  * - `Doryani's Prototype`
+ * - Slot-conditional rings (`Shavronne's Revelation`, `Polaric Devastation`), `Xoph's Blood` Ash,
+ *   `Singularity`, `Betrayal's Sting`, `Yaomac's Accord` Vaal mods, and quality-scaled grants.
  */
 export function evaluatePreStatBuildEnablingUniques(
   ctx: PreStatUniqueContext,
@@ -1366,6 +1390,158 @@ export function evaluatePreStatBuildEnablingUniques(
           db.addMod(mkMod('EnemyAffectedByEleAilmentCountsAsMoving', 'FLAG', true, src));
         }
         appliedSources.push(src);
+        continue;
+      }
+
+      // 7. Left / Right Ring slot conditional modifiers (Shavronne's Revelation, Polaric Devastation, etc.)
+      const mRingSlot = line.match(/^(Left|Right) ring slot:\s*(.+)$/i);
+      if (mRingSlot) {
+        const dir = mRingSlot[1]!.toLowerCase();
+        const slotMatches =
+          (dir === 'left' && slot === 'Ring 1') || (dir === 'right' && slot === 'Ring 2');
+        if (slotMatches) {
+          const inner = mRingSlot[2]!.trim();
+          if (/^Cover Enemies in Ash\b/i.test(inner)) {
+            const requiresIgnite = /\bwhen you Ignite them\b/i.test(inner);
+            if (
+              !db.getEvalContext().conditions.EnemyCoveredInAsh &&
+              !hasStatSource(db, 'EnemyFireDamageTaken', 'INC', 'Ash')
+            ) {
+              db.addMod({
+                ...mkMod('EnemyFireDamageTaken', 'INC', 20, `${src} (Covered in Ash)`),
+                ...(requiresIgnite ? { tags: [{ type: 'Condition', var: 'EnemyIgnited' }] } : {}),
+              });
+            }
+            if (!requiresIgnite || db.getEvalContext().conditions.EnemyIgnited) {
+              db.setCondition('EnemyCoveredInAsh', true);
+            }
+            appliedSources.push(src);
+          } else if (/^Cover Enemies in Frost\b/i.test(inner)) {
+            const requiresFreeze = /\bwhen you Freeze them\b/i.test(inner);
+            if (
+              !db.getEvalContext().conditions.EnemyCoveredInFrost &&
+              !hasStatSource(db, 'EnemyColdDamageTaken', 'INC', 'Frost')
+            ) {
+              db.addMod({
+                ...mkMod('EnemyColdDamageTaken', 'INC', 20, `${src} (Covered in Frost)`),
+                ...(requiresFreeze ? { tags: [{ type: 'Condition', var: 'EnemyFrozen' }] } : {}),
+              });
+            }
+            if (!requiresFreeze || db.getEvalContext().conditions.EnemyFrozen) {
+              db.setCondition('EnemyCoveredInFrost', true);
+            }
+            appliedSources.push(src);
+          } else {
+            const parsedInner = parseModLines([inner], src);
+            const dedupedInner = parsedInner.filter((m) =>
+              typeof m.value === 'number'
+                ? !hasStatSource(db, m.name, m.type, src, m.value)
+                : !hasStatSource(db, m.name, m.type, src),
+            );
+            if (dedupedInner.length > 0) {
+              db.addMods(dedupedInner);
+              appliedSources.push(src);
+            }
+          }
+        }
+        continue;
+      }
+
+      // 8. Cover Enemies in Ash (Xoph's Blood, Foulborn Xoph's Blood, etc.)
+      if (/^Cover Enemies in Ash\b/i.test(line)) {
+        if (
+          !db.getEvalContext().conditions.EnemyCoveredInAsh &&
+          !hasStatSource(db, 'EnemyFireDamageTaken', 'INC', 'Ash')
+        ) {
+          db.addMod(mkMod('EnemyFireDamageTaken', 'INC', 20, `${src} (Covered in Ash)`));
+        }
+        db.setCondition('EnemyCoveredInAsh', true);
+        appliedSources.push(src);
+        continue;
+      }
+
+      // 9. Singularity ("Nearby Enemies are Hindered, with 25% reduced Movement Speed")
+      if (/^Nearby Enemies are Hindered\b/i.test(line)) {
+        db.setCondition('EnemyHindered', true);
+        appliedSources.push(src);
+        continue;
+      }
+
+      // 10. Betrayal's Sting (additional poison chance on poison infliction)
+      const mAddPoison = line.match(
+        /^(\d+)% chance to inflict an additional Poison on the same Target when you inflict Poison$/i,
+      );
+      if (mAddPoison) {
+        const val = Number(mAddPoison[1]);
+        if (val > 0 && !hasStatSource(db, 'AdditionalPoisonChance', 'BASE', src, val)) {
+          db.addMod(mkMod('AdditionalPoisonChance', 'BASE', val, src));
+          appliedSources.push(src);
+        }
+        continue;
+      }
+
+      // 11. Vaal Skill increased Damage / Crit Chance on uniques (Yaomac's Accord, etc.)
+      const mVaalDmg = line.match(/^(\d+)% increased Damage with Vaal Skills$/i);
+      if (mVaalDmg) {
+        const val = Number(mVaalDmg[1]);
+        if (val > 0 && !hasStatSource(db, 'Damage', 'INC', src, val)) {
+          db.addMod({
+            ...mkMod('Damage', 'INC', val, src),
+            tags: [{ type: 'SkillType', skillType: 'Vaal' }],
+          });
+          appliedSources.push(src);
+        }
+        continue;
+      }
+      const mVaalCrit = line.match(/^(\d+)% increased Critical Strike Chance with Vaal Skills$/i);
+      if (mVaalCrit) {
+        const val = Number(mVaalCrit[1]);
+        if (val > 0 && !hasStatSource(db, 'CritChance', 'INC', src, val)) {
+          db.addMod({
+            ...mkMod('CritChance', 'INC', val, src),
+            tags: [{ type: 'SkillType', skillType: 'Vaal' }],
+          });
+          appliedSources.push(src);
+        }
+        continue;
+      }
+
+      // 12. Quality-scaled item grants (Foulborn Skin of the Loyal, Nebulis, etc.)
+      const mQualRes = line.match(
+        /^Grants \+(\d+)% to (Fire|Cold|Lightning|Chaos) Resistance per (\d+)% Quality$/i,
+      );
+      if (mQualRes) {
+        const steps = Math.floor(Math.max(0, item.quality ?? 0) / Math.max(1, Number(mQualRes[3])));
+        const val = steps * Number(mQualRes[1]);
+        const statName = `${mQualRes[2]}Resist`;
+        if (val > 0 && !hasStatSource(db, statName, 'BASE', src, val)) {
+          db.addMod(mkMod(statName, 'BASE', val, src));
+          appliedSources.push(src);
+        }
+        continue;
+      }
+      const mQualAoe = line.match(/^Grants (\d+)% increased Area of Effect per (\d+)% Quality$/i);
+      if (mQualAoe) {
+        const steps = Math.floor(Math.max(0, item.quality ?? 0) / Math.max(1, Number(mQualAoe[2])));
+        const val = steps * Number(mQualAoe[1]);
+        if (val > 0 && !hasStatSource(db, 'AreaOfEffect', 'INC', src, val)) {
+          db.addMod(mkMod('AreaOfEffect', 'INC', val, src));
+          appliedSources.push(src);
+        }
+        continue;
+      }
+
+      // 13. Harvest Weapon Global Quality Enchant (Elemental Damage per N% Quality;
+      // Attack Speed & Crit Chance per Quality are local weapon mods already precomputed in weapon header stats)
+      const mQualEle = line.match(/^(\d+)% increased Elemental Damage per (\d+)% Quality$/i);
+      if (mQualEle) {
+        const steps = Math.floor(Math.max(0, item.quality ?? 0) / Math.max(1, Number(mQualEle[2])));
+        const val = steps * Number(mQualEle[1]);
+        if (val > 0 && !hasStatSource(db, 'ElementalDamage', 'INC', src, val)) {
+          db.addMod(mkMod('ElementalDamage', 'INC', val, src));
+          appliedSources.push(src);
+        }
+        continue;
       }
     }
   }
@@ -1512,11 +1688,27 @@ export interface PostPoolUniqueResult {
 export function evaluatePostPoolBuildEnablingUniques(
   ctx: PostPoolUniqueContext,
 ): PostPoolUniqueResult {
-  const { db, str, dex, int, life, energyShield, armour, evasion } = ctx;
+  const { db, str, dex, int, life, mana, energyShield, armour, evasion } = ctx;
   const allEntries: EquippedItemEntry[] = [
     ...ctx.equippedItems,
     ...(ctx.socketedJewels ?? []).map((item, i) => ({ slot: `Jewel ${i + 1}`, item })),
   ];
+
+  // Resolve exact capped elemental resistances (honoring Kitava penalty, max resist cap, and Melding)
+  const getCappedPlayerEleResist = (elem: 'Fire' | 'Cold' | 'Lightning'): number => {
+    const stats = db.getEvalContext().stats;
+    const uncapped = stats[`Uncapped${elem}Resist`];
+    const overcap = stats[`${elem}ResistOverCap`] ?? stats[`Overcapped${elem}Resist`];
+    if (typeof uncapped === 'number' && typeof overcap === 'number') {
+      return Math.min(90, Math.round(uncapped - overcap));
+    }
+    if (elem === 'Lightning' && ctx.playerLightningResist !== undefined) {
+      return Math.min(90, Math.round(ctx.playerLightningResist));
+    }
+    const maxCap = Math.min(90, db.override(`${elem}ResistMax`) ?? Math.round(db.sum('BASE', `${elem}ResistMax`) || 75));
+    const raw = db.override(`${elem}Resist`) ?? Math.round(db.sum('BASE', `${elem}Resist`));
+    return Math.min(maxCap, raw);
+  };
 
   let crownOfEyesAttackInc = 0;
   let ironFortressBlockBonus = 0;
@@ -1543,7 +1735,7 @@ export function evaluatePostPoolBuildEnablingUniques(
   for (const { slot, item } of allEntries) {
     const src = `Unique (${slot}): ${item.name}`;
     const lowerName = normalizeName(item.name);
-    const lines = collectCleanItemLines(item);
+    const lines = joinWrappedItemLines(collectCleanItemLines(item));
 
     const hasPerAttrOrPerStatFromItem = (statNames: readonly string[]): boolean => {
       for (const sn of statNames) {
@@ -1894,6 +2086,146 @@ export function evaluatePostPoolBuildEnablingUniques(
           db.addMod(mkMod('EnemyLightningResistOverride', 'OVERRIDE', synced, src));
           appliedSources.push(src);
         }
+        continue;
+      }
+
+      // 11. Mind of the Council ("Attack Skills have Added Lightning Damage equal to N% of maximum Mana")
+      const mMindCouncil = line.match(
+        /^Attack Skills have Added Lightning Damage equal to (\d+(?:\.\d+)?)% of maximum Mana$/i,
+      );
+      if (mMindCouncil) {
+        const pct = Number(mMindCouncil[1]);
+        const added = Math.round((Math.max(0, mana) * pct) / 100);
+        if (added > 0 && !hasStatSource(db, 'LightningMin', 'BASE', src, added)) {
+          db.addMod(mkMod('LightningMin', 'BASE', added, src, ModFlag.Attack));
+          db.addMod(mkMod('LightningMax', 'BASE', added, src, ModFlag.Attack));
+          appliedSources.push(src);
+        }
+        continue;
+      }
+
+      // 12. Nebulis (Elemental Damage per 1% Fire/Cold/Lightning Resistance above 75%, & classic Cold/Lightning variant)
+      const mNebulisEle = line.match(
+        /^(\d+)% increased Elemental Damage per 1% Fire, Cold, or Lightning Resistance above 75%$/i,
+      );
+      if (mNebulisEle) {
+        const perPct = Number(mNebulisEle[1]);
+        const steps =
+          Math.max(0, getCappedPlayerEleResist('Fire') - 75) +
+          Math.max(0, getCappedPlayerEleResist('Cold') - 75) +
+          Math.max(0, getCappedPlayerEleResist('Lightning') - 75);
+        const bonus = steps * perPct;
+        if (bonus > 0 && !hasStatSource(db, 'ElementalDamage', 'INC', src, bonus)) {
+          db.addMod(mkMod('ElementalDamage', 'INC', bonus, src));
+          appliedSources.push(src);
+        }
+        continue;
+      }
+      const mNebulisSingle = line.match(
+        /^(\d+)% increased (Fire|Cold|Lightning) Damage per 1% (Fire|Cold|Lightning) Resistance above 75%$/i,
+      );
+      if (mNebulisSingle) {
+        const perPct = Number(mNebulisSingle[1]);
+        const dmgElem = mNebulisSingle[2]! as 'Fire' | 'Cold' | 'Lightning';
+        const resElem = mNebulisSingle[3]! as 'Fire' | 'Cold' | 'Lightning';
+        const steps = Math.max(0, getCappedPlayerEleResist(resElem) - 75);
+        const bonus = steps * perPct;
+        const statName = `${dmgElem}Damage`;
+        if (bonus > 0 && !hasStatSource(db, statName, 'INC', src, bonus)) {
+          db.addMod(mkMod(statName, 'INC', bonus, src));
+          appliedSources.push(src);
+        }
+        continue;
+      }
+
+      // 13. Enmity's Embrace fallback (if parseModLines didn't emit FirePenetration per overcapped Fire Res)
+      const mEnmity = line.match(
+        /^(?:Fire )?Damage Penetrates (\d+)% Fire Resistance per (\d+)% Overcapped Fire Resistance(?:, up to a maximum of (\d+)%)?$/i,
+      );
+      if (mEnmity) {
+        const alreadyFromItem = getRawModsForStat(db, 'FirePenetration').some((m) =>
+          m.source.toLowerCase().includes(lowerName),
+        );
+        if (!alreadyFromItem) {
+          const per = Number(mEnmity[1]);
+          const step = Math.max(1, Number(mEnmity[2]));
+          const cap = mEnmity[3] ? Number(mEnmity[3]) : 200;
+          const stats = db.getEvalContext().stats;
+          const overcap = Math.max(0, stats.FireResistOverCap ?? stats.OvercappedFireResist ?? 0);
+          const pen = Math.min(cap, Math.floor(overcap / step) * per);
+          if (pen > 0) {
+            db.addMod(mkMod('FirePenetration', 'BASE', pen, src));
+            appliedSources.push(src);
+          }
+        }
+        continue;
+      }
+
+      // 14. The Taming wrapped-line fallback ("N% increased Elemental Damage with Hits and Ailments for each type of Elemental Ailment on Enemy")
+      const mTaming = line.match(
+        /^(\d+)% increased Elemental Damage with Hits and Ailments for each type of Elemental Ailment on Enemy$/i,
+      );
+      if (mTaming) {
+        const alreadyFromItem = getRawModsForStat(db, 'ElementalDamage').some((m) =>
+          m.source.toLowerCase().includes(lowerName),
+        );
+        if (!alreadyFromItem) {
+          const conds = db.getEvalContext().conditions;
+          let eleAilmentCount = 0;
+          for (const key of [
+            'EnemyIgnited',
+            'EnemyChilled',
+            'EnemyFrozen',
+            'EnemyShocked',
+            'EnemyScorched',
+            'EnemyBrittle',
+            'EnemySapped',
+          ]) {
+            if (conds[key]) eleAilmentCount += 1;
+          }
+          const bonus = Number(mTaming[1]) * eleAilmentCount;
+          if (bonus > 0) {
+            db.addMod(mkMod('ElementalDamage', 'INC', bonus, src, ModFlag.Hit));
+            db.addMod(mkMod('ElementalDamage', 'INC', bonus, src, ModFlag.Ailment));
+            appliedSources.push(src);
+          }
+        }
+        continue;
+      }
+
+      // 15. Elevated / Hunter Boots Tailwind & Tailwind Effect (reconciles with buffTailwind so no double-counting)
+      const mTailwindEff = line.match(/^(\d+)% increased Effect of Tailwind on you$/i);
+      if (mTailwindEff) {
+        const effPct = Number(mTailwindEff[1]);
+        const hasTailwindAlready = hasStatSource(db, 'ActionSpeed', 'INC', 'Tailwind');
+        const extra = Math.floor((8 * effPct) / 100 + 1e-9);
+        if (
+          hasTailwindAlready &&
+          extra > 0 &&
+          !hasStatSource(db, 'ActionSpeed', 'INC', `${src} (Tailwind)`) &&
+          !hasStatSource(db, 'ActionSpeed', 'INC', `${src} (Tailwind Effect)`)
+        ) {
+          db.addMod(mkMod('ActionSpeed', 'INC', extra, `${src} (Tailwind Effect)`));
+          appliedSources.push(`${src} (Tailwind Effect)`);
+        }
+        continue;
+      }
+      if (/^You have Tailwind if you have dealt a Critical Strike Recently$/i.test(line)) {
+        if (
+          db.getEvalContext().conditions.CritRecently &&
+          !hasStatSource(db, 'ActionSpeed', 'INC', 'Tailwind')
+        ) {
+          let localTwEff = 0;
+          for (const l2 of lines) {
+            const mEff = l2.match(/^(\d+)% increased Effect of Tailwind on you$/i);
+            if (mEff) localTwEff += Number(mEff[1]);
+          }
+          const twVal = Math.floor(8 * (1 + localTwEff / 100) + 1e-9);
+          db.addMod(mkMod('ActionSpeed', 'INC', twVal, `${src} (Tailwind)`));
+          db.setCondition('Tailwind', true);
+          appliedSources.push(`${src} (Tailwind)`);
+        }
+        continue;
       }
     }
 

@@ -277,7 +277,9 @@ describe('equipmentAndFlasks — Utility Flasks & PoE 1 Mageblood', () => {
     expect(res.bottledFaithBaseCrit).toBeCloseTo(1.8, 2);
     expect(res.progenesisDelayPct).toBe(30); // trunc(25 * 1.2) = 30
     expect(res.modLines).toContain('48% increased Damage'); // Sulphur 40 * 1.2
-    expect(res.modLines).toContain('Enemies take 12% increased Damage');
+    expect(res.modLines).toContain(
+      'Consecrated Ground created during Effect applies 12% increased Damage taken to Enemies',
+    );
   });
 
   it('sets grantsOnslaught without emitting raw Onslaught into modLines (preventing 2x speed with engine.ts)', () => {
@@ -858,5 +860,107 @@ describe('equipmentAndFlasks — Special Meta Unique Gear Mechanics', () => {
       '118% increased Damage',
       '59% increased Attack and Cast Speed',
     ]);
+  });
+
+  it('evaluates Cinderswallow Urn (binary Malediction + scaled Ignited taken), Soul Catcher (Vaal-only), and Screams of the Desiccated Massive Shrine', () => {
+    // 1. Cinderswallow Urn: 10% binary Malediction + scaled Ignited Damage Taken (only when enemy is Ignited)
+    const cinderswallow = makeItem({
+      id: 'fl-cs',
+      name: 'Cinderswallow Urn',
+      baseName: 'Silver Flask',
+      rarity: 'UNIQUE',
+      explicits: [
+        'Enemies Ignited by you during Effect have Malediction',
+        'Enemies Ignited by you during Effect take 10% increased Damage',
+      ],
+    });
+    const csBuildIgnited = makeMinimalBuild({
+      items: { 'fl-cs': cinderswallow },
+      equipped: { 'Flask 1': 'fl-cs' },
+      activeFlaskSlots: { 'Flask 1': true },
+      config: {
+        ...makeMinimalBuild().config,
+        rawInputs: { conditionEnemyIgnited: true },
+      },
+    });
+    const csRes = evaluateActiveFlasks(csBuildIgnited, 30); // 1.3x flask effect
+    // Ignited line scales: trunc(10 * 1.3) = 13%, Malediction stays unscaled binary 10%
+    expect(csRes.modLines).toContain('Enemies take 13% increased Damage');
+    expect(csRes.modLines).toContain('Enemies take 10% increased Damage');
+
+    const csBuildNoIgnite = makeMinimalBuild({
+      items: { 'fl-cs': cinderswallow },
+      equipped: { 'Flask 1': 'fl-cs' },
+      activeFlaskSlots: { 'Flask 1': true },
+    });
+    const csNoIgnRes = evaluateActiveFlasks(csBuildNoIgnite, 30);
+    // Without EnemyIgnited, neither Ignited-gated Cinderswallow debuff applies
+    expect(csNoIgnRes.modLines).not.toContain('Enemies take 10% increased Damage');
+    expect(csNoIgnRes.modLines).not.toContain('Enemies take 13% increased Damage');
+
+    // 2. Soul Catcher: scales Vaal Crit/Damage only when main skill is Vaal
+    const soulCatcher = makeItem({
+      id: 'fl-sc',
+      name: 'Soul Catcher',
+      baseName: 'Quartz Flask',
+      rarity: 'UNIQUE',
+      explicits: [
+        '100% increased Critical Strike Chance with Vaal Skills during Effect',
+        '80% increased Damage with Vaal Skills during Effect',
+      ],
+    });
+    const scVaalBuild = makeMinimalBuild({
+      items: { 'fl-sc': soulCatcher },
+      equipped: { 'Flask 1': 'fl-sc' },
+      activeFlaskSlots: { 'Flask 1': true },
+      mainSkillGroupId: 'sg-vaal',
+      skills: [
+        {
+          id: 'sg-vaal',
+          label: 'Vaal Flameblast',
+          enabled: true,
+          gems: [{ instanceId: 'g1', gemId: 'poe1_vaalflameblast', level: 20, quality: 0, enabled: true }],
+        },
+      ],
+    });
+    const scVaalRes = evaluateActiveFlasks(scVaalBuild, 25); // 1.25x
+    expect(scVaalRes.modLines).toContain('125% increased Critical Strike Chance');
+    expect(scVaalRes.modLines).toContain('100% increased Damage');
+
+    const scNormalBuild = makeMinimalBuild({
+      items: { 'fl-sc': soulCatcher },
+      equipped: { 'Flask 1': 'fl-sc' },
+      activeFlaskSlots: { 'Flask 1': true },
+      mainSkillGroupId: 'sg-norm',
+      skills: [
+        {
+          id: 'sg-norm',
+          label: 'Arc',
+          enabled: true,
+          gems: [{ instanceId: 'g1', gemId: 'poe1_arc', level: 20, quality: 0, enabled: true }],
+        },
+      ],
+    });
+    const scNormRes = evaluateActiveFlasks(scNormalBuild, 25);
+    expect(scNormRes.modLines).not.toContain('125% increased Critical Strike Chance');
+    expect(scNormRes.modLines).not.toContain('100% increased Damage');
+
+    // 3. Screams of the Desiccated: grants Massive Shrine (+40% Life, +40% AoE) when !UsingFlask
+    const screams = makeItem({
+      id: 'belt-screams',
+      name: 'Screams of the Desiccated',
+      baseName: 'Heavy Belt',
+      rarity: 'UNIQUE',
+      explicits: ['You have Massive Shrine Buff while affected by no Flasks'],
+    });
+    const screamsDb = new ModDB();
+    evaluateSpecialUniqueGearMechanics([{ slot: 'Belt', item: screams }], screamsDb, 'poe1');
+    expect(screamsDb.sum('INC', 'Life')).toBe(40);
+    expect(screamsDb.sum('INC', 'AreaOfEffect')).toBe(40);
+    const screamsWithFlaskDb = new ModDB();
+    screamsWithFlaskDb.setCondition('UsingFlask', true);
+    evaluateSpecialUniqueGearMechanics([{ slot: 'Belt', item: screams }], screamsWithFlaskDb, 'poe1');
+    expect(screamsWithFlaskDb.sum('INC', 'Life')).toBe(0);
+    expect(screamsWithFlaskDb.sum('INC', 'AreaOfEffect')).toBe(0);
   });
 });

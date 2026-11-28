@@ -1465,6 +1465,14 @@ function expandCanonicalCompiledMod(mod: Mod, target?: ActorTarget): Mod[] {
         { ...m, name: 'Int' },
       ];
     }
+    if (target !== 'enemy' && m.name === 'Defences') {
+      return [
+        { ...m, name: 'Armour' },
+        { ...m, name: 'Evasion' },
+        { ...m, name: 'EnergyShield' },
+        { ...m, name: 'Ward' },
+      ];
+    }
     return [m];
   };
 
@@ -1543,9 +1551,11 @@ export function injectCompiledGemMods(
       typeof val === 'number' &&
       (cm.type === 'BASE' || cm.type === 'INC' || (scaleMore && cm.type === 'MORE'))
     ) {
-      val = Number.isInteger(val)
-        ? Math.trunc(val * mult)
-        : Math.trunc(val * mult * 100) / 100;
+      const hasMultiplierTag = Boolean(cm.tags?.some((t) => t.type === 'Multiplier'));
+      val =
+        Number.isInteger(val) && !hasMultiplierTag
+          ? Math.trunc(val * mult + Math.sign(val) * 1e-9)
+          : Math.trunc(val * mult * 100 + Math.sign(val) * 1e-7) / 100;
     }
 
     if (cm.name.startsWith('Condition:') && cm.type === 'FLAG' && val === true) {
@@ -2903,11 +2913,36 @@ export function computeAuthenticAilmentAndSkillDots(input: AuthenticDotInput): A
           ['FireDotMultiplier', 'IgniteDotMultiplier'],
           igniteKw,
         );
+        // PoE 1 Conversion Inheritance for Ignite (CalcOffence.lua:5154-5180):
+        // When a non-Fire elemental skill converts damage along Lightning -> Cold -> Fire
+        // (e.g. Arc + Call of the Brotherhood + Cold to Fire), converted packets inherit ancestor elemental mods.
+        const isNativeLight = (kwFlags & KeywordFlag.Lightning) !== 0;
+        const isNativeCold = (kwFlags & KeywordFlag.Cold) !== 0;
+        const isNativeFire = (kwFlags & KeywordFlag.Fire) !== 0;
+        const l2c =
+          skillDb.sum('BASE', 'LightningDamageConvertToCold', flags, kwFlags) +
+          skillDb.sum('BASE', 'LightningDamageGainAsCold', flags, kwFlags);
+        const l2f =
+          skillDb.sum('BASE', 'LightningDamageConvertToFire', flags, kwFlags) +
+          skillDb.sum('BASE', 'LightningDamageGainAsFire', flags, kwFlags);
+        const c2f =
+          skillDb.sum('BASE', 'ColdDamageConvertToFire', flags, kwFlags) +
+          skillDb.sum('BASE', 'ColdDamageGainAsFire', flags, kwFlags);
+
         let scaledBase = 0;
         if (!fireCannotIgnite) {
           const baseFire = getPoe1ScaledBaseForAilment('Fire', igniteRollFrac);
           if (baseFire > 0) {
             const names = ['Damage', 'ElementalDamage', 'FireDamage', 'DotDamage', 'IgniteDamage'];
+            if (!isNativeFire) {
+              if (isNativeCold && c2f > 0) {
+                names.push('ColdDamage');
+              }
+              if (isNativeLight && (l2f > 0 || (l2c > 0 && c2f > 0))) {
+                names.push('LightningDamage');
+                if (l2c > 0 && c2f > 0 && !names.includes('ColdDamage')) names.push('ColdDamage');
+              }
+            }
             const inc = skillDb.sum('INC', names, ailmentDamageFlags, igniteKw);
             const more = skillDb.more(names, ailmentDamageFlags, igniteKw);
             scaledBase += baseFire * Math.max(0, 1 + inc / 100) * more;
@@ -2925,6 +2960,9 @@ export function computeAuthenticAilmentAndSkillDots(input: AuthenticDotInput): A
             const baseOther = getPoe1ScaledBaseForAilment(dt, igniteRollFrac);
             if (baseOther <= 0) continue;
             const names = ['Damage', 'ElementalDamage', 'FireDamage', `${dt}Damage`, 'DotDamage', 'IgniteDamage'];
+            if (dt === 'Cold' && !isNativeCold && isNativeLight && l2c > 0) {
+              names.push('LightningDamage');
+            }
             const inc = skillDb.sum('INC', names, ailmentDamageFlags, igniteKw);
             const more = skillDb.more(names, ailmentDamageFlags, igniteKw);
             scaledBase += baseOther * Math.max(0, 1 + inc / 100) * more;

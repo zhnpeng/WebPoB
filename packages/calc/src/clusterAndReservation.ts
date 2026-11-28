@@ -904,7 +904,173 @@ export function evaluateAllocatedClusterJewels(
     for (const notableName of grantedNotableNames) {
       const def = getClusterNotableFn(notableName);
       if (def) {
-        jewelMods.push(...parseModLines(def.st, `Cluster Notable (${nodeId}): ${def.en}`));
+        const notableSrc = `Cluster Notable (${nodeId}): ${def.en}`;
+        // Join multiline-wrapped cluster notable descriptions (e.g. Purposeful Harbinger, Follow-Through, Seeker Runes)
+        const joinedLines: string[] = [];
+        for (let li = 0; li < def.st.length; li++) {
+          let cur = def.st[li]!.trim();
+          while (
+            li + 1 < def.st.length &&
+            /\b(?:for|with|and|of|to|on|while|if|per|from|in|or|when|your)$/i.test(cur)
+          ) {
+            li += 1;
+            cur = `${cur} ${def.st[li]!.trim()}`;
+          }
+          joinedLines.push(cur);
+        }
+        for (const jLine of joinedLines) {
+          const mPh = jLine.match(
+            /^Auras from your Skills have (\d+)% increased Effect on you for each Herald affecting you, up to a maximum of (\d+)%$/i,
+          );
+          if (mPh) {
+            jewelMods.push(mkMod('PurposefulHarbingerPerHerald', 'BASE', Number(mPh[1]), notableSrc));
+            continue;
+          }
+          const mHeraldry = jLine.match(
+            /^Enemies within \d+ metres have (Fire|Cold|Lightning) Exposure while you are affected by Herald of (Ash|Ice|Thunder)$/i,
+          );
+          if (mHeraldry) {
+            jewelMods.push(mkMod(`HeraldryExposure:${mHeraldry[1]}`, 'FLAG', true, notableSrc));
+            continue;
+          }
+          const mMasterExp = jLine.match(
+            /^Enemies within \d+ metres have (Fire|Cold|Lightning) Exposure$/i,
+          );
+          if (mMasterExp) {
+            const el =
+              mMasterExp[1]!.charAt(0).toUpperCase() + mMasterExp[1]!.slice(1).toLowerCase();
+            jewelMods.push(mkMod(`MasterOfElementExposure:${el}`, 'FLAG', true, notableSrc));
+            continue;
+          }
+          const mSkillRes = jLine.match(
+            /^([A-Za-z' ]+?) has (\d+)% increased Mana Reservation Efficiency$/i,
+          );
+          if (mSkillRes) {
+            jewelMods.push(
+              mkMod(
+                `SkillManaReservationEfficiency:${mSkillRes[1]!.trim().toLowerCase()}`,
+                'INC',
+                Number(mSkillRes[2]),
+                notableSrc,
+              ),
+            );
+            continue;
+          }
+          const mPreciseFocus = jLine.match(
+            /^\+(\d+)% to Critical Strike Multiplier if you've been Channelling for at least \d+ seconds?$/i,
+          );
+          if (mPreciseFocus) {
+            jewelMods.push({
+              ...mkMod('CritMultiplier', 'BASE', Number(mPreciseFocus[1]), notableSrc),
+              tags: [{ type: 'Condition', var: 'Channelling' }],
+            });
+            continue;
+          }
+          const mWeightAdv = jLine.match(
+            /^(\d+)% chance to deal Double Damage while wielding a Mace, Sceptre or Staff$/i,
+          );
+          if (mWeightAdv) {
+            jewelMods.push({
+              ...mkMod('DoubleDamageChance', 'BASE', Number(mWeightAdv[1]), notableSrc),
+              tags: [{ type: 'Condition', var: 'UsingMace|UsingStaff' }],
+            });
+            continue;
+          }
+          const mPressurePts = jLine.match(
+            /^Your Critical Strikes have a (\d+)% chance to deal Double Damage$/i,
+          );
+          if (mPressurePts) {
+            jewelMods.push(
+              mkMod('DoubleDamageChanceOnCrit', 'BASE', Number(mPressurePts[1]), notableSrc),
+            );
+            continue;
+          }
+          const mCritAilDot = jLine.match(
+            /^\+(\d+)% to Damage over Time Multiplier for (Ignite|Ailments) from Critical Strikes$/i,
+          );
+          if (mCritAilDot) {
+            jewelMods.push(
+              mkMod(
+                'CritAilmentDotMultiplier',
+                'BASE',
+                Number(mCritAilDot[1]),
+                notableSrc,
+                0,
+                mCritAilDot[2]!.toLowerCase() === 'ignite' ? KeywordFlag.Ignite : 0,
+              ),
+            );
+            continue;
+          }
+          const mTrapMinePen = jLine.match(
+            /^(Trap|Mine) Damage Penetrates (\d+)% Elemental Resistances$/i,
+          );
+          if (mTrapMinePen) {
+            const kw =
+              mTrapMinePen[1]!.toLowerCase() === 'trap' ? KeywordFlag.Trap : KeywordFlag.Mine;
+            const penVal = Number(mTrapMinePen[2]);
+            jewelMods.push(mkMod('FirePenetration', 'BASE', penVal, notableSrc, 0, kw));
+            jewelMods.push(mkMod('ColdPenetration', 'BASE', penVal, notableSrc, 0, kw));
+            jewelMods.push(mkMod('LightningPenetration', 'BASE', penVal, notableSrc, 0, kw));
+            continue;
+          }
+          const mCompoundInj = jLine.match(
+            /^(\d+)% increased Damage with Bleeding you inflict on Maimed Enemies$/i,
+          );
+          if (mCompoundInj) {
+            jewelMods.push({
+              ...mkMod(
+                'Damage',
+                'INC',
+                Number(mCompoundInj[1]),
+                notableSrc,
+                ModFlag.Ailment,
+                KeywordFlag.Bleed,
+              ),
+              tags: [{ type: 'Condition', var: 'EnemyMaimed' }],
+            });
+            continue;
+          }
+          const mViciousSkew = jLine.match(
+            /^(\d+)% increased Effect of Impales inflicted by Hits that also inflict Bleeding$/i,
+          );
+          if (mViciousSkew) {
+            jewelMods.push({
+              ...mkMod('ImpaleEffect', 'INC', Number(mViciousSkew[1]), notableSrc),
+              tags: [{ type: 'Condition', var: 'EnemyBleeding' }],
+            });
+            continue;
+          }
+          const mRottenClaws = jLine.match(
+            /^Minions have a? ?(\d+)% chance to Impale on Hit with Attacks$/i,
+          );
+          if (mRottenClaws) {
+            jewelMods.push(
+              mkMod('MinionImpaleChance', 'BASE', Number(mRottenClaws[1]), notableSrc, ModFlag.Attack),
+            );
+            continue;
+          }
+          const mRenewal = jLine.match(
+            /^Minions have (\d+)% chance to deal Double Damage while they are on Full Life$/i,
+          );
+          if (mRenewal) {
+            jewelMods.push({
+              ...mkMod('MinionDoubleDamageChance', 'BASE', Number(mRenewal[1]), notableSrc),
+              tags: [{ type: 'Condition', var: 'LowLife', neg: true }],
+            });
+            continue;
+          }
+          const mVastPower = jLine.match(
+            /^(\d+)% increased Area of Effect per Power Charge, up to a maximum of (\d+)%$/i,
+          );
+          if (mVastPower) {
+            jewelMods.push({
+              ...mkMod('AreaOfEffect', 'INC', Number(mVastPower[1]), notableSrc),
+              tags: [{ type: 'Multiplier', var: 'PowerCharge', limit: Number(mVastPower[2]) }],
+            });
+            continue;
+          }
+          jewelMods.push(...parseModLines([jLine], notableSrc));
+        }
       }
     }
     if (grantedSmallCount > 0 && scaledSmallGrants.length > 0) {
@@ -2047,6 +2213,127 @@ export function evaluateAurasAndWatchersEye(
   const globalBloodMagic = playerDb.flag('BloodMagic');
   const supremeEgo = playerDb.flag('SupremeEgo') || playerDb.flag('SelfAurasOnlyAffectYou');
 
+  // Collect socketed jewels upfront (used for Sublime Vision, per-skill effect, and Watcher's Eye Pass 2)
+  const jewelsToScan: Item[] = [];
+  if (ctx.socketedJewels) {
+    for (const entry of ctx.socketedJewels) {
+      jewelsToScan.push('jewel' in entry ? entry.jewel : entry);
+    }
+  } else if (build.tree.socketedJewels) {
+    for (const itemId of Object.values(build.tree.socketedJewels)) {
+      const jewel = build.items[itemId];
+      if (jewel) jewelsToScan.push(jewel);
+    }
+  }
+
+  // Pre-scan equipped gear & socketed jewels for per-skill aura/herald/golem effect, reservation efficiency,
+  // Sublime Vision restrictions, Curse-on-Hit gear mods, Replica Farrul's Fur, Annihilation's Approach, and item Exposure.
+  const perSkillEffectPct = new Map<string, number>();
+  const perSkillResEffPct = new Map<string, number>();
+  let sublimeOnlyAuraLower: string | null = null;
+  const curseOnHitEntries: Array<{ curseName: string; effectPct: number; source: string }> = [];
+  let hasReplicaFarrulOnslaught = false;
+  let hasAnnihilationsApproachAdrenaline = false;
+  const itemExposureBase: Record<'Fire' | 'Cold' | 'Lightning', number> = {
+    Fire: 0,
+    Cold: 0,
+    Lightning: 0,
+  };
+
+  const scanItemsForAuraHooks: Array<{ label: string; item: Item }> = [
+    ...equipped.map(({ slot, item }) => ({ label: `Item (${slot}): ${item.name}`, item })),
+    ...jewelsToScan.map((item) => ({ label: `Jewel: ${item.name}`, item })),
+  ];
+  for (const { label, item } of scanItemsForAuraHooks) {
+    for (const line of collectCleanItemLines(item)) {
+      const mSkillEff = line.match(
+        /^([A-Za-z' ]+?) has (\d+)% increased (?:Aura|Buff) Effect$/i,
+      );
+      if (mSkillEff) {
+        const key = mSkillEff[1]!.trim().toLowerCase();
+        perSkillEffectPct.set(key, (perSkillEffectPct.get(key) ?? 0) + Number(mSkillEff[2]));
+        continue;
+      }
+      const mGolemEff = line.match(
+        /^(\d+)% increased Effect of the Buff granted by your (Flame|Ice|Lightning|Chaos|Stone|Carrion) Golems$/i,
+      );
+      if (mGolemEff) {
+        const key = `summon ${mGolemEff[2]!.toLowerCase()} golem`;
+        perSkillEffectPct.set(key, (perSkillEffectPct.get(key) ?? 0) + Number(mGolemEff[1]));
+        continue;
+      }
+      const mSkillRes = line.match(
+        /^([A-Za-z' ]+?) has (\d+)% increased (?:Mana )?Reservation Efficiency$/i,
+      );
+      if (mSkillRes) {
+        const key = mSkillRes[1]!.trim().toLowerCase();
+        perSkillResEffPct.set(key, (perSkillResEffPct.get(key) ?? 0) + Number(mSkillRes[2]));
+        continue;
+      }
+      const mSublime = line.match(/^Aura Skills other than ([A-Za-z' ]+?) are Disabled$/i);
+      if (mSublime) {
+        sublimeOnlyAuraLower = mSublime[1]!.trim().toLowerCase();
+        continue;
+      }
+      const mCurseHit = line.match(
+        /^Curse Enemies with (Vulnerability|Temporal Chains|Flammability|Frostbite|Conductivity|Elemental Weakness|Despair|Enfeeble|Punishment|Poacher's Mark|Assassin's Mark|Sniper's Mark|Warlord's Mark) on Hit(?:, with (\d+)% increased Effect)?$/i,
+      );
+      if (mCurseHit) {
+        curseOnHitEntries.push({
+          curseName: mCurseHit[1]!,
+          effectPct: mCurseHit[2] ? Number(mCurseHit[2]) : 0,
+          source: label,
+        });
+        continue;
+      }
+      if (/^You have Onslaught while you have Cat's Agility$/i.test(line)) {
+        hasReplicaFarrulOnslaught = true;
+        continue;
+      }
+      if (/^Gain Adrenaline when you become Flame-Touched$/i.test(line)) {
+        hasAnnihilationsApproachAdrenaline = true;
+        continue;
+      }
+      const mExpApply = line.match(
+        /^Inflict (Fire|Cold|Lightning) Exposure on Hit, applying -(\d+)% to (?:Fire|Cold|Lightning) Resistance$/i,
+      );
+      if (mExpApply) {
+        const el = (mExpApply[1]!.charAt(0).toUpperCase() +
+          mExpApply[1]!.slice(1).toLowerCase()) as 'Fire' | 'Cold' | 'Lightning';
+        itemExposureBase[el] = Math.max(itemExposureBase[el], Number(mExpApply[2]));
+        continue;
+      }
+      const mExpChance = line.match(
+        /^(\d+)% chance to inflict (Fire|Cold|Lightning) Exposure on Hit$/i,
+      );
+      if (mExpChance) {
+        const el = (mExpChance[2]!.charAt(0).toUpperCase() +
+          mExpChance[2]!.slice(1).toLowerCase()) as 'Fire' | 'Cold' | 'Lightning';
+        itemExposureBase[el] = Math.max(itemExposureBase[el], 10);
+      }
+    }
+  }
+
+  // Sync Blood/Sand Stance onto enemyDb so Flesh and Stone's enemy cmod (`Condition:BloodStance`) activates.
+  // Honor explicit `rawInputs.bloodSandStance` case-insensitively (e.g. "SAND" / "BLOOD" / 1 / 2),
+  // and otherwise mirror whatever stance engine.ts already resolved from `skillPart` onto enemyDb.
+  if (build.game === 'poe1') {
+    const pConds = playerDb.getEvalContext().conditions;
+    const rawStance = build.config.rawInputs?.bloodSandStance;
+    const rawStanceStr = typeof rawStance === 'string' ? rawStance.trim().toLowerCase() : '';
+    if (rawStance !== undefined) {
+      const isSand = rawStance === 2 || rawStanceStr === 'sand';
+      const isBlood = !isSand;
+      playerDb.setCondition('BloodStance', isBlood);
+      playerDb.setCondition('SandStance', isSand);
+      enemyDb.setCondition('BloodStance', isBlood);
+      enemyDb.setCondition('SandStance', isSand);
+    } else if (pConds.BloodStance || pConds.SandStance) {
+      enemyDb.setCondition('BloodStance', Boolean(pConds.BloodStance));
+      enemyDb.setCondition('SandStance', Boolean(pConds.SandStance));
+    }
+  }
+
   const savedPlayerCtx = playerDb.getEvalContext();
   playerDb.setEvalContext({
     ...savedPlayerCtx,
@@ -2068,7 +2355,7 @@ export function evaluateAurasAndWatchersEye(
   const auraQueryKw = KeywordFlag.Aura;
   const baseAuraEffectPct =
     playerDb.sum('INC', 'AuraEffect', auraQueryFlags, auraQueryKw) + (ctx.extraAuraEffectPct ?? 0);
-  const selfOnlyAuraEffectPct = playerDb.sum(
+  let selfOnlyAuraEffectPct = playerDb.sum(
     'INC',
     'AuraEffectOnSelf',
     auraQueryFlags,
@@ -2107,6 +2394,10 @@ export function evaluateAurasAndWatchersEye(
     isAura: boolean;
     isCurseOrMark: boolean;
     isHerald: boolean;
+    isGolemBuff: boolean;
+    isStanceBuff: boolean;
+    isSpectralTigerBuff: boolean;
+    isApproachingFlamesBuff: boolean;
     isEnemyOnlyAura: boolean;
     isMark: boolean;
     effQuality: number;
@@ -2129,8 +2420,33 @@ export function evaluateAurasAndWatchersEye(
   }
 
   const deduped = new Map<string, CandidateAura>();
+  let hasCombustionGroup = false;
+  let skitterbotAppliedBonechill = false;
+  let nonSkitterBonechillFound = false;
+  let nonSkitterBonechillHasChillingArea = false;
+  let nonSkitterBonechillLevel = 0;
+  let nonSkitterBonechillAilmentInc = 0;
+  let mainGroupHasMaim = false;
+  let secondaryGroupMaimBonus = 0;
+  let hasFeedingFrenzyMinionGroup = false;
+  let hasAnyStanceSkill = false;
+  const skillExposureBase: Record<'Fire' | 'Cold' | 'Lightning', number> = {
+    Fire: 0,
+    Cold: 0,
+    Lightning: 0,
+  };
+  const activePacts: Array<{
+    key: 'Beidat' | 'Ghorr' | 'Ktash' | 'Lycia';
+    name: string;
+    effLevel: number;
+    effQuality: number;
+    groupCdrInc: number;
+  }> = [];
+  const resolvedMainIdx = build.skills.findIndex((g) => g.id === build.mainSkillGroupId);
+  const mainGroupIndex = resolvedMainIdx >= 0 ? resolvedMainIdx : 0;
 
-  for (const group of build.skills) {
+  for (let groupIdx = 0; groupIdx < build.skills.length; groupIdx++) {
+    const group = build.skills[groupIdx]!;
     if (!group.enabled) continue;
     if (
       build.game === 'poe2' &&
@@ -2166,6 +2482,10 @@ export function evaluateAurasAndWatchersEye(
     let groupBonechillColdTakenInc = 0;
     let groupSkitterbotAilmentEffectInc = 0;
     let groupHasAtziriCommunion = false;
+    let groupHasCombustion = false;
+    let groupHasMaim = false;
+    let groupHasFeedingFrenzy = false;
+    let groupCdrInc = 0;
 
     const applySupportByName = (
       rawName: string,
@@ -2195,7 +2515,16 @@ export function evaluateAurasAndWatchersEye(
         groupCurseEffectInc += basePenalty + qualBonus;
       } else if (lower === 'bonechill') {
         groupHasBonechill = true;
-        groupBonechillColdTakenInc = Math.max(0, 9 + Math.floor(effLevel / 2));
+        // PoB1 Data/Skills/sup_int.lua:566-587: Bonechill grants (24 + effLevel)% increased Effect of Chill (Lv20 = 44%)
+        groupBonechillColdTakenInc = Math.max(groupBonechillColdTakenInc, 24 + effLevel);
+      } else if (lower === 'combustion') {
+        groupHasCombustion = true;
+      } else if (lower === 'maim') {
+        groupHasMaim = true;
+      } else if (lower === 'feeding frenzy') {
+        groupHasFeedingFrenzy = true;
+      } else if (lower === 'second wind') {
+        groupCdrInc += Math.max(0, 5 + effLevel);
       } else if (lower === 'unbound ailments' || lower === 'awakened unbound ailments') {
         const isAwk = lower === 'awakened unbound ailments';
         groupSkitterbotAilmentEffectInc += (isAwk ? 55 + effLevel * 2 : 35 + effLevel) + Math.trunc(Math.max(0, effQuality) * 0.5);
@@ -2338,6 +2667,72 @@ export function evaluateAurasAndWatchersEye(
       }
     }
 
+    // Track PoE 1 group-level global support effects (Combustion, Bonechill, Maim, Feeding Frenzy)
+    if (build.game === 'poe1') {
+      const groupActiveDefs = group.gems
+        .filter((g) => g.enabled)
+        .map((g) => lookupGem('poe1', g.gemId))
+        .filter((d): d is GemDefinition => Boolean(d && d.category === 'active'));
+      if (groupHasCombustion && groupActiveDefs.length > 0) {
+        const groupHasEleFocus = group.gems.some((g) => {
+          if (!g.enabled) return false;
+          const sd = lookupGem('poe1', g.gemId);
+          const sn = sd ? stripSupportSuffix(sd.name.en) : '';
+          return sn === 'elemental focus' || sn === 'awakened elemental focus';
+        });
+        if (!groupHasEleFocus) {
+          hasCombustionGroup = true;
+        }
+      }
+      if (groupHasMaim && groupActiveDefs.length > 0) {
+        if (groupIdx === mainGroupIndex) {
+          mainGroupHasMaim = true;
+        } else {
+          secondaryGroupMaimBonus = Math.max(secondaryGroupMaimBonus, 10);
+        }
+      }
+      if (
+        groupHasFeedingFrenzy &&
+        groupActiveDefs.some((d) => d.tags.some((t) => /^(minion|golem)$/i.test(t)))
+      ) {
+        hasFeedingFrenzyMinionGroup = true;
+      }
+      if (groupHasBonechill) {
+        const groupHasEleFocusForChill = group.gems.some((g) => {
+          if (!g.enabled) return false;
+          const sd = lookupGem('poe1', g.gemId);
+          const sn = sd ? stripSupportSuffix(sd.name.en) : '';
+          return sn === 'elemental focus' || sn === 'awakened elemental focus';
+        });
+        // PoB1 CalcPerform.lua:1433: Bonechill applies to ANY enabled attack/spell/chilling skill unless CannotChill
+        const nonSkitterActive = groupActiveDefs.find(
+          (d) => d.name.en.trim().toLowerCase() !== 'summon skitterbots',
+        );
+        if (nonSkitterActive && !groupHasEleFocusForChill) {
+          nonSkitterBonechillFound = true;
+          nonSkitterBonechillLevel = Math.max(nonSkitterBonechillLevel, groupBonechillColdTakenInc);
+          nonSkitterBonechillAilmentInc = Math.max(
+            nonSkitterBonechillAilmentInc,
+            groupSkitterbotAilmentEffectInc,
+          );
+          const hasAreaChill = groupActiveDefs.some((d) => {
+            const n = d.name.en.trim().toLowerCase();
+            return (
+              n.includes('cold snap') ||
+              n.includes('vortex') ||
+              n.includes('creeping frost') ||
+              n.includes('frostblink') ||
+              n.includes('arctic armour') ||
+              n.includes('wintertide')
+            );
+          });
+          if (hasAreaChill) {
+            nonSkitterBonechillHasChillingArea = true;
+          }
+        }
+      }
+    }
+
     // Evaluate active auras / buffs / curses in this skill group
     for (const gemInst of group.gems) {
       if (!gemInst.enabled) continue;
@@ -2372,11 +2767,58 @@ export function evaluateAurasAndWatchersEye(
       for (const { def, fromVaalGem } of subGems) {
         const tags = new Set(def.tags.map((t) => t.toLowerCase()));
         const lowerGemName = def.name.en.trim().toLowerCase();
+
+        // PoE 1 Exposure utility skills & Pacts (even when not isGlobalBuff)
+        if (build.game === 'poe1' && def.category === 'active') {
+          const gemBonUtil = resolveGemBonuses(def, playerDb, groupSocketedRules);
+          const utilLevel = Math.min(40, Math.max(1, gemInst.level + gemBonUtil.levelBonus + groupEmpowerBonus));
+          const utilQual = Math.max(0, (gemInst.quality ?? 0) + gemBonUtil.qualityBonus + groupEnhanceQualityBonus);
+          if (lowerGemName === 'wave of conviction') {
+            const rawWoc = build.config.rawInputs?.waveOfConvictionExposureType;
+            const wocEl: 'Fire' | 'Cold' | 'Lightning' =
+              rawWoc === 'Cold' || rawWoc === 2
+                ? 'Cold'
+                : rawWoc === 'Lightning' || rawWoc === 3
+                  ? 'Lightning'
+                  : 'Fire';
+            skillExposureBase[wocEl] = Math.max(skillExposureBase[wocEl], 15);
+          } else if (lowerGemName === 'frost bomb') {
+            skillExposureBase.Cold = Math.max(skillExposureBase.Cold, 15);
+          } else if (lowerGemName === 'scorching ray') {
+            skillExposureBase.Fire = Math.max(
+              skillExposureBase.Fire,
+              25 + Math.floor(utilQual * 0.25 + 1e-9),
+            );
+          } else if (lowerGemName === 'hydrosphere') {
+            skillExposureBase.Cold = Math.max(skillExposureBase.Cold, 10);
+            skillExposureBase.Lightning = Math.max(skillExposureBase.Lightning, 10);
+          } else if (lowerGemName === 'pact of beidat') {
+            activePacts.push({ key: 'Beidat', name: def.name.en, effLevel: utilLevel, effQuality: utilQual, groupCdrInc });
+          } else if (lowerGemName === 'pact of ghorr') {
+            activePacts.push({ key: 'Ghorr', name: def.name.en, effLevel: utilLevel, effQuality: utilQual, groupCdrInc });
+          } else if (lowerGemName === "pact of k'tash" || lowerGemName === 'pact of ktash') {
+            activePacts.push({ key: 'Ktash', name: def.name.en, effLevel: utilLevel, effQuality: utilQual, groupCdrInc });
+          } else if (lowerGemName === 'pact of lycia') {
+            activePacts.push({ key: 'Lycia', name: def.name.en, effLevel: utilLevel, effQuality: utilQual, groupCdrInc });
+          }
+          if (tags.has('stance')) {
+            hasAnyStanceSkill = true;
+          }
+        }
+
         const canonicalAuraName =
           WATCHERS_EYE_AURA_BY_LOWER.get(lowerGemName) ?? null;
         const isMark = tags.has('mark');
         const isCurseOrMark = tags.has('curse') || isMark;
         const isHerald = tags.has('herald');
+        const isGolemBuff =
+          build.game === 'poe1' && tags.has('golem') && def.category === 'active';
+        const isStanceBuff =
+          build.game === 'poe1' && tags.has('stance') && !tags.has('aura');
+        const isSpectralTigerBuff =
+          build.game === 'poe1' && lowerGemName === 'summon spectral tiger';
+        const isApproachingFlamesBuff =
+          build.game === 'poe1' && lowerGemName === 'approaching flames';
         const isRighteousFireBuff =
           build.game === 'poe1' &&
           (lowerGemName === 'righteous fire' || lowerGemName === 'righteous fire of arcane devotion');
@@ -2449,6 +2891,10 @@ export function evaluateAurasAndWatchersEye(
         const isAura =
           !isCurseOrMark &&
           !isHerald &&
+          !isGolemBuff &&
+          !isStanceBuff &&
+          !isSpectralTigerBuff &&
+          !isApproachingFlamesBuff &&
           !isRighteousFireBuff &&
           !isBloodRageBuff &&
           !isFlameWallBuff &&
@@ -2460,6 +2906,10 @@ export function evaluateAurasAndWatchersEye(
         const isGlobalBuff =
           Boolean(def.isAuraOrBuff) ||
           isHerald ||
+          isGolemBuff ||
+          isStanceBuff ||
+          isSpectralTigerBuff ||
+          isApproachingFlamesBuff ||
           isRighteousFireBuff ||
           isBloodRageBuff ||
           isFlameWallBuff ||
@@ -2495,6 +2945,10 @@ export function evaluateAurasAndWatchersEye(
           isCurseOrMark,
           isMark,
           isHerald,
+          isGolemBuff,
+          isStanceBuff,
+          isSpectralTigerBuff,
+          isApproachingFlamesBuff,
           isEnemyOnlyAura,
           groupCurseEffectInc,
           groupHasBonechill,
@@ -2527,6 +2981,116 @@ export function evaluateAurasAndWatchersEye(
     }
   }
 
+  // Default stance when a stance skill is enabled and neither stance is explicitly set
+  if (
+    build.game === 'poe1' &&
+    hasAnyStanceSkill &&
+    !playerDb.getEvalContext().conditions.BloodStance &&
+    !playerDb.getEvalContext().conditions.SandStance
+  ) {
+    playerDb.setCondition('BloodStance', true);
+    enemyDb.setCondition('BloodStance', true);
+  }
+
+  // Pre-Pass-1: populate Herald count (for Herald of the Hive & Purposeful Harbinger),
+  // GolemBuffEffect (with PoE 3.28+ Liege of the Primordial stale-source guard),
+  // Aspect of the Cat, Summon Spectral Tiger, Approaching Flames, and RF Arcane Devotion thresholds.
+  const allCandidates = [...deduped.values()];
+  const activeHeraldCountPre = allCandidates.filter((c) => c.isHerald).length;
+  if (activeHeraldCountPre > 0) {
+    playerDb.setMultiplier('Herald', activeHeraldCountPre);
+    const phPerHerald = playerDb.sum('BASE', 'PurposefulHarbingerPerHerald');
+    if (phPerHerald > 0) {
+      selfOnlyAuraEffectPct += Math.min(40, phPerHerald * activeHeraldCountPre);
+    }
+  }
+
+  const maxMana = ctx.maxMana ?? Math.round(playerDb.calcStat('Mana').total);
+  const maxLife = ctx.maxLife ?? Math.round(playerDb.calcStat('Life').total);
+
+  if (!playerDb.flag('ChaosInoculation') && (playerDb.getEvalContext().stats.LifeUnreserved ?? 0) <= 0) {
+    playerDb.setStat('LifeUnreserved', Math.max(2, maxLife));
+  }
+  if ((playerDb.getEvalContext().stats.ManaUnreserved ?? 0) <= 0 && maxMana > 0) {
+    playerDb.setStat('ManaUnreserved', maxMana);
+  }
+  if (build.game === 'poe1') {
+    const lifeUnres = playerDb.getEvalContext().stats.LifeUnreserved ?? (playerDb.flag('ChaosInoculation') ? 1 : maxLife);
+    playerDb.setCondition('StatThreshold:LifeUnreserved:2', !playerDb.flag('ChaosInoculation') && lifeUnres >= 2);
+    playerDb.setCondition('StatThreshold:Mana:1', maxMana >= 1);
+  }
+
+  // Compute PoE 1 GolemBuffEffect filtering legacy ascendancyMods.ts Liege of the Primordial values on 3.28+
+  const treeVerMatch = (build.tree?.treeVersion ?? '').match(/^(\d+)_(\d+)/);
+  const treeMajor = treeVerMatch ? Number(treeVerMatch[1]) : 3;
+  const treeMinor = treeVerMatch ? Number(treeVerMatch[2]) : 28;
+  let poe1GolemBuffEffectPct = 0;
+  let seenLiegeLegacy = false;
+  for (const s of playerDb.calcStat('GolemBuffEffect').sources) {
+    if (s.type !== 'INC' || typeof s.value !== 'number') continue;
+    if (s.source === 'Ascendancy: Liege of the Primordial') {
+      if (!seenLiegeLegacy) {
+        seenLiegeLegacy = true;
+        if (treeMajor === 3 && treeMinor === 27) poe1GolemBuffEffectPct += 50;
+        else if (treeMajor < 3 || (treeMajor === 3 && treeMinor <= 26)) poe1GolemBuffEffectPct += 100;
+      }
+      continue;
+    }
+    poe1GolemBuffEffectPct += s.value;
+  }
+
+  // Aspect of the Cat & Replica Farrul's Fur Onslaught
+  if (
+    build.game === 'poe1' &&
+    allCandidates.some((c) => c.def.name.en.trim().toLowerCase() === 'aspect of the cat')
+  ) {
+    const raw = build.config.rawInputs;
+    const stealth = Boolean(raw?.aspectOfTheCatCatsStealth);
+    const agility =
+      raw?.aspectOfTheCatCatsAgility !== undefined ? Boolean(raw.aspectOfTheCatCatsAgility) : !stealth;
+    playerDb.setCondition('CatsAgilityActive', agility);
+    playerDb.setCondition('CatsStealthActive', stealth);
+    if (
+      agility &&
+      hasReplicaFarrulOnslaught &&
+      !hasStatSource(playerDb, 'MovementSpeed', 'INC', 'Onslaught')
+    ) {
+      const onslaughtEffMult = Math.max(0, 1 + playerDb.sum('INC', 'OnslaughtEffect') / 100);
+      const onslaughtVal = Math.floor(20 * onslaughtEffMult + 1e-9);
+      if (onslaughtVal > 0) {
+        playerDb.addMod(mkMod('Speed', 'INC', onslaughtVal, "Replica Farrul's Fur (Onslaught)", ModFlag.Attack));
+        playerDb.addMod(mkMod('Speed', 'INC', onslaughtVal, "Replica Farrul's Fur (Onslaught)", ModFlag.Spell));
+        playerDb.addMod(mkMod('MovementSpeed', 'INC', onslaughtVal, "Replica Farrul's Fur (Onslaught)"));
+        playerDb.setCondition('Onslaught', true);
+      }
+    }
+  }
+
+  // Summon Spectral Tiger stack count
+  if (build.game === 'poe1' && allCandidates.some((c) => c.isSpectralTigerBuff)) {
+    const tigerCount =
+      typeof build.config.rawInputs?.multiplierSpectralTigerCount === 'number'
+        ? build.config.rawInputs.multiplierSpectralTigerCount
+        : 5;
+    playerDb.setMultiplier('SpectralTigerCount', Math.max(0, tigerCount));
+  }
+
+  // Approaching Flames (Annihilation's Approach boots) -> Adrenaline
+  if (
+    build.game === 'poe1' &&
+    allCandidates.some((c) => c.isApproachingFlamesBuff) &&
+    hasAnnihilationsApproachAdrenaline &&
+    !hasStatSource(playerDb, 'Damage', 'INC', 'Adrenaline')
+  ) {
+    const src = "Annihilation's Approach (Adrenaline)";
+    playerDb.addMod(mkMod('Damage', 'INC', 100, src));
+    playerDb.addMod(mkMod('Speed', 'INC', 25, src, ModFlag.Attack));
+    playerDb.addMod(mkMod('Speed', 'INC', 25, src, ModFlag.Spell));
+    playerDb.addMod(mkMod('MovementSpeed', 'INC', 25, src));
+    playerDb.addMod(mkMod('PhysDamageReduction', 'BASE', 10, src));
+    playerDb.setCondition('Adrenaline', true);
+  }
+
   const activeAurasAffectingPlayer = new Set<string>();
   const activeAurasAffectingMinions = new Set<string>();
   const activeAurasAll = new Set<string>();
@@ -2539,26 +3103,9 @@ export function evaluateAurasAndWatchersEye(
   let totalLifeReservedFlat = 0;
   let totalSpiritReserved = 0;
 
-  const maxMana = ctx.maxMana ?? Math.round(playerDb.calcStat('Mana').total);
-  const maxLife = ctx.maxLife ?? Math.round(playerDb.calcStat('Life').total);
-
-  const curseLimit = playerDb.flag('CurseLimitIsMaximumPowerCharges')
-    ? Math.max(
-        1,
-        3 + Math.round(playerDb.sum('BASE', ['MaxPowerCharges', 'PowerChargesMax'])),
-      )
-    : Math.max(
-        1,
-        1 + Math.round(playerDb.sum('BASE', ['AdditionalCurse', 'CurseLimit'])),
-      );
   let appliedHexCount = 0;
   let appliedMarkCount = 0;
-  if (!playerDb.flag('ChaosInoculation') && (playerDb.getEvalContext().stats.LifeUnreserved ?? 0) <= 0) {
-    playerDb.setStat('LifeUnreserved', Math.max(2, maxLife));
-  }
-  if ((playerDb.getEvalContext().stats.ManaUnreserved ?? 0) <= 0 && maxMana > 0) {
-    playerDb.setStat('ManaUnreserved', maxMana);
-  }
+  const appliedCurseNamesLower = new Set<string>();
 
   const hexPriority = (cand: CandidateAura): number => {
     if (!cand.isCurseOrMark || cand.isMark) return 0;
@@ -2576,12 +3123,45 @@ export function evaluateAurasAndWatchersEye(
     }
     return 2;
   };
-  const orderedCandidates = [...deduped.values()].sort((a, b) => hexPriority(a) - hexPriority(b));
+  const nonCurseCandidates = allCandidates.filter((c) => !c.isCurseOrMark);
+  const curseCandidates = allCandidates
+    .filter((c) => c.isCurseOrMark)
+    .sort((a, b) => hexPriority(a) - hexPriority(b));
 
-  for (const cand of orderedCandidates) {
-    const { def, gemInst, effLevel, effQuality, isAura, isCurseOrMark, isMark, isHerald, isEnemyOnlyAura } = cand;
+  let curseLimit = 1;
+
+  const evaluateCandidate = (cand: CandidateAura) => {
+    const {
+      def,
+      gemInst,
+      effLevel,
+      effQuality,
+      isAura,
+      isCurseOrMark,
+      isMark,
+      isHerald,
+      isGolemBuff,
+      isEnemyOnlyAura,
+    } = cand;
+    const lowerAuraName = def.name.en.trim().toLowerCase();
+
+    // Sublime Vision: Aura Skills other than <X> are Disabled (applies strictly to gems with the `aura` tag,
+    // never disabling Arctic Armour / Tempest Shield / Petrified Blood / Heralds / Aspects / Stances,
+    // and permitting Vaal <X> alongside base <X>).
+    const gemHasAuraTag = def.tags.some((t) => t.toLowerCase() === 'aura');
+    if (
+      sublimeOnlyAuraLower &&
+      gemHasAuraTag &&
+      !isCurseOrMark &&
+      !isHerald &&
+      lowerAuraName !== sublimeOnlyAuraLower &&
+      lowerAuraName !== `vaal ${sublimeOnlyAuraLower}`
+    ) {
+      return;
+    }
+
     if (isCurseOrMark) {
-      const lowerCurseMark = def.name.en.trim().toLowerCase();
+      const lowerCurseMark = lowerAuraName;
       // PoE 2 Freezing Mark / Voltaic Mark grant a 10s player buff on activation; Pounce (Predator's Mark) stacks with utility marks
       const isPoe2SecondaryMarkBuff =
         build.game === 'poe2' &&
@@ -2589,12 +3169,13 @@ export function evaluateAurasAndWatchersEye(
           lowerCurseMark === 'voltaic mark' ||
           lowerCurseMark === 'pounce');
       if (isMark) {
-        if (appliedMarkCount >= 1 && !isPoe2SecondaryMarkBuff) continue;
+        if (appliedMarkCount >= 1 && !isPoe2SecondaryMarkBuff) return;
         if (!isPoe2SecondaryMarkBuff) appliedMarkCount++;
       } else {
-        if (appliedHexCount >= curseLimit) continue;
+        if (appliedHexCount >= curseLimit) return;
         appliedHexCount++;
       }
+      appliedCurseNamesLower.add(lowerCurseMark);
       if (build.game === 'poe2' && lowerCurseMark === 'pounce') {
         const capVal = 45 + Math.floor(Math.max(0, effQuality) * 0.75);
         const perVal = 3 + Math.max(0, effQuality) * 0.05;
@@ -2628,7 +3209,7 @@ export function evaluateAurasAndWatchersEye(
         }
         enemyDb.setCondition('Marked', true);
         playerDb.setCondition('EnemyMarked', true);
-        continue;
+        return;
       }
       enemyDb.setCondition('Cursed', true);
       playerDb.setCondition('EnemyCursed', true);
@@ -2640,12 +3221,17 @@ export function evaluateAurasAndWatchersEye(
     const rawStats = resolveAuraLevelStats(def, effLevel);
     const baseCompiledMods = resolveAuraLevelCompiledMods(def, effLevel);
     let qualCurseEffInc = 0;
+    let qualGolemBuffEffInc = 0;
     const scaledQualityMods =
       effQuality > 0 && def.qualityCompiledMods
         ? def.qualityCompiledMods
             .map((qm) => {
               if (qm.name === 'CurseEffect' && qm.type === 'INC' && typeof qm.value === 'number') {
                 qualCurseEffInc += Math.trunc(qm.value * effQuality + Math.sign(qm.value) * 1e-9);
+                return null;
+              }
+              if (isGolemBuff && qm.name === 'BuffEffect' && qm.type === 'INC' && typeof qm.value === 'number') {
+                qualGolemBuffEffInc += Math.trunc(qm.value * effQuality + Math.sign(qm.value) * 1e-9);
                 return null;
               }
               if (typeof qm.value === 'number') {
@@ -2663,7 +3249,7 @@ export function evaluateAurasAndWatchersEye(
           ? scaledQualityMods
           : undefined;
     const compiledMods =
-      rawCombinedMods && def.name.en.trim().toLowerCase() === 'sigil of power'
+      rawCombinedMods && lowerAuraName === 'sigil of power'
         ? rawCombinedMods.filter((m, idx, arr) => {
             const sig = `${m.name}|${m.type}|${m.value}|${m.flags ?? 0}|${m.keywordFlags ?? 0}|${m.target ?? ''}|${JSON.stringify(m.tags ?? [])}`;
             return (
@@ -2679,8 +3265,6 @@ export function evaluateAurasAndWatchersEye(
     const parsedBaseMods =
       compiledMods && compiledMods.length > 0 ? [] : parseModLines(rawStats, sourceLabel);
 
-    // Summon Skitterbots (PoB1 CalcPerform.lua:1436-1460): guaranteed Shock & Chill aura on enemies
-    const lowerAuraName = def.name.en.trim().toLowerCase();
     // PoE 1 Flame Surge: creates Burning Ground dealing 25% of Ignite DPS (unscalable global buff)
     if (build.game === 'poe1' && lowerAuraName === 'flame surge') {
       enemyDb.addMod({
@@ -2756,7 +3340,10 @@ export function evaluateAurasAndWatchersEye(
       const totalSkitterAilInc =
         playerDb.sum('INC', 'SkitterbotAilmentEffect') + cand.groupSkitterbotAilmentEffectInc;
       const shockEff = Math.floor(15 * Math.max(0, 1 + (skitterShockInc + totalSkitterAilInc) / 100));
-      const chillEff = Math.floor(10 * Math.max(0, 1 + (skitterChillInc + totalSkitterAilInc) / 100));
+      const bonechillChillEffInc = cand.groupHasBonechill ? cand.groupBonechillColdTakenInc : 0;
+      const chillEff = Math.floor(
+        10 * Math.max(0, 1 + (skitterChillInc + totalSkitterAilInc + bonechillChillEffInc) / 100),
+      );
       if (shockEff > 0) {
         playerDb.addMod({
           name: 'ShockOverride',
@@ -2773,10 +3360,16 @@ export function evaluateAurasAndWatchersEye(
         playerDb.setCondition('EnemyChilled', true);
         enemyDb.setCondition('Chilled', true);
         if (cand.groupHasBonechill) {
+          skitterbotAppliedBonechill = true;
+          const rawChillCfg = build.config.rawInputs?.conditionEnemyChilledEffect;
+          const effectiveBonechill =
+            typeof rawChillCfg === 'number' && rawChillCfg > 0
+              ? Math.max(chillEff, Math.min(40, Math.floor(rawChillCfg)))
+              : Math.min(30, chillEff);
           enemyDb.addMod({
             name: 'ColdDamageTaken',
             type: 'INC',
-            value: chillEff + cand.groupBonechillColdTakenInc,
+            value: effectiveBonechill,
             flags: 0,
             keywordFlags: 0,
             source: 'Summon Skitterbots (Bonechill)',
@@ -2797,14 +3390,33 @@ export function evaluateAurasAndWatchersEye(
       : true;
     const appliesToMinions = isAura && !isEnemyOnlyAura && !supremeEgo;
 
+    const isBannerAura =
+      build.game === 'poe1' &&
+      (lowerAuraName === 'war banner' ||
+        lowerAuraName === 'dread banner' ||
+        lowerAuraName === 'defiance banner');
+    const bannerAuraEffInc = isBannerAura ? playerDb.sum('INC', 'BannerAuraEffect') : 0;
+
+    const skillSpecificEffectPct = perSkillEffectPct.get(lowerAuraName) ?? 0;
+    const skillSpecificResEffPct =
+      (perSkillResEffPct.get(lowerAuraName) ?? 0) +
+      playerDb.sum('INC', `SkillManaReservationEfficiency:${lowerAuraName}`);
+
     const auraEffectPctForPlayer = isAura
-      ? baseAuraEffectPct + selfOnlyAuraEffectPct + cand.arroganceEffectPct + cand.blessingEffectPct
+      ? baseAuraEffectPct +
+        selfOnlyAuraEffectPct +
+        cand.arroganceEffectPct +
+        cand.blessingEffectPct +
+        bannerAuraEffInc +
+        skillSpecificEffectPct
       : 0;
     const auraEffectPctForMinions = isAura
       ? baseAuraEffectPct +
         cand.generosityEffectPct +
         cand.arroganceEffectPct +
-        cand.blessingEffectPct
+        cand.blessingEffectPct +
+        bannerAuraEffInc +
+        skillSpecificEffectPct
       : 0;
 
     // Reservation calculation (Generosity & The Hand of Phrecia STILL reserve Mana/Life!)
@@ -2828,7 +3440,7 @@ export function evaluateAurasAndWatchersEye(
           basePct,
           baseFlat,
           multiplier: 0,
-          localEfficiencyPct: cand.localResEffPct,
+          localEfficiencyPct: cand.localResEffPct + skillSpecificResEffPct,
           effectivePct: 0,
           effectiveFlat: 0,
           zeroedByBlessing: true,
@@ -2844,7 +3456,9 @@ export function evaluateAurasAndWatchersEye(
           (supremeEgo && isAura ? 1.4 : 1);
 
         const totalEff =
-          (reservesLife ? globalLifeResEff : globalManaResEff) + cand.localResEffPct;
+          (reservesLife ? globalLifeResEff : globalManaResEff) +
+          cand.localResEffPct +
+          skillSpecificResEffPct;
         const { effectivePct, effectiveFlat } = computeReservationAmounts(
           basePct,
           baseFlat,
@@ -2863,7 +3477,7 @@ export function evaluateAurasAndWatchersEye(
           basePct,
           baseFlat,
           multiplier: Math.round(reservationMult * 1000) / 1000,
-          localEfficiencyPct: cand.localResEffPct,
+          localEfficiencyPct: cand.localResEffPct + skillSpecificResEffPct,
           effectivePct,
           effectiveFlat,
           zeroedByBlessing: false,
@@ -2902,9 +3516,22 @@ export function evaluateAurasAndWatchersEye(
             : 1;
         const totalCurseInc =
           (isMark ? baseMarkEffectPct : baseCurseEffectPct) + cand.groupCurseEffectInc + qualCurseEffInc;
+        const spiderWebStacks =
+          build.game === 'poe1' && lowerAuraName === 'aspect of the spider'
+            ? Math.max(
+                1,
+                Number(
+                  build.config.rawInputs?.aspectOfTheSpiderWebStacks ??
+                    enemyDb.getEvalContext().multipliers.SpiderWeb ??
+                    1,
+                ),
+              )
+            : 1;
         const enemyMult = isCurseOrMark
           ? Math.max(0, 1 + totalCurseInc / 100) * poe2BossHexMult
-          : (1 + auraEffectPctForPlayer / 100) * supremeEgoMoreMult;
+          : lowerAuraName === 'aspect of the spider'
+            ? spiderWebStacks
+            : (1 + auraEffectPctForPlayer / 100) * supremeEgoMoreMult;
         injectCompiledGemMods(playerDb, enemyDb, minionDb, enemyCmods, sourceLabel, {
           game: build.game,
           effectMultiplier: enemyMult,
@@ -2938,29 +3565,68 @@ export function evaluateAurasAndWatchersEye(
         const totalCurseInc =
           (isMark ? baseMarkEffectPct : baseCurseEffectPct) + cand.groupCurseEffectInc + qualCurseEffInc;
         const heraldEffectMult = isHerald
-          ? Math.max(0, 1 + playerDb.sum('INC', ['HeraldBuffEffect', 'BuffEffectOnSelf']) / 100)
+          ? Math.max(
+              0,
+              1 +
+                (playerDb.sum('INC', ['HeraldBuffEffect', 'BuffEffectOnSelf']) +
+                  skillSpecificEffectPct) /
+                  100,
+            )
           : 1;
-        const isBannerAura =
-          build.game === 'poe1' &&
-          (lowerAuraName === 'war banner' ||
-            lowerAuraName === 'dread banner' ||
-            lowerAuraName === 'defiance banner');
-        const bannerValourMult = isBannerAura
-          ? playerDb.getEvalContext().conditions.BannerPlanted
-            ? 1 + 0.1 * Math.max(0, playerDb.getEvalContext().multipliers.BannerValour ?? 0)
-            : 0
+        const golemEffectMult = isGolemBuff
+          ? Math.max(
+              0,
+              1 +
+                (poe1GolemBuffEffectPct +
+                  qualGolemBuffEffInc +
+                  playerDb.sum('INC', 'BuffEffectOnSelf') +
+                  skillSpecificEffectPct) /
+                  100,
+            )
           : 1;
+        let bannerValourMult = 1;
+        if (isBannerAura) {
+          const isPlanted = Boolean(
+            playerDb.getEvalContext().conditions.BannerPlanted ||
+              build.config.rawInputs?.bannerPlanted,
+          );
+          if (isPlanted) {
+            const maxValour = 50 + playerDb.sum('BASE', ['MaximumValour', 'MaxValour']);
+            const rawCfgValour = build.config.rawInputs?.bannerValour;
+            const rawValour =
+              typeof rawCfgValour === 'number'
+                ? rawCfgValour
+                : Math.max(maxValour, playerDb.getEvalContext().multipliers.BannerValour ?? 0);
+            const effValour = Math.max(0, Math.min(maxValour, rawValour));
+            playerDb.setCondition('BannerPlanted', true);
+            playerDb.setMultiplier('BannerValour', effValour);
+            playerDb.setMultiplier('ValourStacks', effValour);
+            const valourMorePerStack =
+              (baseCompiledMods?.find(
+                (m) =>
+                  m.name === 'AuraEffect' &&
+                  m.type === 'MORE' &&
+                  typeof m.value === 'number' &&
+                  m.tags?.some((t) => t.type === 'Multiplier' && t.var === 'BannerValour'),
+              )?.value as number | undefined) ?? 10;
+            bannerValourMult = 1 + (valourMorePerStack / 100) * effValour;
+          } else {
+            bannerValourMult = 0;
+          }
+        }
         const playerMult = isAura
           ? (1 + auraEffectPctForPlayer / 100) * supremeEgoMoreMult * bannerValourMult
           : isHerald
             ? heraldEffectMult
-            : isCurseOrMark
-              ? Math.max(0, 1 + totalCurseInc / 100) * poe2BossHexMult
-              : 1;
+            : isGolemBuff
+              ? golemEffectMult
+              : isCurseOrMark
+                ? Math.max(0, 1 + totalCurseInc / 100) * poe2BossHexMult
+                : 1;
         const shouldScaleMore =
           (isAura || isHerald) &&
-          def.name.en.trim().toLowerCase() !== 'righteous fire' &&
-          def.name.en.trim().toLowerCase() !== 'righteous fire of arcane devotion';
+          lowerAuraName !== 'righteous fire' &&
+          lowerAuraName !== 'righteous fire of arcane devotion';
         if (playerMult > 0) {
           injectCompiledGemMods(tmpPlayer, tmpEnemy, tmpMinion, allyCmods, sourceLabel, {
             game: build.game,
@@ -2970,6 +3636,13 @@ export function evaluateAurasAndWatchersEye(
         }
         playerMods = collectModsFromDb(tmpPlayer);
         playerDb.addMods(playerMods);
+        // Propagate Condition:* flags set by allyCmods (e.g. HaveFireGolem / HaveLightningGolem) onto playerDb
+        const tmpConds = tmpPlayer.getEvalContext().conditions;
+        for (const [ck, cv] of Object.entries(tmpConds)) {
+          if (cv && !playerDb.getEvalContext().conditions[ck]) {
+            playerDb.setCondition(ck, true);
+          }
+        }
         enemyDb.addMods(collectModsFromDb(tmpEnemy));
         minionDb.addMods(collectModsFromDb(tmpMinion));
       }
@@ -3087,31 +3760,19 @@ export function evaluateAurasAndWatchersEye(
       blessingEffectPct: cand.blessingEffectPct,
       reservesPool,
       reservationMult: Math.round(reservationMult * 1000) / 1000,
-      localReservationEfficiencyPct: cand.localResEffPct,
+      localReservationEfficiencyPct: cand.localResEffPct + skillSpecificResEffPct,
       zeroedByBlessing,
       playerMods,
       minionMods,
     });
+  };
+
+  // PASS 1: Non-curse Auras, Heralds, Golems, Stances, Aspects, and Global Buffs
+  for (const cand of nonCurseCandidates) {
+    evaluateCandidate(cand);
   }
 
-  if (appliedHexCount + appliedMarkCount > 0) {
-    playerDb.setMultiplier('CurseOnEnemy', appliedHexCount + appliedMarkCount);
-    enemyDb.setMultiplier('CurseOnSelf', appliedHexCount + appliedMarkCount);
-  }
-
-  // Evaluate Watcher's Eye jewels (from explicit socketedJewels override or build.tree.socketedJewels)
-  const jewelsToScan: Item[] = [];
-  if (ctx.socketedJewels) {
-    for (const entry of ctx.socketedJewels) {
-      jewelsToScan.push('jewel' in entry ? entry.jewel : entry);
-    }
-  } else if (build.tree.socketedJewels) {
-    for (const itemId of Object.values(build.tree.socketedJewels)) {
-      const jewel = build.items[itemId];
-      if (jewel) jewelsToScan.push(jewel);
-    }
-  }
-
+  // PASS 2: Watcher's Eye & Sublime Vision conditional jewel lines BEFORE CurseLimit resolution
   const watchersEyeLines: WatchersEyeEvaluatedLine[] = [];
   const watchersEyeMods: Mod[] = [];
 
@@ -3159,6 +3820,265 @@ export function evaluateAurasAndWatchersEye(
         active,
         mods,
       });
+    }
+  }
+
+  // PASS 3: Resolve CurseLimit (including EnemyCurseLimit from Whispers of Doom / Sublime Vision / gear) and evaluate Curses/Marks
+  curseLimit = playerDb.flag('CurseLimitIsMaximumPowerCharges')
+    ? Math.max(
+        1,
+        3 + Math.round(playerDb.sum('BASE', ['MaxPowerCharges', 'PowerChargesMax'])),
+      )
+    : Math.max(
+        1,
+        1 + Math.round(playerDb.sum('BASE', ['AdditionalCurse', 'CurseLimit', 'EnemyCurseLimit'])),
+      );
+
+  for (const cand of curseCandidates) {
+    evaluateCandidate(cand);
+  }
+
+  // Item Curse-on-Hit modifiers (e.g. Foulborn Uul-Netol's Kiss Vulnerability, Asenath's Gentle Touch Temporal Chains)
+  if (build.game === 'poe1' && curseOnHitEntries.length > 0) {
+    for (const entry of curseOnHitEntries) {
+      const lowerCurse = entry.curseName.trim().toLowerCase();
+      if (appliedCurseNamesLower.has(lowerCurse)) continue;
+      const cDef = resolveGemFromPobRef('poe1', { nameSpec: entry.curseName });
+      if (!cDef) continue;
+      const isMark = cDef.tags.some((t) => t.toLowerCase() === 'mark');
+      if (isMark) {
+        if (appliedMarkCount >= 1) continue;
+        appliedMarkCount++;
+      } else {
+        if (appliedHexCount >= curseLimit) continue;
+        appliedHexCount++;
+      }
+      appliedCurseNamesLower.add(lowerCurse);
+      enemyDb.setCondition('Cursed', true);
+      playerDb.setCondition('EnemyCursed', true);
+      if (isMark) {
+        enemyDb.setCondition('Marked', true);
+        playerDb.setCondition('EnemyMarked', true);
+      }
+      const cmods = resolveAuraLevelCompiledMods(cDef, 1);
+      if (cmods && cmods.length > 0) {
+        const enemyCmods = cmods.filter((m) => m.target === 'enemy');
+        const totalEff = (isMark ? baseMarkEffectPct : baseCurseEffectPct) + entry.effectPct;
+        const mult = Math.max(0, 1 + totalEff / 100);
+        if (enemyCmods.length > 0) {
+          injectCompiledGemMods(playerDb, enemyDb, minionDb, enemyCmods, `${entry.source} (${cDef.name.en} on Hit)`, {
+            game: 'poe1',
+            effectMultiplier: mult,
+            scaleMore: false,
+          });
+        }
+      }
+    }
+  }
+
+  if (appliedHexCount + appliedMarkCount > 0) {
+    playerDb.setMultiplier('CurseOnEnemy', appliedHexCount + appliedMarkCount);
+    enemyDb.setMultiplier('CurseOnSelf', appliedHexCount + appliedMarkCount);
+  }
+
+  // POST-PASS PoE 1 Global Utility Skills, Exposure, Combustion, Bonechill, Maim, Feeding Frenzy, and Pacts
+  if (build.game === 'poe1') {
+    // 1. PoE 1 Exposure (strongest base per element across items, skills, and Heraldry; deduplicated with cfg.enemy*Exposure)
+    const extraExposure = playerDb.sum('BASE', 'ExtraExposure');
+    const exposureEffMult = Math.max(0, 1 + playerDb.sum('INC', 'ExposureEffect') / 100);
+    const heraldryMap: Record<'Fire' | 'Cold' | 'Lightning', string> = {
+      Fire: 'AffectedByHeraldOfAsh',
+      Cold: 'AffectedByHeraldOfIce',
+      Lightning: 'AffectedByHeraldOfThunder',
+    };
+    for (const el of ['Fire', 'Cold', 'Lightning'] as const) {
+      const heraldryBase =
+        playerDb.flag(`HeraldryExposure:${el}`) &&
+        (playerDb.getEvalContext().conditions[heraldryMap[el]] ||
+          playerDb.getEvalContext().conditions[heraldryMap[el].replace('Of', 'of')])
+          ? 10
+          : 0;
+      const masterBase = playerDb.flag(`MasterOfElementExposure:${el}`) ? 10 : 0;
+      const bestBase = Math.max(
+        itemExposureBase[el],
+        skillExposureBase[el],
+        heraldryBase,
+        masterBase,
+      );
+      if (bestBase <= 0) continue;
+      const cfgAlreadySet =
+        el === 'Fire'
+          ? Boolean(build.config.enemyFireExposure)
+          : el === 'Cold'
+            ? Boolean(build.config.enemyColdExposure)
+            : Boolean(build.config.enemyLightningExposure);
+      const fullPen = Math.floor((bestBase + extraExposure) * exposureEffMult + 1e-9);
+      const base10Pen = Math.floor((10 + extraExposure) * exposureEffMult + 1e-9);
+      const penToAdd = cfgAlreadySet ? Math.max(0, fullPen - base10Pen) : fullPen;
+      if (penToAdd > 0) {
+        enemyDb.addMod(
+          mkMod(`${el}Resist`, 'BASE', -penToAdd, `${el} Exposure (${bestBase}% base)`),
+        );
+      }
+      if (!cfgAlreadySet) {
+        playerDb.setCondition(`Enemy${el}Exposure`, true);
+        playerDb.setCondition('EnemyExposure', true);
+        enemyDb.setCondition(`${el}Exposure`, true);
+        enemyDb.setCondition('Exposure', true);
+      }
+    }
+
+    // 2. Combustion Support (-10% Enemy Fire Resistance strictly when enemy is Ignited, CalcPerform.lua:2863-2873)
+    const enemyIgnitedForCombustion = Boolean(
+      build.config.rawInputs?.conditionEnemyIgnited ||
+        (build.config as { enemyIgnited?: boolean }).enemyIgnited,
+    );
+    if (hasCombustionGroup && enemyIgnitedForCombustion) {
+      enemyDb.addMod(mkMod('FireResist', 'BASE', -10, 'Support: Combustion'));
+    }
+
+    // 3. Non-Skitterbots Bonechill Support (PoE 3.25+: Cold Damage Taken increased by Chill Effect,
+    // including Bonechill's own (24 + level)% increased Chill Effect from sup_int.lua:566)
+    if (nonSkitterBonechillFound && !skitterbotAppliedBonechill) {
+      const rawChillInput = build.config.rawInputs?.conditionEnemyChilledEffect;
+      const chillEffMult = Math.max(
+        0,
+        1 +
+          (playerDb.sum('INC', 'EnemyChillEffect') +
+            nonSkitterBonechillAilmentInc +
+            nonSkitterBonechillLevel) /
+            100,
+      );
+      const areaChillVal = Math.min(30, Math.floor(10 * chillEffMult + 1e-9));
+      const chillVal =
+        typeof rawChillInput === 'number' && rawChillInput > 0
+          ? Math.max(nonSkitterBonechillHasChillingArea ? areaChillVal : 0, Math.min(40, Math.floor(rawChillInput)))
+          : areaChillVal;
+      if (
+        chillVal > 0 &&
+        (nonSkitterBonechillHasChillingArea ||
+          (typeof rawChillInput === 'number' && rawChillInput > 0) ||
+          Boolean(build.config.rawInputs?.conditionEnemyChilled))
+      ) {
+        enemyDb.addMod(mkMod('ColdDamageTaken', 'INC', chillVal, 'Support: Bonechill'));
+        playerDb.setCondition('EnemyChilled', true);
+        enemyDb.setCondition('Chilled', true);
+      }
+    }
+
+    // 4. Secondary-skill Maim Support (+10% Enemy Physical Damage Taken when Maimed)
+    if (!mainGroupHasMaim && secondaryGroupMaimBonus > 0) {
+      enemyDb.addMod(mkMod('PhysicalDamageTaken', 'INC', secondaryGroupMaimBonus, 'Support: Maim'));
+      playerDb.setCondition('EnemyMaimed', true);
+      enemyDb.setCondition('Maimed', true);
+    }
+
+    // 5. Feeding Frenzy Support on minion groups (+10% more Minion Damage, +10% inc Minion Speed)
+    if (
+      hasFeedingFrenzyMinionGroup &&
+      !build.config.rawInputs?.buffFeedingFrenzy &&
+      !hasStatSource(minionDb, 'Damage', 'MORE', 'Feeding Frenzy')
+    ) {
+      minionDb.addMod(mkMod('Damage', 'MORE', 10, 'Buff: Feeding Frenzy'));
+      minionDb.addMod(mkMod('Speed', 'INC', 10, 'Buff: Feeding Frenzy', ModFlag.Attack));
+      minionDb.addMod(mkMod('Speed', 'INC', 10, 'Buff: Feeding Frenzy', ModFlag.Spell));
+    }
+
+    // 6. Pact of Beidat / Ghorr / K'Tash / Lycia (CalcOffence.lua:2922-2969 uptime-scaled MORE Damage)
+    if (activePacts.length > 0) {
+      const mainGrp = build.skills[mainGroupIndex];
+      const mainActiveInst = mainGrp?.gems.find((g) => {
+        if (!g.enabled) return false;
+        const d = lookupGem('poe1', g.gemId);
+        return Boolean(d && d.category === 'active');
+      });
+      const mainActiveDef = mainActiveInst ? lookupGem('poe1', mainActiveInst.gemId) : undefined;
+      if (mainActiveDef) {
+        const mTags = new Set(mainActiveDef.tags.map((t) => t.toLowerCase()));
+        const isMainSpell = mTags.has('spell') && !mTags.has('brand');
+        if (isMainSpell) {
+          const isMainVaal = mTags.has('vaal') || /^vaal\s+/i.test(mainActiveDef.name.en);
+          const isMainChannel = mTags.has('channelling') || mTags.has('channeling');
+          const isMainProjOrChainOrArea =
+            mTags.has('projectile') || mTags.has('chaining') || mTags.has('area');
+          const isMainDot =
+            mTags.has('damage_over_time') ||
+            mTags.has('dot') ||
+            Boolean(mainActiveDef.skillData?.baseDotDamage);
+
+          // Estimate main spell cast speed & repeats for PoB Pact uptime calculation
+          const baseCastTime = Math.max(0.1, mainActiveDef.castTime ?? 0.7);
+          const spellSpdInc = playerDb.sum('INC', 'Speed', ModFlag.Spell, KeywordFlag.Spell);
+          const spellSpdMore = playerDb.more('Speed', ModFlag.Spell, KeywordFlag.Spell);
+          const hasSpellEcho = Boolean(
+            mainGrp?.gems.some((g) => {
+              if (!g.enabled) return false;
+              const sd = lookupGem('poe1', g.gemId);
+              const sn = sd ? stripSupportSuffix(sd.name.en) : '';
+              return sn === 'spell echo' || sn === 'awakened spell echo';
+            }),
+          );
+          const echoSpeedMult = hasSpellEcho ? 1.54 : 1;
+          const repeats = hasSpellEcho ? 2 : 1;
+          const estMainSpeed =
+            (1 / baseCastTime) * Math.max(0.1, 1 + spellSpdInc / 100) * spellSpdMore * echoSpeedMult;
+          const empoweredUseRate = estMainSpeed / repeats;
+          const pactMaxHit = Boolean(build.config.rawInputs?.conditionPactMaxHit);
+
+          const appliedPactKeys = new Set<string>();
+          for (const pact of activePacts) {
+            if (appliedPactKeys.has(pact.key)) continue;
+            const applies =
+              (pact.key === 'Beidat' && !isMainVaal && !isMainChannel && isMainProjOrChainOrArea) ||
+              (pact.key === 'Ghorr' && !isMainVaal && isMainDot) ||
+              (pact.key === 'Ktash' && isMainVaal) ||
+              (pact.key === 'Lycia' && !isMainVaal && isMainChannel);
+            if (!applies) continue;
+            appliedPactKeys.add(pact.key);
+
+            const baseCd = pact.key === 'Ktash' ? 6 : 4;
+            const qualCdr = pact.key === 'Ktash' ? Math.floor(pact.effQuality * 0.5) : 0;
+            const totalCdr = Math.max(
+              -50,
+              playerDb.sum('INC', 'CooldownRecovery') + pact.groupCdrInc + qualCdr,
+            );
+            const cooldown = baseCd / Math.max(0.1, 1 + totalCdr / 100);
+            const pactCastRate =
+              (1 / 0.8) * Math.max(0.1, 1 + spellSpdInc / 100) * spellSpdMore;
+            const pactCastTime = 1 / Math.min(pactCastRate, 30.303);
+            const count =
+              pact.key === 'Beidat'
+                ? 6 + Math.floor(pact.effQuality * 0.1 + 1e-9)
+                : pact.key === 'Ktash'
+                  ? 1
+                  : 3;
+            const uptime =
+              empoweredUseRate <= 0
+                ? 1
+                : Math.min(1, count / empoweredUseRate / (cooldown + pactCastTime));
+            const effectMult = pactMaxHit ? 1 : uptime;
+            const rawMore =
+              pact.key === 'Beidat'
+                ? 15 + pact.effLevel
+                : pact.key === 'Ktash'
+                  ? 9 + pact.effLevel
+                  : 40;
+            const scaledMore = Math.round(rawMore * effectMult * 100) / 100;
+            if (scaledMore > 0) {
+              const modFlags = pact.key === 'Ghorr' ? ModFlag.Dot : 0;
+              const modKw = pact.key === 'Beidat' ? KeywordFlag.Hit | KeywordFlag.Ailment : 0;
+              const modTags =
+                pact.key === 'Ktash'
+                  ? [{ type: 'SkillType' as const, skillType: 'Vaal' }]
+                  : undefined;
+              playerDb.addMod({
+                ...mkMod('Damage', 'MORE', scaledMore, `Uptime Scaled ${pact.name}`, modFlags, modKw),
+                ...(modTags ? { tags: modTags } : {}),
+              });
+            }
+          }
+        }
+      }
     }
   }
 

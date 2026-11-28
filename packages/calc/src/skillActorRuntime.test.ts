@@ -1282,4 +1282,59 @@ describe('skillActorRuntime — 5. PoB 1 & PoB 2 Ailment, Skill DoT, Routing & M
     expect(eoRes.ignite.effectiveChancePct).toBeCloseTo(25, 2);
     expect(eoRes.ignite.singleStackDps).toBeCloseTo(900, 1); // No +50% crit DoT multi!
   });
+
+  it('expands Defences cmods (Stone Golem), preserves Multiplier-tagged fractional MORE (Herald of the Hive), and inherits elemental conversion chains on PoE 1 Ignite', () => {
+    // 1. Defences compiled mod expansion -> Armour, Evasion, EnergyShield, Ward
+    const buses = createActorModBuses();
+    injectCompiledGemMods(
+      buses.playerDb,
+      buses.enemyDb,
+      buses.minionDb,
+      [
+        { name: 'Defences', type: 'INC', value: 20, target: 'player' },
+        {
+          name: 'Damage',
+          type: 'MORE',
+          value: 3,
+          target: 'player',
+          tags: [{ type: 'Multiplier', var: 'Herald' }],
+        },
+      ],
+      'Stone Golem & Herald of the Hive',
+      { game: 'poe1', effectMultiplier: 1.5, scaleMore: true },
+    );
+    expect(buses.playerDb.sum('INC', 'Armour')).toBe(30);
+    expect(buses.playerDb.sum('INC', 'Evasion')).toBe(30);
+    expect(buses.playerDb.sum('INC', 'EnergyShield')).toBe(30);
+    expect(buses.playerDb.sum('INC', 'Ward')).toBe(30);
+
+    // Multiplier-tagged MORE preserves 2-decimal precision (3 * 1.5 = 4.5, NOT truncated to 4!)
+    buses.playerDb.setMultiplier('Herald', 4);
+    // 4.5 * 4 = 18% MORE Damage -> 1.18x
+    expect(buses.playerDb.more('Damage')).toBeCloseTo(1.18, 4);
+
+    // 2. PoE 1 Ignite elemental conversion-chain inheritance (Lightning -> Cold -> Fire)
+    const convDb = new ModDB();
+    convDb.addMod(mkMod('IgniteChance', 'BASE', 100));
+    convDb.addMod(mkMod('LightningDamageConvertToCold', 'BASE', 100));
+    convDb.addMod(mkMod('ColdDamageConvertToFire', 'BASE', 100));
+    convDb.addMod(mkMod('LightningDamage', 'INC', 100)); // inherited via Lightning -> Cold -> Fire
+    convDb.addMod(mkMod('ColdDamage', 'INC', 50)); // inherited via Cold -> Fire
+    convDb.addMod(mkMod('FireDamage', 'INC', 50)); // direct Fire
+    // PhysicalDamage INC must NOT bleed into an elemental-only Fire hit!
+    convDb.addMod(mkMod('PhysicalDamage', 'INC', 200));
+    const convRes = computeAuthenticAilmentAndSkillDots({
+      game: 'poe1',
+      skillDb: convDb,
+      enemyDb: new ModDB(),
+      baseDamageByType: { Fire: 1000 },
+      flags: ModFlag.Spell | ModFlag.Hit,
+      keywordFlags: KeywordFlag.Spell | KeywordFlag.Lightning | KeywordFlag.Hit,
+      speed: 1,
+      enemyConfig: { enemyFireResist: 0 },
+    });
+    // Total INC = 100 (Lightning) + 50 (Cold) + 50 (Fire) = +200% (3.0x); Phys 200% excluded!
+    // Single stack = 0.90 * 1000 * 3.0 = 2700
+    expect(convRes.ignite.singleStackDps).toBeCloseTo(2700, 1);
+  });
 });

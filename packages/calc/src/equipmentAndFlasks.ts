@@ -354,6 +354,18 @@ export function evaluateActiveFlasks(
 ): ActiveFlaskEvaluation {
   const { left: magebloodLeft, right: magebloodRight } = detectPoe1MagebloodCounts(build);
   const meleeWeaponEquipped = hasEquippedMeleeWeapon(build);
+  const mainGroup =
+    build.skills.find((g) => g.id === build.mainSkillGroupId) ?? build.skills[0];
+  const mainSkillIsVaal = Boolean(
+    mainGroup?.gems.some(
+      (g) => g.enabled !== false && /^poe[12]_vaal/i.test(g.gemId),
+    ),
+  );
+  const enemyIsIgnited = Boolean(
+    build.config?.rawInputs?.conditionEnemyIgnited ||
+      (build.config as { enemyIgnited?: boolean } | undefined)?.enemyIgnited,
+  );
+  let grantedFlaskMalediction = false;
 
   // Identify magic utility flasks in slot order 1..5 for Mageblood auto-activation
   const magicUtilitySlots: EquipmentSlotId[] = [];
@@ -550,17 +562,76 @@ export function evaluateActiveFlasks(
         continue;
       }
 
-      // Bottled Faith Consecrated Ground increased damage taken
+      // Bottled Faith Consecrated Ground increased damage taken (preserves DamageTakenConsecratedGround so ConsecratedGroundEffect scales it)
       const mBfDmgTaken = line.match(
         /^Consecrated Ground created during Effect applies (\d+)% increased Damage taken to Enemies$/i,
       );
       if (mBfDmgTaken) {
         grantsConsecratedGround = true;
-        const scaledVal = Math.trunc(Number(mBfDmgTaken[1]) * effectMult);
-        const outLine = `Enemies take ${scaledVal}% increased Damage`;
+        const scaledVal = Math.trunc(Number(mBfDmgTaken[1]) * effectMult + 1e-9);
+        const outLine = `Consecrated Ground created during Effect applies ${scaledVal}% increased Damage taken to Enemies`;
         explicitLines.push(outLine);
         modLines.push(outLine);
         sources.push(src);
+        continue;
+      }
+
+      // Cinderswallow Urn: Malediction (binary +10% enemy damage taken, unscaled by flask effect) & increased damage taken on Ignited enemies
+      if (/^Enemies Ignited by you during Effect have Malediction$/i.test(line)) {
+        if (enemyIsIgnited && !grantedFlaskMalediction) {
+          grantedFlaskMalediction = true;
+          const outLine = 'Enemies take 10% increased Damage';
+          explicitLines.push(outLine);
+          modLines.push(outLine);
+          sources.push(`${src} (Malediction)`);
+        }
+        continue;
+      }
+      const mCinderTaken = line.match(
+        /^Enemies Ignited by you during Effect take (\d+)% increased Damage$/i,
+      );
+      if (mCinderTaken) {
+        if (enemyIsIgnited) {
+          const scaledVal = Math.trunc(Number(mCinderTaken[1]) * effectMult + 1e-9);
+          if (scaledVal > 0) {
+            const outLine = `Enemies take ${scaledVal}% increased Damage`;
+            explicitLines.push(outLine);
+            modLines.push(outLine);
+            sources.push(src);
+          }
+        }
+        continue;
+      }
+
+      // Soul Catcher (and Vaal-scoped flask buffs): scale by effectMult and emit when main active skill is a Vaal skill
+      const mVaalFlaskCrit = line.match(
+        /^(\d+)% increased Critical Strike Chance with Vaal Skills(?: during Effect)?$/i,
+      );
+      if (mVaalFlaskCrit) {
+        if (mainSkillIsVaal) {
+          const scaledVal = Math.trunc(Number(mVaalFlaskCrit[1]) * effectMult + 1e-9);
+          if (scaledVal > 0) {
+            const outLine = `${scaledVal}% increased Critical Strike Chance`;
+            explicitLines.push(outLine);
+            modLines.push(outLine);
+            sources.push(src);
+          }
+        }
+        continue;
+      }
+      const mVaalFlaskDmg = line.match(
+        /^(\d+)% increased Damage with Vaal Skills(?: during Effect)?$/i,
+      );
+      if (mVaalFlaskDmg) {
+        if (mainSkillIsVaal) {
+          const scaledVal = Math.trunc(Number(mVaalFlaskDmg[1]) * effectMult + 1e-9);
+          if (scaledVal > 0) {
+            const outLine = `${scaledVal}% increased Damage`;
+            explicitLines.push(outLine);
+            modLines.push(outLine);
+            sources.push(src);
+          }
+        }
         continue;
       }
 
@@ -1172,6 +1243,16 @@ export function evaluateSpecialUniqueGearMechanics(
           keywordFlags: 0,
           source: src,
         });
+        continue;
+      }
+
+      // 10. Screams of the Desiccated (Massive Shrine Buff while affected by no Flasks: +40% inc Life, +40% inc AoE)
+      if (/^You have Massive Shrine Buff while affected by no Flasks$/i.test(line)) {
+        if (!db.getEvalContext().conditions.UsingFlask) {
+          db.addMod({ name: 'Life', type: 'INC', value: 40, flags: 0, keywordFlags: 0, source: `${src} (Massive Shrine)` });
+          db.addMod({ name: 'AreaOfEffect', type: 'INC', value: 40, flags: 0, keywordFlags: 0, source: `${src} (Massive Shrine)` });
+          appliedSources.push(`${src} (Massive Shrine)`);
+        }
       }
     }
 

@@ -1254,4 +1254,300 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     expect(ciDb.override('Life')).toBe(1);
     expect(ciDb.sum('BASE', 'LifeConvertToES')).toBe(0);
   });
+
+  it('handles wrapped/specialized cluster notables (Purposeful Harbinger, Skill Mana Res Eff, Precise Focus, Weight Advantage, Surprise Sabotage, Rotten Claws, Renewal, Master of Fire)', () => {
+    const clusterJewel = mkItem({
+      id: 'cl-special',
+      name: 'Blight Prism',
+      baseName: 'Medium Cluster Jewel',
+      implicits: ['Adds 4 Passive Skills', 'Added Small Passive Skills grant: 10% increased Damage'],
+      explicits: [
+        '1 Added Passive Skill is Purposeful Harbinger',
+        '1 Added Passive Skill is Uncompromising',
+        '1 Added Passive Skill is Precise Focus',
+        '1 Added Passive Skill is Weight Advantage',
+        '1 Added Passive Skill is Surprise Sabotage',
+        '1 Added Passive Skill is Rotten Claws',
+        '1 Added Passive Skill is Renewal',
+        '1 Added Passive Skill is Master of Fire',
+      ],
+    });
+    const defs: Record<string, ClusterNotableDef> = {
+      'purposeful harbinger': {
+        en: 'Purposeful Harbinger',
+        st: [
+          'Auras from your Skills have 8% increased Effect on you for',
+          'each Herald affecting you, up to a maximum of 40%',
+        ],
+      },
+      uncompromising: {
+        en: 'Uncompromising',
+        st: ['Determination has 50% increased Mana Reservation Efficiency'],
+      },
+      'precise focus': {
+        en: 'Precise Focus',
+        st: ["+20% to Critical Strike Multiplier if you've been Channelling for at least 1 second"],
+      },
+      'weight advantage': {
+        en: 'Weight Advantage',
+        st: ['4% chance to deal Double Damage while wielding a Mace, Sceptre or Staff'],
+      },
+      'surprise sabotage': {
+        en: 'Surprise Sabotage',
+        st: ['Mine Damage Penetrates 4% Elemental Resistances'],
+      },
+      'rotten claws': {
+        en: 'Rotten Claws',
+        st: ['Minions have a 12% chance to Impale on Hit with Attacks'],
+      },
+      renewal: {
+        en: 'Renewal',
+        st: ['Minions have 5% chance to deal Double Damage while they are on Full Life'],
+      },
+      'master of fire': {
+        en: 'Master of Fire',
+        st: ['Enemies within 3 metres have Fire Exposure'],
+      },
+    };
+    const res = evaluateAllocatedClusterJewels(
+      [{ nodeId: 12613, jewel: clusterJewel }],
+      [12613],
+      (name) => defs[name.toLowerCase()],
+    );
+    const db = new ModDB();
+    db.addMods(res.mods);
+    expect(db.sum('BASE', 'PurposefulHarbingerPerHerald')).toBe(8);
+    expect(db.sum('INC', 'SkillManaReservationEfficiency:determination')).toBe(50);
+    expect(db.sum('BASE', 'CritMultiplier')).toBe(0);
+    db.setCondition('Channelling', true);
+    expect(db.sum('BASE', 'CritMultiplier')).toBe(20);
+    expect(db.sum('BASE', 'DoubleDamageChance')).toBe(0);
+    db.setCondition('UsingMace', true);
+    expect(db.sum('BASE', 'DoubleDamageChance')).toBe(4);
+    expect(db.sum('BASE', 'FirePenetration', 0, KeywordFlag.Mine)).toBe(4);
+    expect(db.sum('BASE', 'MinionImpaleChance', ModFlag.Attack)).toBe(12);
+    expect(db.sum('BASE', 'MinionDoubleDamageChance')).toBe(5);
+    expect(db.flag('MasterOfElementExposure:Fire')).toBe(true);
+  });
+
+  it('evaluates War Banner Valour with MaxValour + BannerAuraEffect + level-scaled per-Valour, Sublime Vision 3-pass ordering, Blood/Sand Stance sync, Combustion gating, and PoE 1 Exposure deduplication', () => {
+    const warBannerDef: GemDefinition = {
+      id: 'poe1_warbanner',
+      name: { en: 'War Banner', zh: '战争旗帜' },
+      category: 'active',
+      game: 'poe1',
+      color: 'red',
+      tags: ['area', 'aura', 'banner', 'duration', 'physical', 'spell'],
+      modFlags: 0,
+      keywordFlags: KeywordFlag.Aura,
+      isAuraOrBuff: true,
+      stats: ['4% more Physical Damage'],
+      levelScaling: {
+        18: {
+          stats: ['4% more Physical Damage'],
+          compiledMods: [
+            {
+              name: 'AuraEffect',
+              type: 'MORE',
+              value: 9,
+              flags: 0,
+              keywordFlags: 0,
+              tags: [
+                { type: 'Multiplier', var: 'BannerValour' },
+                { type: 'Condition', var: 'BannerPlanted' },
+              ],
+            },
+            {
+              name: 'PhysicalDamage',
+              type: 'MORE',
+              value: 4,
+              flags: 0,
+              keywordFlags: 0,
+              target: 'player',
+              tags: [{ type: 'SkillType', skillType: 'Melee' }],
+            },
+          ],
+        },
+      },
+    };
+    const fleshAndStoneDef: GemDefinition = {
+      id: 'poe1_fleshandstone',
+      name: { en: 'Flesh and Stone', zh: '血肉与岩石' },
+      category: 'active',
+      game: 'poe1',
+      color: 'red',
+      tags: ['area', 'aura', 'spell'],
+      modFlags: 0,
+      keywordFlags: KeywordFlag.Aura,
+      manaReservationPct: 25,
+      isAuraOrBuff: true,
+      stats: [],
+      compiledMods: [
+        {
+          name: 'PhysicalDamageTaken',
+          type: 'MORE',
+          value: 20,
+          flags: 0,
+          keywordFlags: 0,
+          target: 'enemy',
+          tags: [{ type: 'Condition', var: 'BloodStance' }],
+        },
+      ],
+    };
+    const combustionDef: GemDefinition = {
+      id: 'poe1_combustion',
+      name: { en: 'Combustion Support', zh: '燃烧辅助' },
+      category: 'support',
+      game: 'poe1',
+      color: 'blue',
+      tags: ['support', 'fire'],
+      modFlags: 0,
+      keywordFlags: KeywordFlag.Fire,
+      stats: [],
+    };
+    const waveOfConvictionDef: GemDefinition = {
+      id: 'poe1_waveofconviction',
+      name: { en: 'Wave of Conviction', zh: '定罪波' },
+      category: 'active',
+      game: 'poe1',
+      color: 'blue',
+      tags: ['spell', 'fire', 'lightning', 'physical'],
+      modFlags: 0,
+      keywordFlags: KeywordFlag.Fire | KeywordFlag.Lightning,
+      stats: [],
+    };
+    const customLookup = (game: 'poe1' | 'poe2', gemId: string) => {
+      if (gemId === 'poe1_warbanner') return warBannerDef;
+      if (gemId === 'poe1_fleshandstone') return fleshAndStoneDef;
+      if (gemId === 'poe1_combustion') return combustionDef;
+      if (gemId === 'poe1_waveofconviction') return waveOfConvictionDef;
+      return lookupTestGem(game, gemId);
+    };
+
+    // 1. War Banner Lv18 @ 105 Valour (50 base + 55 MaxValour), +35% BannerAuraEffect + 12% AuraEffect -> 4 * 1.47 * (1 + 0.09*105) = 61.446 -> 61% MORE
+    const bannerDb = new ModDB();
+    bannerDb.addMod({ name: 'MaxValour', type: 'BASE', value: 55, flags: 0, keywordFlags: 0, source: 'Tree' });
+    bannerDb.addMod({ name: 'BannerAuraEffect', type: 'INC', value: 35, flags: 0, keywordFlags: 0, source: 'Tree' });
+    bannerDb.addMod({ name: 'AuraEffect', type: 'INC', value: 12, flags: 0, keywordFlags: 0, source: 'Tree' });
+    bannerDb.addMod({ name: 'MasterOfElementExposure:Fire', type: 'FLAG', value: true, flags: 0, keywordFlags: 0, source: 'Cluster' });
+    const bannerBuild = mkBuild({
+      config: {
+        ...mkBuild().config,
+        rawInputs: {
+          bannerPlanted: true,
+          bannerValour: 105,
+          bloodSandStance: 'SAND',
+          conditionEnemyIgnited: false,
+        },
+      },
+      skills: [
+        {
+          id: 'sg-banner',
+          label: 'Banners & Utility',
+          enabled: true,
+          gems: [
+            { instanceId: 'g1', gemId: 'poe1_warbanner', level: 18, quality: 0, enabled: true },
+            { instanceId: 'g2', gemId: 'poe1_fleshandstone', level: 20, quality: 0, enabled: true },
+          ],
+        },
+        {
+          id: 'sg-woc',
+          label: 'WoC + Combustion',
+          enabled: true,
+          gems: [
+            { instanceId: 'g3', gemId: 'poe1_waveofconviction', level: 20, quality: 0, enabled: true },
+            { instanceId: 'g4', gemId: 'poe1_combustion', level: 20, quality: 0, enabled: true },
+          ],
+        },
+      ],
+    });
+    const bannerRes = evaluateAurasAndWatchersEye({
+      build: bannerBuild,
+      playerDb: bannerDb,
+      getGemByIdFn: customLookup,
+      maxMana: 1000,
+    });
+    bannerDb.setEvalContext({ ...bannerDb.getEvalContext(), skillTypes: { Melee: true } });
+    expect(bannerDb.more('PhysicalDamage')).toBeCloseTo(1.61, 4);
+    // Case-insensitive "SAND" stance must NOT trigger Flesh and Stone BloodStance enemy MORE PhysicalDamageTaken!
+    expect(bannerRes.enemyDb.more('PhysicalDamageTaken')).toBe(1);
+    // Wave of Conviction (15% Fire Exposure) dominates Master of Fire (10%), deduplicated to -15% FireResist;
+    // Combustion (-10% FireResist) must NOT fire when conditionEnemyIgnited is false!
+    expect(bannerRes.enemyDb.sum('BASE', 'FireResist')).toBe(-15);
+
+    // 2. Now enable conditionEnemyIgnited + BloodStance -> Combustion adds -10% (total -25%), Flesh & Stone activates
+    const ignitedDb = new ModDB();
+    const ignitedBuild = mkBuild({
+      config: {
+        ...mkBuild().config,
+        rawInputs: {
+          bloodSandStance: 'BLOOD',
+          conditionEnemyIgnited: true,
+        },
+      },
+      skills: [
+        {
+          id: 'sg-fs',
+          label: 'Flesh and Stone',
+          enabled: true,
+          gems: [{ instanceId: 'g1', gemId: 'poe1_fleshandstone', level: 20, quality: 0, enabled: true }],
+        },
+        {
+          id: 'sg-woc2',
+          label: 'WoC + Combustion',
+          enabled: true,
+          gems: [
+            { instanceId: 'g2', gemId: 'poe1_waveofconviction', level: 20, quality: 0, enabled: true },
+            { instanceId: 'g3', gemId: 'poe1_combustion', level: 20, quality: 0, enabled: true },
+          ],
+        },
+      ],
+    });
+    const ignitedRes = evaluateAurasAndWatchersEye({
+      build: ignitedBuild,
+      playerDb: ignitedDb,
+      getGemByIdFn: customLookup,
+      maxMana: 1000,
+    });
+    expect(ignitedRes.enemyDb.more('PhysicalDamageTaken')).toBeCloseTo(1.2, 4);
+    expect(ignitedRes.enemyDb.sum('BASE', 'FireResist')).toBe(-25);
+
+    // 3. Sublime Vision disables other aura-tagged gems while keeping allowed aura + its Vaal counterpart
+    const sublimeDb = new ModDB();
+    const sublimeJewel = mkItem({
+      id: 'j-sv',
+      name: 'Sublime Vision',
+      baseName: 'Prismatic Jewel',
+      rarity: 'UNIQUE',
+      explicits: [
+        'Aura Skills other than Determination are Disabled',
+        '+10% to Physical Damage Reduction while affected by Determination',
+      ],
+    });
+    const sublimeBuild = mkBuild({
+      items: { 'j-sv': sublimeJewel },
+      tree: { ...mkBuild().tree, socketedJewels: { 26725: 'j-sv' } },
+      skills: [
+        {
+          id: 'sg-auras',
+          label: 'Auras',
+          enabled: true,
+          gems: [
+            { instanceId: 'g1', gemId: 'poe1_determination', level: 20, quality: 0, enabled: true },
+            { instanceId: 'g2', gemId: 'poe1_grace', level: 20, quality: 0, enabled: true },
+          ],
+        },
+      ],
+    });
+    const sublimeRes = evaluateAurasAndWatchersEye({
+      build: sublimeBuild,
+      playerDb: sublimeDb,
+      getGemByIdFn: customLookup,
+      maxMana: 1000,
+    });
+    expect(sublimeRes.activeAurasAffectingPlayer.has('Determination')).toBe(true);
+    expect(sublimeRes.activeAurasAffectingPlayer.has('Grace')).toBe(false);
+    expect(sublimeDb.sum('BASE', 'Armour')).toBeGreaterThan(0);
+    expect(sublimeDb.sum('BASE', 'Evasion')).toBe(0);
+  });
 });

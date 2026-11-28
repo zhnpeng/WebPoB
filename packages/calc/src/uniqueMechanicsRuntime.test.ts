@@ -1216,4 +1216,189 @@ describe('uniqueMechanicsRuntime — 5. Pool-Conversion Keystones & Faithguard',
     expect(moriorDb.sum('INC', 'Int')).toBe(25);
     expect(moriorDb.sum('BASE', 'FireResist')).toBe(50);
   });
+
+  it("evaluates Left/Right ring slot mods (Shavronne's Revelation, Polaric Devastation), Xoph's Blood Ash, Singularity Hindered, Betrayal's Sting, Yaomac's Accord, and quality-scaled globals", () => {
+    const db = new ModDB();
+    const shavRing = makeItem({
+      id: 'ring-left',
+      name: "Shavronne's Revelation",
+      baseName: 'Moonstone Ring',
+      slotType: 'Ring 1',
+      explicits: [
+        'Left ring slot: +250 to maximum Mana',
+        'Right ring slot: +250 to maximum Energy Shield',
+      ],
+    });
+    const polaricRing = makeItem({
+      id: 'ring-right',
+      name: 'Polaric Devastation',
+      baseName: 'Opal Ring',
+      slotType: 'Ring 2',
+      explicits: [
+        'Left ring slot: Cover Enemies in Ash for 5 seconds when you Ignite them',
+        'Right ring slot: Cover Enemies in Frost for 5 seconds when you Freeze them',
+      ],
+    });
+    const xoph = makeItem({
+      id: 'am-xoph',
+      name: "Xoph's Blood",
+      baseName: 'Amber Amulet',
+      slotType: 'Amulet',
+      explicits: ['Cover Enemies in Ash when they Hit you'],
+    });
+    const singularity = makeItem({
+      id: 'wep-sing',
+      name: 'Singularity',
+      baseName: 'Platinum Sceptre',
+      slotType: 'Weapon 1',
+      explicits: ['Nearby Enemies are Hindered, with 25% reduced Movement Speed'],
+    });
+    const betrayal = makeItem({
+      id: 'ring-bs',
+      name: "Betrayal's Sting",
+      baseName: 'Steel Ring',
+      slotType: 'Ring 1',
+      explicits: ['35% chance to inflict an additional Poison on the same Target when you inflict Poison'],
+    });
+    const yaomac = makeItem({
+      id: 'wep-yao',
+      name: "Yaomac's Accord",
+      baseName: 'Vaal Sceptre',
+      slotType: 'Weapon 1',
+      explicits: [
+        '120% increased Damage with Vaal Skills',
+        '80% increased Critical Strike Chance with Vaal Skills',
+      ],
+    });
+    const harvestWep = makeItem({
+      id: 'wep-q',
+      name: 'Glyph Sceptre',
+      baseName: 'Opal Sceptre',
+      slotType: 'Weapon 1',
+      quality: 30,
+      implicits: ['Quality does not increase Physical Damage', '1% increased Elemental Damage per 2% Quality'],
+    });
+
+    evaluatePreStatBuildEnablingUniques({
+      db,
+      equippedItems: [
+        { slot: 'Ring 1', item: shavRing },
+        { slot: 'Ring 2', item: polaricRing },
+        { slot: 'Amulet', item: xoph },
+        { slot: 'Weapon 1', item: singularity },
+        { slot: 'Weapon 2', item: yaomac },
+        { slot: 'Gloves', item: betrayal },
+        { slot: 'Helmet', item: harvestWep },
+      ],
+      game: 'poe1',
+    });
+
+    // Ring 1 gets Left slot (+250 Mana, NOT +250 ES)
+    expect(db.sum('BASE', 'Mana')).toBe(250);
+    expect(db.sum('BASE', 'EnergyShield')).toBe(0);
+
+    // Polaric Devastation Right Ring Frost requires EnemyFrozen; Xoph's Blood Ash is unconditional
+    expect(db.sum('INC', 'EnemyFireDamageTaken')).toBe(20);
+    expect(db.sum('INC', 'EnemyColdDamageTaken')).toBe(0);
+    db.setCondition('EnemyFrozen', true);
+    expect(db.sum('INC', 'EnemyColdDamageTaken')).toBe(20);
+
+    // Singularity Hindered sets EnemyHindered condition
+    expect(db.getEvalContext().conditions.EnemyHindered).toBe(true);
+
+    // Betrayal's Sting adds AdditionalPoisonChance
+    expect(db.sum('BASE', 'AdditionalPoisonChance')).toBe(35);
+
+    // Yaomac's Accord tags mods with SkillType: Vaal
+    expect(db.sum('INC', 'Damage')).toBe(0);
+    db.setEvalContext({ ...db.getEvalContext(), skillTypes: { Vaal: true } });
+    expect(db.sum('INC', 'Damage')).toBe(120);
+    expect(db.sum('INC', 'CritChance')).toBe(80);
+
+    // Harvest Quality -> 30 / 2 * 1 = 15% increased Elemental Damage
+    expect(db.sum('INC', 'ElementalDamage')).toBe(15);
+  });
+
+  it("evaluates Post-Pool Mind of the Council, Nebulis, wrapped The Taming, Enmity's Embrace, and elevated Tailwind", () => {
+    const db = new ModDB();
+    db.setCondition('EnemyIgnited', true);
+    db.setCondition('EnemyChilled', true);
+    db.setCondition('EnemyShocked', true);
+    db.setCondition('CritRecently', true);
+    const mindOfCouncil = makeItem({
+      id: 'helm-moc',
+      name: 'Mind of the Council',
+      baseName: 'Harlequin Mask',
+      slotType: 'Helmet',
+      explicits: ['Attack Skills have Added Lightning Damage equal to 6% of Maximum Mana'],
+    });
+    const nebulis = makeItem({
+      id: 'wep-neb',
+      name: 'Nebulis',
+      baseName: 'Void Sceptre',
+      slotType: 'Weapon 1',
+      explicits: [
+        '20% increased Cold Damage per 1% Cold Resistance above 75%',
+        '15% increased Elemental Damage per 1% Fire, Cold, or Lightning Resistance above 75%',
+      ],
+    });
+    const taming = makeItem({
+      id: 'ring-tam',
+      name: 'The Taming',
+      baseName: 'Prismatic Ring',
+      slotType: 'Ring 1',
+      explicits: [
+        '20% increased Elemental Damage with Hits and Ailments for',
+        'each type of Elemental Ailment on Enemy',
+      ],
+    });
+    const tailwindBoots = makeItem({
+      id: 'boots-tw',
+      name: 'Dire Spark',
+      baseName: 'Two-Toned Boots',
+      slotType: 'Boots',
+      explicits: [
+        'You have Tailwind if you have dealt a Critical Strike Recently',
+        '25% increased effect of Tailwind on you',
+      ],
+    });
+
+    // Cold res 85% (10 above 75 -> +200% Cold), Lightning res 90% (15 above 75 -> +225% Elemental)
+    db.addMod({ name: 'ColdResist', type: 'BASE', value: 85, flags: 0, keywordFlags: 0, source: 'Gear' });
+    db.addMod({ name: 'ColdResistMax', type: 'BASE', value: 85, flags: 0, keywordFlags: 0, source: 'Gear' });
+    db.addMod({ name: 'LightningResist', type: 'BASE', value: 90, flags: 0, keywordFlags: 0, source: 'Gear' });
+    db.addMod({ name: 'LightningResistMax', type: 'BASE', value: 90, flags: 0, keywordFlags: 0, source: 'Gear' });
+
+    evaluatePostPoolBuildEnablingUniques({
+      db,
+      equippedItems: [
+        { slot: 'Helmet', item: mindOfCouncil },
+        { slot: 'Weapon 1', item: nebulis },
+        { slot: 'Ring 1', item: taming },
+        { slot: 'Boots', item: tailwindBoots },
+      ],
+      str: 100,
+      dex: 100,
+      int: 100,
+      life: 4000,
+      mana: 5000,
+      energyShield: 0,
+      armour: 1000,
+      evasion: 1000,
+      playerLightningResist: 90,
+    });
+
+    // Mind of the Council: 6% of 5000 Mana = 300 flat Attack Lightning Min & Max
+    expect(db.sum('BASE', 'LightningMin', ModFlag.Attack)).toBe(300);
+    expect(db.sum('BASE', 'LightningMax', ModFlag.Attack)).toBe(300);
+
+    // Nebulis: 20 * 10 (Cold 85-75) = 200 Cold INC; 15 * (10 + 15) = 375 Elemental INC
+    // Plus Wrapped The Taming: 20% * 3 (Ignited + Chilled + Shocked) = 60% Elemental INC with Hits & Ailments
+    expect(db.sum('INC', 'ColdDamage')).toBe(200);
+    expect(db.sum('INC', 'ElementalDamage', ModFlag.Hit)).toBe(375 + 60);
+    expect(db.sum('INC', 'ElementalDamage', ModFlag.Ailment)).toBe(375 + 60);
+
+    // Elevated Tailwind: 8% * 1.25 = 10% ActionSpeed INC
+    expect(db.sum('INC', 'ActionSpeed')).toBe(10);
+  });
 });
