@@ -590,6 +590,246 @@ describe('Stage 2 & 3: Weapons, Skills, Elements, Conversions, Flat Damage, Pene
       expect.objectContaining({ name: 'EnergyShieldRegenPercent', type: 'BASE', value: 2 }),
     ]);
   });
+
+  it('parses Wave 4O high-frequency PoE 1 & PoE 2 corpus patterns (suppression, deflection, block, charges, non-channelling, fists of stone, graft scoping)', () => {
+    // Prevent +X% of Suppressed Spell Damage / Deflected Hits
+    expect(parseModCompositional('Prevent +3% of Suppressed Spell Damage', 'mastery')).toEqual([
+      expect.objectContaining({ name: 'SpellSuppressionEffect', type: 'BASE', value: 3 }),
+    ]);
+    expect(parseModCompositional('Prevent +6% of Damage from Deflected Hits', 'tree')).toEqual([
+      expect.objectContaining({ name: 'DeflectedHitDamagePrevented', type: 'BASE', value: 6 }),
+    ]);
+
+    // PoE 2 Fists of Stone / Runeforged Fists of Stone "Has +X ... per player level"
+    expect(parseModCompositional('Has +2 to Evasion Rating per player level', 'item')).toEqual([
+      expect.objectContaining({
+        name: 'Evasion',
+        type: 'BASE',
+        value: 2,
+        tags: [{ type: 'Multiplier', var: 'Level' }],
+      }),
+    ]);
+    expect(
+      parseModCompositional('Has +1 to maximum Energy Shield per player level', 'item'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'EnergyShield',
+        type: 'BASE',
+        value: 1,
+        tags: [{ type: 'Multiplier', var: 'Level' }],
+      }),
+    ]);
+    expect(parseModCompositional('Has +1 to maximum Runic Ward per player level', 'item')).toEqual([
+      expect.objectContaining({
+        name: 'Ward',
+        type: 'BASE',
+        value: 1,
+        tags: [{ type: 'Multiplier', var: 'Level' }],
+      }),
+    ]);
+
+    // Block PerStat & Shield ES without "Equipped"
+    expect(
+      parseModCompositional(
+        '+1% Chance to Block Spell Damage per 5% Chance to Block Attack Damage',
+        'mastery',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'SpellBlockChance',
+        type: 'BASE',
+        value: 1,
+        tags: [{ type: 'PerStat', stat: 'BlockChance', div: 5 }],
+      }),
+    ]);
+    expect(
+      parseModCompositional(
+        '1% increased Mana Regeneration Rate per 1% Chance to Block Spell Damage',
+        'tree',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'ManaRegen',
+        type: 'INC',
+        value: 1,
+        tags: [{ type: 'PerStat', stat: 'SpellBlockChance', div: 1 }],
+      }),
+    ]);
+    expect(
+      parseModCompositional(
+        '+1% to Critical Strike Multiplier per 10 Maximum Energy Shield on Shield',
+        'mastery',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'CritMultiplier',
+        type: 'BASE',
+        value: 1,
+        tags: [{ type: 'PerStat', stat: 'ShieldES', div: 10 }],
+      }),
+    ]);
+
+    // Charge Mastery: per Endurance, Frenzy or Power Charge -> TotalCharges
+    const chargeMastery = parseModCompositional(
+      '3% increased Damage per Endurance, Frenzy or Power Charge',
+      'mastery',
+    );
+    expect(chargeMastery).toEqual([
+      expect.objectContaining({
+        name: 'Damage',
+        type: 'INC',
+        value: 3,
+        tags: [{ type: 'Multiplier', var: 'TotalCharges' }],
+      }),
+    ]);
+    const chargeDb = new ModDB();
+    chargeDb.addMods(chargeMastery);
+    chargeDb.setMultiplier('PowerCharge', 4);
+    chargeDb.setMultiplier('FrenzyCharge', 3);
+    chargeDb.setMultiplier('EnduranceCharge', 5);
+    expect(chargeDb.sum('INC', 'Damage')).toBe(36);
+
+    // Non-Channelling Spells & Player Maximum Life & Projectiles within 2m
+    expect(
+      parseModCompositional('Non-Channelling Spells deal 6% increased Damage per 100 maximum Life', 'item'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'Damage',
+        type: 'INC',
+        value: 6,
+        flags: ModFlag.Spell,
+        tags: [
+          { type: 'PerStat', stat: 'Life', div: 100 },
+          { type: 'SkillType', skillType: 'Channel', neg: true },
+        ],
+      }),
+    ]);
+    expect(
+      parseModCompositional('5% increased Spell Damage per 100 Player Maximum Life', 'item'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'Damage',
+        type: 'INC',
+        value: 5,
+        flags: ModFlag.Spell,
+        tags: [{ type: 'PerStat', stat: 'Life', div: 100 }],
+      }),
+    ]);
+    expect(
+      parseModCompositional(
+        'Projectiles have 40% increased Critical Damage Bonus against Enemies within 2m',
+        'tree',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'CritDamageBonusInc',
+        type: 'INC',
+        value: 40,
+        flags: ModFlag.Projectile,
+        tags: [{ type: 'Condition', var: 'EnemyDistanceLe:20' }],
+      }),
+    ]);
+
+    // Marked Enemy, against you, Graft skill scoping (must stay gated by SkillType: Graft)
+    expect(
+      parseModCompositional('Marked Enemy has 10% reduced Accuracy Rating', 'tree'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'EnemyAccuracy',
+        type: 'INC',
+        value: -10,
+        tags: [{ type: 'Condition', var: 'EnemyMarked' }],
+      }),
+    ]);
+    expect(
+      parseModCompositional('Hits have 25% reduced Critical Hit Chance against you', 'tree'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'EnemyCritChance',
+        type: 'INC',
+        value: -25,
+        flags: ModFlag.Hit,
+      }),
+    ]);
+    expect(
+      parseModCompositional('Skills used by this Graft have +30% to Critical Strike Multiplier', 'item'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'CritMultiplier',
+        type: 'BASE',
+        value: 30,
+        tags: [{ type: 'SkillType', skillType: 'Graft' }],
+      }),
+    ]);
+
+    // Additional high-frequency PoE 1 & PoE 2 stems & conditions
+    expect(parseModCompositional('30% increased Flask Recovery rate', 'tree')).toEqual([
+      expect.objectContaining({ name: 'FlaskRecoveryRate', type: 'INC', value: 30 }),
+    ]);
+    expect(parseModCompositional('32% reduced Bleed Duration on you', 'jewel')).toEqual([
+      expect.objectContaining({ name: 'SelfBleedDuration', type: 'INC', value: -32 }),
+    ]);
+    expect(parseModCompositional('2% increased Trap and Mine Throwing Speed', 'cluster')).toEqual([
+      expect.objectContaining({
+        name: 'TrapThrowingSpeed',
+        type: 'INC',
+        value: 2,
+        keywordFlags: KeywordFlag.Trap | KeywordFlag.Mine,
+      }),
+      expect.objectContaining({
+        name: 'MineThrowingSpeed',
+        type: 'INC',
+        value: 2,
+        keywordFlags: KeywordFlag.Trap | KeywordFlag.Mine,
+      }),
+    ]);
+    expect(parseModCompositional('Grenade Skills have +1 Cooldown Use', 'tree')).toEqual([
+      expect.objectContaining({
+        name: 'AdditionalCooldownUses',
+        type: 'BASE',
+        value: 1,
+        tags: [{ type: 'SkillType', skillType: 'Grenade' }],
+      }),
+    ]);
+    expect(parseModCompositional('60% increased Mana Cost Efficiency of Marks', 'tree')).toEqual([
+      expect.objectContaining({
+        name: 'ManaCostEfficiency',
+        type: 'INC',
+        value: 60,
+        tags: [{ type: 'SkillType', skillType: 'Mark' }],
+      }),
+    ]);
+    expect(
+      parseModCompositional('30% less Movement Speed Penalty from using Skills while moving', 'asc'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'MoveSpeedPenaltyReduction',
+        type: 'MORE',
+        value: -30,
+        tags: [{ type: 'Condition', var: 'Moving' }],
+      }),
+    ]);
+    expect(
+      parseModCompositional('3% less Damage taken per Tailwind', 'asc'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'DamageTaken',
+        type: 'MORE',
+        value: -3,
+        tags: [{ type: 'Multiplier', var: 'Tailwind' }],
+      }),
+    ]);
+    expect(
+      parseModCompositional('Companions deal 59% increased damage to your Marked targets', 'item'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'CompanionDamage',
+        type: 'INC',
+        value: 59,
+        tags: [{ type: 'Condition', var: 'EnemyMarked' }],
+      }),
+    ]);
+  });
 });
 
 describe('Real-World Corpus Coverage (parseModLine + parseModCompositional fallback)', () => {

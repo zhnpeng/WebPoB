@@ -940,6 +940,24 @@ const POE2_LEGACY_GEM_ALIASES: Readonly<Record<string, string>> = {
   'rapid attacks': 'poe2_rapidattackssupport',
   'rapid casting': 'poe2_rapidcastingsupport',
   'elemental armament': 'poe2_elementalarmamentsupport',
+
+  // PoE 2 v0.1/v0.2 -> v0.3/0.5 active/ascendancy/support renames verified against upstream PoB 2 Gems.lua
+  'poisonous concoction': 'poe2_ascendancypoisonousconcoction',
+  poisonousconcoctionplayer: 'poe2_ascendancypoisonousconcoction',
+  ascendancypoisonousconcoction: 'poe2_ascendancypoisonousconcoction',
+  'infuse weapon': 'poe2_ascendancytriggerelementalsurge',
+  amazontriggerelementalinfusionplayer: 'poe2_ascendancytriggerelementalsurge',
+  ascendancytriggerelementalinfusion: 'poe2_ascendancytriggerelementalsurge',
+  skillgemascendancyinfuseweapon: 'poe2_ascendancytriggerelementalsurge',
+  greatwood: 'poe2_cirelscultivationsupport',
+  'greatwood i': 'poe2_cirelscultivationsupport',
+  supportgreatwoodplayer: 'poe2_cirelscultivationsupport',
+  greatwoodsupport: 'poe2_cirelscultivationsupport',
+  supportgemgreatwood: 'poe2_cirelscultivationsupport',
+  'ripwire ballista': 'poe2_artilleryballista',
+  ripwireballistaplayer: 'poe2_artilleryballista',
+  ripwireballista: 'poe2_artilleryballista',
+  skillgemripwireballista: 'poe2_artilleryballista',
 };
 
 interface GemLookupIndex {
@@ -1033,7 +1051,7 @@ export function getGemsForGame(game: GameId): GemDefinition[] {
   return registeredOfficialGems[game] ?? (game === 'poe2' ? POE2_GEMS : POE1_GEMS);
 }
 
-const METADATA_GEM_PATH_RE = /^metadata\/items\/gems\//i;
+const METADATA_GEM_PATH_RE = /^metadata\/items\/gems?\//i;
 
 function lookupGemInIndex(index: GemLookupIndex, key: string): GemDefinition | undefined {
   return (
@@ -1181,6 +1199,15 @@ export function resolveGemFromPobRef(game: GameId, ref: PobGemRef): GemDefinitio
   if (rawNameSpec) {
     const byName = findGemByName(game, rawNameSpec);
     if (byName) return byName;
+    if (game === 'poe2') {
+      if (/^companion:\s+/i.test(rawNameSpec)) {
+        const companionGem = getGemById(game, 'poe2_summonbeast');
+        if (companionGem) return companionGem;
+      } else if (/^spectre:\s+/i.test(rawNameSpec)) {
+        const spectreGem = getGemById(game, 'poe2_summonspectre');
+        if (spectreGem) return spectreGem;
+      }
+    }
   }
 
   // 4. Check skillId / variantId against name index if they did not match as IDs.
@@ -1199,7 +1226,14 @@ export function resolveGemFromPobRef(game: GameId, ref: PobGemRef): GemDefinitio
     if (byGem) return byGem;
   }
 
-  // 6. Last-resort fuzzy fallback (preferring the longest matching English gem name).
+  // 6. Last-resort fuzzy fallback (preferring the longest matching whole-word English gem name,
+  //    guarded against active/support category cross-contamination and Roman numeral tier collisions).
+  const refHints = `${rawSkillId ?? ''} ${rawVariantId ?? ''} ${rawGemId ?? ''}`;
+  const hintExpectsSupport = /\bsupport|supportgem|supportplayer/i.test(refHints);
+  const hintExpectsActive =
+    !hintExpectsSupport &&
+    /(?:^|\b|\/)(?:skillgem|meta[a-z]+player|caston[a-z]+)/i.test(refHints);
+  const romanTierRe = /\b(i|ii|iii|iv|v)\s*$/i;
   const gems = getGemsForGame(game);
   const candidates = [rawNameSpec, rawSkillId, rawVariantId, rawGemId]
     .filter((s): s is string => Boolean(s))
@@ -1207,12 +1241,32 @@ export function resolveGemFromPobRef(game: GameId, ref: PobGemRef): GemDefinitio
     .filter(Boolean);
 
   for (const needle of candidates) {
+    const needleRoman = needle.match(romanTierRe)?.[1];
     let bestMatch: GemDefinition | undefined;
     let bestLen = -1;
     for (const g of gems) {
+      if (hintExpectsSupport && g.category !== 'support') continue;
+      if (hintExpectsActive && g.category === 'support') continue;
       const enLower = g.name.en.toLowerCase();
       if (!enLower) continue;
-      if (needle.includes(enLower) || enLower.replace(SUPPORT_SUFFIX_RE, '') === needle) {
+      const enBase = enLower.replace(SUPPORT_SUFFIX_RE, '');
+      if (enBase === needle) {
+        if (enLower.length > bestLen) {
+          bestLen = enLower.length;
+          bestMatch = g;
+        }
+        continue;
+      }
+      // Never match a Roman-tiered gem (e.g. "Ricochet II") against a different tier ("Ricochet III")
+      const gemRoman = enBase.match(romanTierRe)?.[1];
+      if (needleRoman && gemRoman && needleRoman !== gemRoman) continue;
+      // Avoid short single-word support hijacks (e.g. "Cast on Shock" -> "Shock", "Cast on Freeze" -> "Freeze")
+      if (g.category === 'support' && !enLower.includes(' ') && /^cast\s+on\b/i.test(needle)) {
+        continue;
+      }
+      const escaped = enLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const wholeWordRe = new RegExp(`(?:^|[^a-z0-9])${escaped}(?:$|[^a-z0-9])`);
+      if (wholeWordRe.test(needle)) {
         if (enLower.length > bestLen) {
           bestLen = enLower.length;
           bestMatch = g;

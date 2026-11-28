@@ -226,6 +226,10 @@ export const STAGE1_PREFIX_RULES: readonly Stage1Rule[] = [
     apply: (m) => ({ tags: [{ type: 'Condition', var: mapWeaponConditionVar(m[1]!) }] }),
   },
   {
+    regex: /^While (?:you are )?Sprinting,\s*/i,
+    apply: () => ({ tags: [{ type: 'Condition', var: 'Sprinting' }] }),
+  },
+  {
     regex: /^While (Leeching|Channelling|Stationary|Moving|Focused|Focussed|Shapeshifted|Fortified|Phasing|Elusive),\s*/i,
     apply: (m) => {
       const k = m[1]!.toLowerCase();
@@ -382,6 +386,29 @@ export const STAGE1_PREFIX_RULES: readonly Stage1Rule[] = [
     }),
   },
   {
+    regex: /^(?:Marked Enem(?:y|ies)|Enemies you Mark) (?:take|takes) /i,
+    apply: () => ({
+      actorScope: 'enemy',
+      modSuffix: 'Taken',
+      tags: [{ type: 'Condition', var: 'EnemyMarked' }],
+    }),
+  },
+  {
+    regex: /^(?:Marked Enem(?:y|ies)|Enemies you Mark) (?:have|has) /i,
+    apply: () => ({
+      actorScope: 'enemy',
+      tags: [{ type: 'Condition', var: 'EnemyMarked' }],
+    }),
+  },
+  {
+    regex: /^(?:Marked Enem(?:y|ies)|Enemies you Mark) (?:deal|deals) /i,
+    apply: () => ({
+      actorScope: 'enemy',
+      modSuffix: 'Dealt',
+      tags: [{ type: 'Condition', var: 'EnemyMarked' }],
+    }),
+  },
+  {
     regex: /^(?:Nearby )?Enemies (?:in your Presence )?take /i,
     apply: () => ({ actorScope: 'enemy', modSuffix: 'Taken' }),
   },
@@ -443,6 +470,10 @@ export const STAGE1_PREFIX_RULES: readonly Stage1Rule[] = [
   // Ally / Totem / Subject-Hinted Prefixes
   {
     regex: /^You and (?:Nearby )?Allies(?: in your Presence)? (?:have |deal |gain )?/i,
+    apply: () => ({}),
+  },
+  {
+    regex: /^You and your Minions (?:have |deal |gain )?/i,
     apply: () => ({}),
   },
   {
@@ -540,6 +571,22 @@ export const STAGE1_PREFIX_RULES: readonly Stage1Rule[] = [
 
   // Generic player verb prefixes
   {
+    regex: /^Has (?=[+-]\d)/i,
+    apply: () => ({}),
+  },
+  {
+    regex: /^Prevent (?=\+?\d)/i,
+    apply: () => ({}),
+  },
+  {
+    regex: /^Items and Gems have /i,
+    apply: () => ({}),
+  },
+  {
+    regex: /^Skills used by this Graft have /i,
+    apply: () => ({ tags: [{ type: 'SkillType', skillType: 'Graft' }] }),
+  },
+  {
     regex: /^(?:You )?[Tt]ake /i,
     apply: () => ({ modSuffix: 'Taken' }),
   },
@@ -570,7 +617,7 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
 
   // --- PerStat: Equipped item defences (most specific first) ---
   {
-    regex: /(?:\s*,\s*|\s+)(?:for every|for each|per)\s+(\d+)\s+(?:Item\s+)?(maximum Energy Shield|Energy Shield|Evasion Rating|Evasion|Armour)\s+on\s+(?:your\s+)?Equipped\s+(Body Armour|Helmet|Shield|Gloves|Boots|Focus)$/i,
+    regex: /(?:\s*,\s*|\s+)(?:for every|for each|per)\s+(\d+)\s+(?:Item\s+)?(maximum Energy Shield|Energy Shield|Evasion Rating|Evasion|Armour)\s+on\s+(?:your\s+)?(?:Equipped\s+)?(Body Armour|Helmet|Shield|Gloves|Boots|Focus)$/i,
     apply: (m) => {
       const slot = normalizeSlotScope(m[3]!);
       return {
@@ -579,9 +626,21 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
     },
   },
   {
-    regex: /(?:\s*,\s*|\s+)(?:for every|for each|per)\s+(\d+)%?\s+Chance\s+to\s+Block\s+on\s+Equipped\s+Shield$/i,
+    regex: /(?:\s*,\s*|\s+)(?:for every|for each|per)\s+(\d+)%?\s+Chance\s+to\s+Block\s+on\s+(?:your\s+)?(?:Equipped\s+)?Shield$/i,
     apply: (m) => ({
       tags: [{ type: 'PerStat', stat: 'ShieldBlock', div: Number(m[1]) }],
+    }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)(?:for every|for each|per)\s+(\d+)%?\s+Chance\s+to\s+Block\s+Spell\s+Damage$/i,
+    apply: (m) => ({
+      tags: [{ type: 'PerStat', stat: 'SpellBlockChance', div: Number(m[1]) }],
+    }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)(?:for every|for each|per)\s+(\d+)%?\s+Chance\s+to\s+Block(?:\s+Attack\s+Damage|\s+Attacks)?$/i,
+    apply: (m) => ({
+      tags: [{ type: 'PerStat', stat: 'BlockChance', div: Number(m[1]) }],
     }),
   },
 
@@ -689,7 +748,7 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
     }),
   },
   {
-    regex: /(?:\s*,\s*|\s+)(?:for every|for each|per)\s+(?:(\d+)\s+)?(?:Maximum\s+)?Life(?:,\s*up to (?:a maximum of )?\+?(\d+)%?)?$/i,
+    regex: /(?:\s*,\s*|\s+)(?:for every|for each|per)\s+(?:(\d+)\s+)?(?:Player\s+)?(?:Maximum\s+)?Life(?:,\s*up to (?:a maximum of )?\+?(\d+)%?)?$/i,
     apply: (m) => ({
       tags: [
         {
@@ -771,6 +830,10 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
     apply: (m) => ({
       tags: [{ type: 'Multiplier', var: `${capFirst(m[1]!)}ChargeMax` }],
     }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)per\s+Endurance,\s+Frenzy\s+or\s+Power\s+Charge$/i,
+    apply: () => ({ tags: [{ type: 'Multiplier', var: 'TotalCharges' }] }),
   },
   {
     regex: /(?:\s*,\s*|\s+)per\s+(Power|Frenzy|Endurance)\s+Charge$/i,
@@ -859,7 +922,7 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
     apply: () => ({ tags: [{ type: 'Multiplier', var: 'CurseOnEnemy' }] }),
   },
   {
-    regex: /(?:\s*,\s*|\s+)(?:for each|per)\s+Minion(?:,\s*up to (?:a maximum of )?\+?(\d+)%?)?$/i,
+    regex: /(?:\s*,\s*|\s+)(?:for each|per)\s+Minion(?:\s+from\s+your\s+Non-Vaal\s+Skills)?(?:,\s*up to (?:a maximum of )?\+?(\d+)%?)?$/i,
     apply: (m) => ({
       tags: [
         {
@@ -867,6 +930,42 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
           var: 'SummonedMinion',
           ...(m[1] ? { limit: Number(m[1]) } : {}),
         },
+      ],
+    }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)(?:for each|per)\s+Tailwind$/i,
+    apply: () => ({ tags: [{ type: 'Multiplier', var: 'Tailwind' }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)(?:for each|per)\s+Combo\s+consumed(?:,\s*up to (?:a maximum of )?\+?(\d+)%?)?$/i,
+    apply: (m) => ({
+      tags: [
+        {
+          type: 'Multiplier',
+          var: 'ComboConsumed',
+          ...(m[1] ? { limit: Number(m[1]), limitTotal: true } : {}),
+        } as unknown as ModTag,
+      ],
+    }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)for\s+each\s+time\s+you(?:'ve|\s+have)\s+Warcried\s+Recently$/i,
+    apply: () => ({ tags: [{ type: 'Multiplier', var: 'WarcriesUsedRecently' }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)for\s+each\s+different\s+Warcry\s+you(?:'ve|\s+have)\s+used\s+Recently$/i,
+    apply: () => ({ tags: [{ type: 'Multiplier', var: 'DifferentWarcriesUsedRecently' }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)for\s+each\s+time\s+you(?:'ve|\s+have)\s+been\s+Hit\s+by\s+an\s+Enemy\s+Recently(?:,\s*up to (?:a maximum of )?\+?(\d+)%?)?$/i,
+    apply: (m) => ({
+      tags: [
+        {
+          type: 'Multiplier',
+          var: 'HitByEnemyRecently',
+          ...(m[1] ? { limit: Number(m[1]), limitTotal: true } : {}),
+        } as unknown as ModTag,
       ],
     }),
   },
@@ -953,6 +1052,10 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
     apply: () => ({ tags: [{ type: 'Condition', var: 'FullLife', neg: true }] }),
   },
   {
+    regex: /(?:\s*,\s*|\s+)(?:while|when)\s+not\s+on\s+Low\s+Energy\s+Shield$/i,
+    apply: () => ({ tags: [{ type: 'Condition', var: 'LowEnergyShield', neg: true }] }),
+  },
+  {
     regex: /(?:\s*,\s*|\s+)(?:while|when)\s+not\s+on\s+Full\s+Energy\s+Shield$/i,
     apply: () => ({ tags: [{ type: 'Condition', var: 'FullEnergyShield', neg: true }] }),
   },
@@ -971,6 +1074,10 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
   {
     regex: /(?:\s*,\s*|\s+)(?:while|when)\s+on\s+Full\s+Life$/i,
     apply: () => ({ tags: [{ type: 'Condition', var: 'FullLife' }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)(?:while|when)\s+on\s+Low\s+Energy\s+Shield$/i,
+    apply: () => ({ tags: [{ type: 'Condition', var: 'LowEnergyShield' }] }),
   },
   {
     regex: /(?:\s*,\s*|\s+)(?:while|when)\s+on\s+Full\s+Energy\s+Shield$/i,
@@ -1036,7 +1143,7 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
     }),
   },
   {
-    regex: /(?:\s*,\s*|\s+)while\s+(Channelling|Stationary|Moving|Focused|Focussed|Shapeshifted|Fortified|Phasing|Elusive|Unbound)$/i,
+    regex: /(?:\s*,\s*|\s+)while\s+(Channelling|Stationary|Moving|Sprinting|Focused|Focussed|Shapeshifted|Fortified|Phasing|Elusive|Unbound)$/i,
     apply: (m) => {
       const k = m[1]!.toLowerCase();
       return { tags: [{ type: 'Condition', var: k === 'focussed' ? 'Focused' : capFirst(k) }] };
@@ -1072,6 +1179,10 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
   },
   {
     regex: /(?:\s*,\s*|\s+)while\s+(?:you\s+are\s+)?affected\s+by\s+([A-Za-z][A-Za-z ']*?)$/i,
+    apply: (m) => ({ tags: [{ type: 'Condition', var: `AffectedBy${toPascalCase(m[1]!)}` }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)while\s+using\s+([A-Za-z][A-Za-z ']*?)$/i,
     apply: (m) => ({ tags: [{ type: 'Condition', var: `AffectedBy${toPascalCase(m[1]!)}` }] }),
   },
   {
@@ -1185,6 +1296,34 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
     regex: /(?:\s*,\s*|\s+)if\s+you\s+haven't\s+Summoned\s+a\s+Totem\s+in\s+the\s+past\s+\d+\s+seconds$/i,
     apply: () => ({ tags: [{ type: 'Condition', var: 'NoSummonedTotemsRecently' }] }),
   },
+  {
+    regex: /(?:\s*,\s*|\s+)if\s+Energy\s+Shield\s+Recharge\s+has\s+started\s+in\s+the\s+past\s+\d+\s+seconds$/i,
+    apply: () => ({ tags: [{ type: 'Condition', var: 'EnergyShieldRechargeStartedRecently' }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)if\s+you(?:'ve|\s+have)\s+Dodge\s+Rolled\s+Recently$/i,
+    apply: () => ({ tags: [{ type: 'Condition', var: 'DodgeRolledRecently' }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)if\s+you(?:'ve|\s+have)\s+used\s+a\s+Mark\s+Recently$/i,
+    apply: () => ({ tags: [{ type: 'Condition', var: 'UsedMarkRecently' }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)if\s+you(?:'ve|\s+have)\s+used\s+a\s+(Life|Mana)\s+Flask\s+in\s+the\s+past\s+\d+\s+seconds$/i,
+    apply: (m) => ({ tags: [{ type: 'Condition', var: `Used${capFirst(m[1]!)}FlaskRecently` }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)if\s+you(?:'ve|\s+have)\s+inflicted\s+Exposure\s+Recently$/i,
+    apply: () => ({ tags: [{ type: 'Condition', var: 'InflictedExposureRecently' }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)if\s+you\s+haven't\s+taken\s+Damage\s+Recently$/i,
+    apply: () => ({ tags: [{ type: 'Condition', var: 'TakenDamageRecently', neg: true }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)for\s+\d+\s+seconds\s+when\s+you\s+Kill\s+(?:an\s+Enemy|a\s+Rare\s+or\s+Unique\s+Enemy)$/i,
+    apply: () => ({ tags: [{ type: 'Condition', var: 'KilledRecently' }] }),
+  },
 
   // --- Enemy status conditions ("against <Status> Enemies") ---
   {
@@ -1231,6 +1370,18 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
     }),
   },
   {
+    regex: /(?:\s*,\s*|\s+)with\s+Skills\s+that\s+cost\s+Life$/i,
+    apply: () => ({
+      tags: [{ type: 'Condition', var: 'SpellCostsLife' }],
+    }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)to\s+your\s+Marked\s+targets$/i,
+    apply: () => ({
+      tags: [{ type: 'Condition', var: 'EnemyMarked' }],
+    }),
+  },
+  {
     regex: /(?<!bonuses gained)(?<!bonus gained)(?:\s*,\s*|\s+)from\s+(?:your\s+)?Equipped\s+(Body Armour|Shield|Helmet|Focus|Boots|Gloves)$/i,
     apply: (m) => ({ slotScope: normalizeSlotScope(m[1]!) }),
   },
@@ -1263,12 +1414,18 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
     apply: () => ({ tags: [{ type: 'Condition', var: 'LeechRemovedByFullLifeRecently' }] }),
   },
   {
-    regex: /(?:\s*,\s*|\s+)against\s+enemies\s+within\s+[\d.]+\s+metres$/i,
-    apply: () => ({ tags: [{ type: 'Condition', var: 'AtCloseRange' }] }),
+    regex: /(?:\s*,\s*|\s+)against\s+enemies\s+within\s+(\d+(?:\.\d+)?)\s*m(?:etres?)?$/i,
+    apply: (m) => ({
+      tags: [{ type: 'Condition', var: `EnemyDistanceLe:${Math.round(Number(m[1]) * 10)}` }],
+    }),
   },
   {
     regex: /(?:\s*,\s*|\s+)by\s+Cursed\s+Enemies$/i,
     apply: () => ({ tags: [{ type: 'Condition', var: 'EnemyCursed' }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)against\s+you$/i,
+    apply: () => ({ actorScope: 'enemy' }),
   },
   {
     regex: /(?:\s*,\s*|\s+)on\s+Enemies$/i,
@@ -1348,6 +1505,7 @@ export const STAGE2_PREFIX_SCOPE_RULES: readonly Stage2ScopeRule[] = [
   { regex: /^Triggered Spells (?:deal |have |gain )/i, flags: ModFlag.Spell, tags: [{ type: 'SkillType', skillType: 'Triggered' }] },
   { regex: /^Spell Skills (?:deal |have |gain )/i, flags: ModFlag.Spell },
   { regex: /^Spells (?:deal |have |gain )/i, flags: ModFlag.Spell },
+  { regex: /^Projectiles from Spells /i, flags: ModFlag.Spell | ModFlag.Projectile },
   { regex: /^Projectiles (?:deal |have |gain )/i, flags: ModFlag.Projectile },
   { regex: /^Area Skills (?:deal |have |gain )/i, flags: ModFlag.Area },
   { regex: /^Non-Curse Aura Skills (?:deal |have |gain )/i, keywordFlags: KeywordFlag.Aura },
@@ -1357,6 +1515,8 @@ export const STAGE2_PREFIX_SCOPE_RULES: readonly Stage2ScopeRule[] = [
   { regex: /^Herald Skills (?:deal |have |gain )/i, tags: [{ type: 'SkillType', skillType: 'Herald' }] },
   { regex: /^Brand Skills (?:deal |have |gain )/i, tags: [{ type: 'SkillType', skillType: 'Brand' }] },
   { regex: /^Channelling Skills (?:deal |have |gain )/i, tags: [{ type: 'SkillType', skillType: 'Channel' }] },
+  { regex: /^Non-Channelling Spells (?:deal |have |gain )/i, flags: ModFlag.Spell, tags: [{ type: 'SkillType', skillType: 'Channel', neg: true }] },
+  { regex: /^Non-Channelling Attacks (?:deal |have |gain )/i, flags: ModFlag.Attack, tags: [{ type: 'SkillType', skillType: 'Channel', neg: true }] },
   { regex: /^Non-Channelling Skills (?:deal |have |gain )/i, tags: [{ type: 'SkillType', skillType: 'Channel', neg: true }] },
   { regex: /^Banner Skills (?:deal |have |gain )/i, tags: [{ type: 'SkillType', skillType: 'Banner' }] },
   { regex: /^Guard Skills (?:deal |have |gain )/i, tags: [{ type: 'SkillType', skillType: 'Guard' }] },
@@ -1371,6 +1531,7 @@ export const STAGE2_PREFIX_SCOPE_RULES: readonly Stage2ScopeRule[] = [
   { regex: /^Non-Minion Skills (?:deal |have |gain )/i, tags: [{ type: 'SkillType', skillType: 'Minion', neg: true }] },
   { regex: /^Minion Skills (?:deal |have |gain )/i, keywordFlags: KeywordFlag.Minion },
   { regex: /^(?:Exerted|Empowered|Ancestrally Boosted) Attacks (?:deal |have |gain )/i, flags: ModFlag.Attack },
+  { regex: /^Slam Skills you use yourself (?:deal |have |gain )/i, flags: ModFlag.Attack | ModFlag.Melee },
   { regex: /^Slam Skills (?:deal |have |gain )/i, flags: ModFlag.Attack | ModFlag.Melee },
   { regex: /^Skills (?:have |deal |gain )/i },
 ];
@@ -1450,6 +1611,7 @@ export const STAGE2_SUFFIX_SCOPE_RULES: readonly Stage2ScopeRule[] = [
   { regex: /\s+(?:of|with|for) Link Skills$/i, tags: [{ type: 'SkillType', skillType: 'Link' }] },
   { regex: /\s+(?:of|with|for) Retaliation Skills$/i, tags: [{ type: 'SkillType', skillType: 'Retaliation' }] },
   { regex: /\s+(?:of|with|for) Mark Skills$/i, tags: [{ type: 'SkillType', skillType: 'Mark' }] },
+  { regex: /\s+(?:of|for) Marks$/i, tags: [{ type: 'SkillType', skillType: 'Mark' }] },
   { regex: /\s+(?:of|with|for) Channelling Skills$/i, tags: [{ type: 'SkillType', skillType: 'Channel' }] },
   { regex: /\s+(?:of|with|for) Non-Channelling Skills$/i, tags: [{ type: 'SkillType', skillType: 'Channel', neg: true }] },
   { regex: /\s+(?:of|with|for) Minion Skills$/i, keywordFlags: KeywordFlag.Minion },
@@ -1593,6 +1755,8 @@ export const MOD_NAME_TABLE: Record<string, ModNameTarget> = {
   'chance to suppress spell damage': { names: ['SpellSuppressionChance'] },
   'to suppress spell damage': { names: ['SpellSuppressionChance'] },
   'amount of suppressed spell damage prevented': { names: ['SpellSuppressionEffect'] },
+  'of suppressed spell damage': { names: ['SpellSuppressionEffect'] },
+  'of damage from deflected hits': { names: ['DeflectedHitDamagePrevented'] },
   'chance to evade': { names: ['EvadeChance'] },
   'chance to evade attacks': { names: ['EvadeChance'] },
   'chance to evade attack hits': { names: ['EvadeChance'] },
@@ -1636,6 +1800,7 @@ export const MOD_NAME_TABLE: Record<string, ModNameTarget> = {
   },
   'amount of life leeched': { names: ['LifeLeechAmount'] },
   'amount of mana leeched': { names: ['ManaLeechAmount'] },
+  'maximum recovery per life leech': { names: ['LifeLeechMaxRecovery'] },
   'speed of recoup effects': { names: ['RecoupSpeed'] },
 
   // --- Damage Taken ---
@@ -1807,6 +1972,7 @@ export const MOD_NAME_TABLE: Record<string, ModNameTarget> = {
   'banner duration': { names: ['BannerDuration'] },
   'hazard duration': { names: ['HazardDuration'] },
   'movement speed penalty from using skills while moving': { names: ['MoveSpeedPenaltyReduction'] },
+  'movement speed penalty from using skills': { names: ['MoveSpeedPenaltyReduction'] },
   'movement speed penalty while actively blocking': { names: ['MoveSpeedPenaltyReduction'] },
   'implicit modifier magnitudes': { names: ['ImplicitModEffect'] },
   'charm charges gained': { names: ['CharmChargesGained'] },
@@ -1861,6 +2027,7 @@ export const MOD_NAME_TABLE: Record<string, ModNameTarget> = {
   'to blind enemies on hit': { names: ['BlindChance'] },
   'to blind on hit': { names: ['BlindChance'] },
   'to daze on hit': { names: ['DazeChance'] },
+  'to inflict withered on hit': { names: ['WitherOnHitChance'] },
   'to knock enemies back on hit': { names: ['KnockbackChance'] },
   'to ignore enemy physical damage reduction': { names: ['EnemyPhysicalDamageReductionIgnoreChance'] },
   'to avoid being stunned': { names: ['AvoidStun'] },
@@ -1887,6 +2054,8 @@ export const MOD_NAME_TABLE: Record<string, ModNameTarget> = {
   'bleeding duration': { names: ['BleedingDuration'] },
   'bleed duration': { names: ['BleedingDuration'] },
   'bleeding duration on you': { names: ['SelfBleedDuration'] },
+  'bleed duration on you': { names: ['SelfBleedDuration'] },
+  'daze duration': { names: ['DazeDuration'] },
   'poison duration': { names: ['PoisonDuration'] },
   'poison duration on enemies': { names: ['PoisonDuration'] },
   'poison duration on you': { names: ['SelfPoisonDuration'] },
@@ -2024,7 +2193,11 @@ export const MOD_NAME_TABLE: Record<string, ModNameTarget> = {
   'cooldown recovery': { names: ['CooldownRecovery'] },
   'cooldown recovery rate': { names: ['CooldownRecovery'] },
   'cooldown recovery speed': { names: ['CooldownRecovery'] },
+  'cooldown use': { names: ['AdditionalCooldownUses'] },
+  'cooldown uses': { names: ['AdditionalCooldownUses'] },
   'warcry cooldown recovery rate': { names: ['CooldownRecovery'], keywordFlags: KeywordFlag.Warcry },
+  'grenade detonation time': { names: ['GrenadeDetonationTime'] },
+  'aftershock area of effect': { names: ['AftershockAreaOfEffect'] },
   'area of effect': { names: ['AreaOfEffect'] },
   'area of effect of skills': { names: ['AreaOfEffect'] },
   'presence area of effect': { names: ['PresenceAreaOfEffect'] },
@@ -2087,6 +2260,7 @@ export const MOD_NAME_TABLE: Record<string, ModNameTarget> = {
   'charge recovery': { names: ['FlaskChargeRecovery'] },
   'amount recovered': { names: ['FlaskRecovery'] },
   'recovery rate': { names: ['FlaskRecoveryRate'] },
+  'flask recovery rate': { names: ['FlaskRecoveryRate'] },
   'recovery from flasks': { names: ['FlaskRecovery'] },
   'life recovery from flasks': { names: ['FlaskLifeRecovery'] },
   'mana recovery from flasks': { names: ['FlaskManaRecovery'] },
@@ -2101,6 +2275,7 @@ export const MOD_NAME_TABLE: Record<string, ModNameTarget> = {
   'effect of herald buffs on you': { names: ['HeraldBuffEffect'] },
   'effect of arcane surge on you': { names: ['ArcaneSurgeEffect'] },
   'effect of onslaught on you': { names: ['OnslaughtEffect'] },
+  'effect of tailwind on you': { names: ['TailwindEffect'] },
   'effect of elusive on you': { names: ['ElusiveEffect'] },
   'elusive effect': { names: ['ElusiveEffect'] },
   'effect of cruelty': { names: ['CrueltyEffect'] },
@@ -2164,6 +2339,10 @@ export const MOD_NAME_TABLE: Record<string, ModNameTarget> = {
   'trap throwing speed': { names: ['TrapThrowingSpeed'], keywordFlags: KeywordFlag.Trap },
   'mine throwing speed': { names: ['MineThrowingSpeed'], keywordFlags: KeywordFlag.Mine },
   'mine laying speed': { names: ['MineThrowingSpeed'], keywordFlags: KeywordFlag.Mine },
+  'trap and mine throwing speed': {
+    names: ['TrapThrowingSpeed', 'MineThrowingSpeed'],
+    keywordFlags: KeywordFlag.Trap | KeywordFlag.Mine,
+  },
   'detonation speed': { names: ['MineDetonationSpeed'], keywordFlags: KeywordFlag.Mine },
   'trap trigger area of effect': { names: ['TrapTriggerAreaOfEffect'], keywordFlags: KeywordFlag.Trap },
   'brand attachment range': { names: ['BrandAttachmentRange'] },
@@ -2211,6 +2390,9 @@ export const MOD_NAME_TABLE: Record<string, ModNameTarget> = {
   'second to cooldown': { names: ['CooldownFlat'] },
   'energy': { names: ['MetaEnergyGain'] },
   'glory generation': { names: ['GloryGeneration'] },
+  'experience gain of gems': { names: ['GemExperienceGain'] },
+  'projectile range': { names: ['ProjectileRange'] },
+  'maximum quality': { names: ['ItemMaxQuality'] },
 };
 
 // ============================================================================

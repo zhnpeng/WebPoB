@@ -33,30 +33,34 @@ const RARITY_MAP: Record<string, ItemRarity> = {
 
 const SLOT_KEYWORDS: Array<{ pattern: RegExp; slot: EquipmentSlotId | 'Any'; weaponType?: WeaponBaseStats['weaponType']; twoHanded?: boolean }> = [
   { pattern: /\bjewel\b|珠宝/i, slot: 'Any' },
-  { pattern: /wand|法杖|魔杖/i, slot: 'Weapon 1', weaponType: 'Wand', twoHanded: false },
-  { pattern: /quarterstaff|细杖/i, slot: 'Weapon 1', weaponType: 'Quarterstaff', twoHanded: true },
-  { pattern: /staff|staves|warstaff|长杖|符文之叉/i, slot: 'Weapon 1', weaponType: 'Staff', twoHanded: true },
-  { pattern: /crossbow|战弩|十字弓|弩/i, slot: 'Weapon 1', weaponType: 'Crossbow', twoHanded: true },
-  { pattern: /bow|长弓|弓/i, slot: 'Weapon 1', weaponType: 'Bow', twoHanded: true },
-  { pattern: /spear|战矛|长矛/i, slot: 'Weapon 1', weaponType: 'Sword', twoHanded: false },
-  { pattern: /dagger|匕首/i, slot: 'Weapon 1', weaponType: 'Dagger', twoHanded: false },
-  { pattern: /claw|爪/i, slot: 'Weapon 1', weaponType: 'Claw', twoHanded: false },
-  { pattern: /two hand sword|双手剑/i, slot: 'Weapon 1', weaponType: 'Sword', twoHanded: true },
-  { pattern: /sword|剑/i, slot: 'Weapon 1', weaponType: 'Sword', twoHanded: false },
-  { pattern: /two hand axe|双手斧/i, slot: 'Weapon 1', weaponType: 'Axe', twoHanded: true },
-  { pattern: /axe|斧/i, slot: 'Weapon 1', weaponType: 'Axe', twoHanded: false },
-  { pattern: /two hand mace|双手锤/i, slot: 'Weapon 1', weaponType: 'Mace', twoHanded: true },
-  { pattern: /mace|sceptre|flail|权杖|短杖|连枷|锤/i, slot: 'Weapon 1', weaponType: 'Mace', twoHanded: false },
-  { pattern: /shield|buckler|focus|quiver|盾|法器|箭袋/i, slot: 'Weapon 2' },
-  { pattern: /helmet|circlet|crown|tiara|helm|mask|hood|cap|头盔|头环|王冠|冠冕|头冠|帽|面具|兜帽/i, slot: 'Helmet' },
-  { pattern: /body armour|robe|garb|plate|regalia|vestment|vest|coat|tunic|brigandine|doublet|jacket|胸甲|长袍|战甲|法衣|背心|外衣|护胸|盔甲/i, slot: 'Body Armour' },
-  { pattern: /gloves|gauntlets|mitts|bracers|wraps|手套|护手|手甲|护腕/i, slot: 'Gloves' },
-  { pattern: /boots|greaves|sandals|shoes|slippers|sabatons|鞋子|长靴|战靴|便鞋|行靴|护胫|靴/i, slot: 'Boots' },
-  { pattern: /amulet|talisman|项链|护颈|护身符/i, slot: 'Amulet' },
-  { pattern: /ring|戒指|指环/i, slot: 'Ring 1' },
-  { pattern: /belt|vise|sash|腰带|束带/i, slot: 'Belt' },
-  { pattern: /charm|咒符|护符/i, slot: 'Charm 1' },
-  { pattern: /flask|药剂/i, slot: 'Flask 1' },
+  { pattern: /\bgraft\b|uulgraft|eshgraft|xophgraft|tulgraft|chayulagraft/i, slot: 'Graft 1' },
+  { pattern: /\b(?:flask|tincture)\b|药剂|酊剂/i, slot: 'Flask 1' },
+  { pattern: /\bcharm\b|咒符|护符/i, slot: 'Charm 1' },
+  // Jewellery & specific armour slots BEFORE Body Armour (so "Plate Greaves", "Leather Belt", "Chainmail Gauntlets" never match "Plate"/"Leather"/"Mail")
+  { pattern: /\b(?:belt|vise|sash)\b|腰带|束带/i, slot: 'Belt' },
+  { pattern: /\b(?:ring|signet)\b|戒指|指环/i, slot: 'Ring 1' },
+  { pattern: /\b(?:amulet|talisman)\b|项链|护颈|护身符/i, slot: 'Amulet' },
+  { pattern: /\b(?:gloves|gauntlets|mitts|bracers|wraps|cuffs|manchettes|handwraps|vambraces|knuckles|fists of stone)\b|手套|护手|手甲|护腕/i, slot: 'Gloves' },
+  { pattern: /\b(?:boots|greaves|sandals|shoes|slippers|sabatons|leggings|sollerets|calkins|buskins|treads|moccasins|footwraps|striders)\b|鞋子|长靴|战靴|便鞋|行靴|护胫|靴/i, slot: 'Boots' },
+  { pattern: /\b(?:helmet|circlet|crown|tiara|helm|mask|hood|cap|burgonet|pelt|bascinet|sallet|coif|visage|casque|tricorne|cage|greathelm|barbute|guise|veil|diadem|hat|skullcap)\b|头盔|头环|王冠|冠冕|头冠|帽|面具|兜帽/i, slot: 'Helmet' },
+  { pattern: /\b(?:shield|buckler|focus|quiver|targe|aegis)\b|盾|法器|箭袋/i, slot: 'Weapon 2' },
+  // Weapons (strict English word boundaries so "Daggerfoot Shoes" or "Ornate Ringmail" never collide)
+  { pattern: /\bwands?\b|法杖|魔杖/i, slot: 'Weapon 1', weaponType: 'Wand', twoHanded: false },
+  { pattern: /\bquartersta(?:ff|ves)\b|细杖/i, slot: 'Weapon 1', weaponType: 'Quarterstaff', twoHanded: true },
+  { pattern: /\b(?:staff|staves|warstaff|warstaves|runic fork|lathi|gnarled branch)\b|长杖|符文之叉/i, slot: 'Weapon 1', weaponType: 'Staff', twoHanded: true },
+  { pattern: /\bcrossbows?\b|\barbalests?\b|战弩|十字弓|弩/i, slot: 'Weapon 1', weaponType: 'Crossbow', twoHanded: true },
+  { pattern: /\b(?:bows?|longbow|shortbow|recurve)\b|长弓|弓/i, slot: 'Weapon 1', weaponType: 'Bow', twoHanded: true },
+  { pattern: /\bspears?\b|\bglaives?\b|\bpikes?\b|\blances?\b|\bharpoons?\b|\btridents?\b|\bpartisans?\b|战矛|长矛/i, slot: 'Weapon 1', weaponType: 'Sword', twoHanded: false },
+  { pattern: /\b(?:daggers?|kris|sai|poignard|stiletto|dirk|skean|knife)\b|匕首/i, slot: 'Weapon 1', weaponType: 'Dagger', twoHanded: false },
+  { pattern: /\b(?:claws?|katar|talon|awl|gouger)\b|爪/i, slot: 'Weapon 1', weaponType: 'Claw', twoHanded: false },
+  { pattern: /\b(?:two[\s-]hand(?:ed)? sword|greatsword|claymore|bastard sword|exquisite blade)\b|双手剑/i, slot: 'Weapon 1', weaponType: 'Sword', twoHanded: true },
+  { pattern: /\b(?:swords?|rapier|foil|estoc|sabre|cutlass|scimitar|gladius|falchion|blade)\b|剑/i, slot: 'Weapon 1', weaponType: 'Sword', twoHanded: false },
+  { pattern: /\b(?:two[\s-]hand(?:ed)? axe|greataxe|chopper|labrys|fleshripper|poleaxe|halberd|bardiche)\b|双手斧/i, slot: 'Weapon 1', weaponType: 'Axe', twoHanded: true },
+  { pattern: /\b(?:axes?|cleaver|hatchet|tomahawk)\b|斧/i, slot: 'Weapon 1', weaponType: 'Axe', twoHanded: false },
+  { pattern: /\b(?:two[\s-]hand(?:ed)? mace|greatmace|greatclub|greathammer|maul|sledgehammer|piledriver|meatgrinder)\b|双手锤/i, slot: 'Weapon 1', weaponType: 'Mace', twoHanded: true },
+  { pattern: /\b(?:maces?|sceptres?|flails?|hammers?|clubs?|gavel|cudgel|bludgeon|morningstar)\b|权杖|短杖|连枷|锤/i, slot: 'Weapon 1', weaponType: 'Mace', twoHanded: false },
+  // Body Armour (checked after Gloves/Boots/Helmet/Belt/Shield/Weapons)
+  { pattern: /\b(?:body armour|robe|garb|plate|regalia|vestments?|vest|coat|tunic|brigandine|doublet|jacket|cuirass|armour|hauberk|lamellar|lamellae|chainmail|ringmail|scalemail|mail|mantle|raiment|leather|dragonscale|wyrmscale|garment|markings|jerkin|silks|corselet|breastplate|kaftan|shroud|toga|surcoat)\b|胸甲|长袍|战甲|法衣|背心|外衣|护胸|盔甲/i, slot: 'Body Armour' },
 ];
 
 function inferSlotAndWeapon(hintText: string, game: GameId = 'poe1'): {
@@ -141,6 +145,7 @@ export function parseItemText(
   let implicitCountHint: number | null = null;
   let variantListCount = 0;
   let usesVariantGroups = false;
+  let allowDuplicateVariants = false;
   let selectedVersion: number | undefined;
   let selectedVariantFromText: number | undefined;
   const selectedAltVariantsFromText: number[] = [];
@@ -285,7 +290,9 @@ export function parseItemText(
     const runeMatch = line.match(/^(?:Rune|符文)\s*[:：]\s*(.+)$/i);
     if (runeMatch) {
       const runeName = runeMatch[1]!.trim();
-      if (runeName) runes.push(runeName);
+      if (runeName && !/^(?:none|无|無)$/i.test(runeName)) {
+        runes.push(runeName);
+      }
       continue;
     }
 
@@ -348,6 +355,11 @@ export function parseItemText(
       usesVariantGroups = true;
       continue;
     }
+    const dupVarMatch = line.match(/^Allow Duplicate Variants\s*[:：]\s*(true|false)$/i);
+    if (dupVarMatch) {
+      allowDuplicateVariants = dupVarMatch[1]!.toLowerCase() === 'true';
+      continue;
+    }
 
     if (/^(?:Corrupted|Twice Corrupted|已腐化|双重腐化)$/i.test(line)) {
       corrupted = true;
@@ -365,7 +377,7 @@ export function parseItemText(
 
     if (
       /^(?:Unique ID|Requirements|需求|Item Level|物品等级|Requires|需求等级|Note|备注|Weapon Range|攻击范围|Limited to|仅限|Radius|影响范围|ArmourBasePercentile|EvasionBasePercentile|EnergyShieldBasePercentile|WardBasePercentile|<ModRange\b)/i.test(line) ||
-      /^(?:Rune|符文|Crafted|Prefix|Suffix|League|Source|Upgrade|Unreleased|Catalyst|CatalystQuality|Cluster Jewel Skill|Cluster Jewel Node Count|Talisman Tier|Memory Strands|Has Alt Variant(?:\s+(?:Two|Three|Four|Five))?|Allow Duplicate Variants|Has Variants|Selected Variants)\s*[:：]/i.test(line) ||
+      /^(?:Rune|符文|Crafted|Prefix|Suffix|League|Source|Upgrade|Unreleased|Catalyst|CatalystQuality|Cluster Jewel Skill|Cluster Jewel Node Count|Talisman Tier|Memory Strands|Graftblood|Intangibility|Charm Slots|Has Alt Variant(?:\s+(?:Two|Three|Four|Five))?|Allow Duplicate Variants|Has Variants|Selected Variants)\s*[:：]/i.test(line) ||
       /^(?:Str|Dex|Int|Strength|Dexterity|Intelligence|力量|敏捷|智慧|Class|职业)\s*[:：]\s*\d+/i.test(line) ||
       /^(?:Unidentified|未鉴定|Mirrored|已复制|Split|已分裂|Sanctified|Historic|Foulborn Unique|Foil Unique(?:\s*\([^)]*\))?|Synthesised Item|追忆物品|Fractured Item|分裂物品|Searing Exarch Item|Eater of Worlds Item|Shaper Item|Elder Item|Crusader Item|Hunter Item|Redeemer Item|Warlord Item)$/i.test(line)
     ) {
@@ -489,15 +501,20 @@ export function parseItemText(
     selectedVariantFromText ??
     options?.variant ??
     (variantListCount > 0 ? variantListCount : undefined);
-  const activeVariants = new Set<number>();
+  const resolvedAltVariants =
+    selectedAltVariantsFromText.length > 0
+      ? selectedAltVariantsFromText
+      : (options?.variantAlts ?? []);
+  const selectedVariantList: number[] = [];
   if (resolvedPrimaryVariant !== undefined && Number.isFinite(resolvedPrimaryVariant)) {
-    activeVariants.add(resolvedPrimaryVariant);
+    selectedVariantList.push(resolvedPrimaryVariant);
   }
-  for (const alt of [...(options?.variantAlts ?? []), ...selectedAltVariantsFromText]) {
+  for (const alt of resolvedAltVariants) {
     if (Number.isFinite(alt) && alt > 0) {
-      activeVariants.add(alt);
+      selectedVariantList.push(alt);
     }
   }
+  const activeVariants = new Set<number>(selectedVariantList);
   const variantSelection: ItemVariantSelection = {
     activeVariants,
     usesVariantGroups,
@@ -505,14 +522,33 @@ export function parseItemText(
     variantGroupSelections,
   };
 
+  const getDuplicateVariantRepeatCount = (rawLine: string): number => {
+    if (!allowDuplicateVariants || selectedVariantList.length <= 1) return 1;
+    const m = rawLine.match(/\{variant:([\d,\s]+)\}/i);
+    if (!m?.[1]) return 1;
+    const lineVariants = new Set(
+      m[1]
+        .split(',')
+        .map((s) => Number(s.trim()))
+        .filter((n) => Number.isFinite(n)),
+    );
+    let matches = 0;
+    for (const v of selectedVariantList) {
+      if (lineVariants.has(v)) matches++;
+    }
+    return Math.max(1, matches);
+  };
+
   let runeImplicitsCount = 0;
   const isRuneLine = (rawLine: string): boolean => /\{rune\}|\(rune\)|（符文）/i.test(rawLine);
 
-  const CATALYST_TAG_GROUPS: Readonly<Record<string, readonly string[]>> = {
+  const POE1_CATALYST_TAG_GROUPS: Readonly<Record<string, readonly string[]>> = {
     abrasive: ['attack'],
     attack: ['attack'],
     accelerating: ['speed'],
     speed: ['speed'],
+    dextral: ['suffix'],
+    suffix: ['suffix'],
     fertile: ['resource', 'life', 'mana'],
     'life and mana': ['resource', 'life', 'mana'],
     imbued: ['caster'],
@@ -523,19 +559,54 @@ export function parseItemText(
     'physical and chaos': ['physical_damage', 'chaos_damage', 'physical', 'chaos'],
     prismatic: ['jewellery_resistance', 'elemental_resistance', 'chaos_resistance', 'resistance'],
     resistance: ['jewellery_resistance', 'elemental_resistance', 'chaos_resistance', 'resistance'],
-    tempering: ['jewellery_defense', 'defences'],
-    defence: ['jewellery_defense', 'defences'],
+    sinistral: ['prefix'],
+    prefix: ['prefix'],
+    tempering: ['jewellery_defense', 'defences', 'armour', 'evasion', 'energyshield'],
+    defence: ['jewellery_defense', 'defences', 'armour', 'evasion', 'energyshield'],
     turbulent: ['jewellery_elemental', 'elemental_damage', 'elemental'],
     elemental: ['jewellery_elemental', 'elemental_damage', 'elemental'],
     unstable: ['critical'],
     critical: ['critical'],
   };
+  const POE2_CATALYST_TAG_GROUPS: Readonly<Record<string, readonly string[]>> = {
+    flesh: ['life'],
+    life: ['life'],
+    neural: ['mana'],
+    mana: ['mana'],
+    carapace: ['defences', 'armour', 'evasion', 'energyshield'],
+    defence: ['defences', 'armour', 'evasion', 'energyshield'],
+    "uul-netol's": ['physical'],
+    'uul-netol': ['physical'],
+    physical: ['physical'],
+    "xoph's": ['fire'],
+    xoph: ['fire'],
+    fire: ['fire'],
+    "tul's": ['cold'],
+    tul: ['cold'],
+    cold: ['cold'],
+    "esh's": ['lightning'],
+    esh: ['lightning'],
+    lightning: ['lightning'],
+    "chayula's": ['chaos'],
+    chayula: ['chaos'],
+    chaos: ['chaos'],
+    reaver: ['attack'],
+    attack: ['attack'],
+    sibilant: ['caster'],
+    caster: ['caster'],
+    skittering: ['speed'],
+    speed: ['speed'],
+    adaptive: ['attribute'],
+    attribute: ['attribute'],
+    necrotic: ['minion'],
+    minion: ['minion'],
+  };
   const normCatalystKey = catalyst
     ? catalyst.trim().toLowerCase().replace(/\s*modifiers\s*$/i, '')
     : '';
   const activeCatalystTags =
-    game === 'poe1' && normCatalystKey && catalystQuality && catalystQuality > 0
-      ? CATALYST_TAG_GROUPS[normCatalystKey]
+    normCatalystKey && catalystQuality && catalystQuality > 0
+      ? (game === 'poe2' ? POE2_CATALYST_TAG_GROUPS : POE1_CATALYST_TAG_GROUPS)[normCatalystKey]
       : undefined;
 
   const resolveAndNormalizeModLine = (rawLine: string, rawModIndex?: number): string | null => {
@@ -549,29 +620,36 @@ export function parseItemText(
     const modRangeOverride =
       inlineRanges ?? (rawModIndex !== undefined ? modRanges.get(rawModIndex) : undefined);
     let interpolated = interpolateModRanges(rawLine, modRangeOverride);
-    if (activeCatalystTags && catalystQuality && /\(\d/.test(rawLine)) {
+    if (
+      activeCatalystTags &&
+      catalystQuality &&
+      /\(\d/.test(rawLine) &&
+      !/\{unscalable\}|\bunscalable value\b/i.test(rawLine)
+    ) {
       const mTags = rawLine.match(/\{tags:([^}]*)\}/i);
-      if (mTags?.[1]) {
-        const lineTags = mTags[1]
-          .toLowerCase()
-          .split(',')
-          .map((t) => t.trim());
-        if (activeCatalystTags.some((ct) => lineTags.includes(ct))) {
-          const catMult = 1 + catalystQuality / 100;
-          interpolated = interpolated.replace(
-            /([+-]?)(\d+(?:\.\d+)?)/g,
-            (_full, sign: string, numStr: string) => {
-              const val = Number(numStr);
-              const dotIdx = numStr.indexOf('.');
-              if (dotIdx === -1) {
-                return `${sign}${Math.trunc(val * catMult + 1e-9)}`;
-              }
-              const decimals = numStr.length - dotIdx - 1;
-              const factor = Math.pow(10, decimals);
-              return `${sign}${Math.trunc(val * catMult * factor + 1e-9) / factor}`;
-            },
-          );
-        }
+      const lineTags = mTags?.[1]
+        ? mTags[1]
+            .toLowerCase()
+            .split(',')
+            .map((t) => t.trim())
+        : [];
+      if (/\{prefix\}/i.test(rawLine)) lineTags.push('prefix');
+      if (/\{suffix\}/i.test(rawLine)) lineTags.push('suffix');
+      if (lineTags.length > 0 && activeCatalystTags.some((ct) => lineTags.includes(ct))) {
+        const catMult = 1 + catalystQuality / 100;
+        interpolated = interpolated.replace(
+          /([+-]?)(\d+(?:\.\d+)?)/g,
+          (_full, sign: string, numStr: string) => {
+            const val = Number(numStr);
+            const dotIdx = numStr.indexOf('.');
+            if (dotIdx === -1) {
+              return `${sign}${Math.trunc(val * catMult + 1e-9)}`;
+            }
+            const decimals = numStr.length - dotIdx - 1;
+            const factor = Math.pow(10, decimals);
+            return `${sign}${Math.trunc(val * catMult * factor + 1e-9) / factor}`;
+          },
+        );
       }
     }
     const normalized = normalizeStatLineToEn(interpolated);
@@ -580,27 +658,38 @@ export function parseItemText(
 
   for (const rawImp of rawTaggedImplicits) {
     const normalized = resolveAndNormalizeModLine(rawImp);
-    if (normalized) implicits.push(normalized);
+    if (!normalized) continue;
+    const count = getDuplicateVariantRepeatCount(rawImp);
+    for (let r = 0; r < count; r++) implicits.push(normalized);
   }
 
   if (implicitCountHint !== null) {
     for (let i = 0; i < rawStatCandidates.length; i++) {
-      const normalized = resolveAndNormalizeModLine(rawStatCandidates[i]!, i + 1);
+      const rawLine = rawStatCandidates[i]!;
+      const normalized = resolveAndNormalizeModLine(rawLine, i + 1);
       if (!normalized) continue;
-      if (i < implicitCountHint) {
-        implicits.push(normalized);
-      } else {
-        explicits.push(normalized);
+      const count = getDuplicateVariantRepeatCount(rawLine);
+      for (let r = 0; r < count; r++) {
+        if (i < implicitCountHint) {
+          implicits.push(normalized);
+        } else {
+          explicits.push(normalized);
+        }
       }
     }
   } else {
     let modIdx = 1;
     const nonEmptySections = rawCollectedSections
-      .map((sec) =>
-        sec
-          .map((rawLine) => resolveAndNormalizeModLine(rawLine, modIdx++))
-          .filter((l): l is string => Boolean(l)),
-      )
+      .map((sec) => {
+        const out: string[] = [];
+        for (const rawLine of sec) {
+          const normalized = resolveAndNormalizeModLine(rawLine, modIdx++);
+          if (!normalized) continue;
+          const count = getDuplicateVariantRepeatCount(rawLine);
+          for (let r = 0; r < count; r++) out.push(normalized);
+        }
+        return out;
+      })
       .filter((s) => s.length > 0);
     if (nonEmptySections.length >= 2 && implicits.length === 0) {
       // Heuristic: if first mod section has <= 2 lines, treat as implicits and last as explicits
@@ -621,18 +710,46 @@ export function parseItemText(
     }
   }
 
-  const inferred = inferSlotAndWeapon(`${itemClassHint} ${baseName} ${name}`, game);
+  // Prioritize official Item Class + Base Name before item display Name so rare random titles
+  // containing words like "Shield" or "Focus" never misclassify Helmets/Body Armours/Gloves/Boots.
+  const primarySlotHint = `${itemClassHint} ${baseName}`.trim();
+  let inferred = inferSlotAndWeapon(primarySlotHint, game);
+  if (inferred.slotType === 'Any' && name && name !== baseName) {
+    inferred = inferSlotAndWeapon(name, game);
+  }
   const explicitWeaponInHeader = Boolean(
     physDamage || Object.keys(eleDamage).length > 0 || aps !== null || critChance !== null,
   );
   const explicitArmourInHeader = hasArmourStats;
-  const rawOfficialBase = getBaseItemStats(baseName, 0, game);
+  const lookupBaseStats = (qual: number) => {
+    const direct = getBaseItemStats(baseName, qual, game);
+    if (direct) return direct;
+    const stripped = baseName.replace(/^(?:Superior|Synthesised|Fractured)\s+/i, '').trim();
+    if (stripped && stripped !== baseName) {
+      return getBaseItemStats(stripped, qual, game);
+    }
+    return undefined;
+  };
+  const directRawOfficialBase = getBaseItemStats(baseName, 0, game);
+  const rawOfficialBase = lookupBaseStats(0);
+  // Only recompute PoE 2 XML local stats when `localItem.ts` can resolve the exact `baseName` directly
+  // (e.g. `Superior Soldier Cuirass` carries precomputed `Armour: 961` and cannot be looked up verbatim in localItem.ts).
   const recomputePoe2XmlLocal =
-    game === 'poe2' && !hasSeparators && Boolean(rawOfficialBase?.armour || rawOfficialBase?.weapon);
+    game === 'poe2' && !hasSeparators && Boolean(directRawOfficialBase?.armour || directRawOfficialBase?.weapon);
   const localStatsPrecomputed = recomputePoe2XmlLocal
     ? false
     : explicitWeaponInHeader || explicitArmourInHeader;
-  const officialBase = localStatsPrecomputed ? getBaseItemStats(baseName, quality, game) : rawOfficialBase;
+  const officialBase = localStatsPrecomputed ? lookupBaseStats(quality) : rawOfficialBase;
+
+  if (officialBase?.weapon) {
+    inferred = {
+      slotType: inferred.slotType === 'Any' ? 'Weapon 1' : inferred.slotType,
+      weaponType: officialBase.weapon.weaponType ?? inferred.weaponType,
+      twoHanded: officialBase.weapon.twoHanded ?? inferred.twoHanded,
+    };
+  } else if (officialBase?.armour?.blockChance !== undefined && inferred.slotType === 'Any') {
+    inferred = { slotType: 'Weapon 2' };
+  }
 
   let weaponStats: WeaponBaseStats | undefined;
   if (explicitWeaponInHeader) {
@@ -642,8 +759,8 @@ export function parseItemText(
       elementalDamage: Object.keys(eleDamage).length > 0 ? eleDamage : undefined,
       attacksPerSecond: aps ?? officialBase?.weapon?.attacksPerSecond ?? 1.2,
       critChance: critChance ?? officialBase?.weapon?.critChance ?? 6,
-      weaponType: inferred.weaponType ?? officialBase?.weapon?.weaponType ?? 'Sword',
-      twoHanded: inferred.twoHanded ?? officialBase?.weapon?.twoHanded ?? false,
+      weaponType: officialBase?.weapon?.weaponType ?? inferred.weaponType ?? 'Sword',
+      twoHanded: officialBase?.weapon?.twoHanded ?? inferred.twoHanded ?? false,
     };
   } else if (officialBase?.weapon) {
     weaponStats = { ...officialBase.weapon };

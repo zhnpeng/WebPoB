@@ -565,11 +565,24 @@ function synthesizeGemDefinition(
   if (tagSet.has('melee')) modFlags |= ModFlag.Melee;
   if (tagSet.has('area')) modFlags |= ModFlag.Area;
   if (tagSet.has('bow')) modFlags |= ModFlag.Bow;
+  if (tagSet.has('wand')) modFlags |= ModFlag.Wand;
+  if (tagSet.has('crossbow')) modFlags |= ModFlag.Crossbow;
+  if (tagSet.has('quarterstaff')) modFlags |= ModFlag.Quarterstaff;
+  if (tagSet.has('talisman')) modFlags |= ModFlag.Talisman;
   if (tagSet.has('fire')) kwFlags |= KeywordFlag.Fire;
   if (tagSet.has('cold')) kwFlags |= KeywordFlag.Cold;
   if (tagSet.has('lightning')) kwFlags |= KeywordFlag.Lightning;
   if (tagSet.has('chaos')) kwFlags |= KeywordFlag.Chaos;
   if (tagSet.has('physical')) kwFlags |= KeywordFlag.Physical;
+  if (tagSet.has('totem')) kwFlags |= KeywordFlag.Totem;
+  if (tagSet.has('trap')) kwFlags |= KeywordFlag.Trap;
+  if (tagSet.has('mine')) kwFlags |= KeywordFlag.Mine;
+  if (tagSet.has('warcry')) kwFlags |= KeywordFlag.Warcry;
+  if (tagSet.has('movement') || tagSet.has('travel')) kwFlags |= KeywordFlag.Movement;
+  if (tagSet.has('aura')) kwFlags |= KeywordFlag.Aura;
+  if (tagSet.has('curse') || tagSet.has('hex')) kwFlags |= KeywordFlag.Curse;
+  if (tagSet.has('minion') || hasMinionProfile) kwFlags |= KeywordFlag.Minion;
+  if (tagSet.has('spirit') || (entry.sr ?? 0) > 0) kwFlags |= KeywordFlag.Spirit;
 
   const altIds = hydrateStringList(entry.altIds);
   const skillTypes = hydrateStringList(entry.stypes);

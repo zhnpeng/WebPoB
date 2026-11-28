@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { createEmptyBuild } from '@webpob/data';
+import {
+  createEmptyBuild,
+  getGemsForGame,
+  registerGemsData,
+  resolveGemFromPobRef,
+  setRegisteredGems,
+} from '@webpob/data';
+import { parseItemText } from '@webpob/codec';
 import { ModFlag, KeywordFlag, type Build, type Item } from '@webpob/core';
 import { calculateBuild } from './engine';
 import { ModDB } from './modDb';
@@ -658,6 +665,381 @@ describe('Mechanism-Layer Regression Suite — Round 2 (Upstream PoB spec/System
       expect(outZh.defence.fireResist).toBe(outEn.defence.fireResist);
       expect(outZh.defence.coldResist).toBe(outEn.defence.coldResist);
       expect(outZh.defence.lightningResist).toBe(outEn.defence.lightningResist);
+    });
+  });
+
+  // =========================================================================
+  // 5. Core Infrastructure Parity (ModDB, ItemParser, Gem Resolution, TreeLoader)
+  // =========================================================================
+  describe('5. Core Infrastructure Parity (ModDB, ItemParser, Gem Resolution, TreeLoader)', () => {
+    it('ModDB matches PoB KeywordFlag OR-groups (Trap|Mine, Ailments, Elemental) and MatchAll strict AND', () => {
+      const db = new ModDB();
+      db.addMod({
+        name: 'Damage',
+        type: 'INC',
+        value: 20,
+        flags: 0,
+        keywordFlags: KeywordFlag.Trap | KeywordFlag.Mine,
+        source: 'Trap/Mine',
+      });
+      db.addMod({
+        name: 'Damage',
+        type: 'INC',
+        value: 30,
+        flags: 0,
+        keywordFlags: KeywordFlag.Ignite | KeywordFlag.Bleed | KeywordFlag.Poison,
+        source: 'Ailments',
+      });
+      db.addMod({
+        name: 'Damage',
+        type: 'INC',
+        value: 40,
+        flags: 0,
+        keywordFlags: KeywordFlag.Fire | KeywordFlag.Cold | KeywordFlag.Lightning,
+        source: 'Elemental',
+      });
+      db.addMod({
+        name: 'Damage',
+        type: 'INC',
+        value: 50,
+        flags: 0,
+        keywordFlags: 0x40000000 | KeywordFlag.Fire | KeywordFlag.Cold,
+        source: 'MatchAll Fire+Cold',
+      });
+
+      expect(db.sum('INC', 'Damage', 0, KeywordFlag.Trap)).toBe(20);
+      expect(db.sum('INC', 'Damage', 0, KeywordFlag.Mine)).toBe(20);
+      expect(db.sum('INC', 'Damage', 0, KeywordFlag.Poison)).toBe(30);
+      expect(db.sum('INC', 'Damage', 0, KeywordFlag.Lightning)).toBe(40);
+      expect(db.sum('INC', 'Damage', 0, KeywordFlag.Physical)).toBe(0);
+      expect(db.sum('INC', 'Damage', 0, KeywordFlag.Fire)).toBe(40);
+      expect(db.sum('INC', 'Damage', 0, KeywordFlag.Fire | KeywordFlag.Cold)).toBe(90);
+
+      // more() must clamp negative per-bucket results so two >=100% less buckets never multiply positive
+      const negDb = new ModDB();
+      negDb.addMod({ name: 'Damage', type: 'MORE', value: -150, flags: 0, keywordFlags: 0, source: 'a' });
+      negDb.addMod({ name: 'PhysicalDamage', type: 'MORE', value: -150, flags: 0, keywordFlags: 0, source: 'b' });
+      expect(negDb.more(['Damage', 'PhysicalDamage'])).toBe(0);
+    });
+
+    it('ModDB dynamically evaluates tagged Condition:*/Multiplier:* after setStat/setEvalContext without double-counting setMultiplier', () => {
+      const db = new ModDB();
+      // Tagged Condition:* added BEFORE prerequisite condition is set
+      db.addMod({
+        name: 'Condition:BonusActive',
+        type: 'FLAG',
+        value: true,
+        flags: 0,
+        keywordFlags: 0,
+        tags: [{ type: 'Condition', var: 'PrereqMet' }],
+        source: 'test',
+      });
+      db.addMod({
+        name: 'Damage',
+        type: 'INC',
+        value: 50,
+        flags: 0,
+        keywordFlags: 0,
+        tags: [{ type: 'Condition', var: 'BonusActive' }],
+        source: 'test',
+      });
+      // Tagged Multiplier:* evaluated against stats set later (e.g. Arcane Cloak ManaSpentRecently)
+      db.addMod({
+        name: 'Multiplier:ConsumedPool',
+        type: 'BASE',
+        value: 1,
+        flags: 0,
+        keywordFlags: 0,
+        tags: [{ type: 'Condition', var: 'PercentStat:ManaUnreserved:50' }],
+        source: 'test',
+      });
+      db.addMod({
+        name: 'SpellBonus',
+        type: 'BASE',
+        value: 1,
+        flags: 0,
+        keywordFlags: 0,
+        tags: [{ type: 'PerStat', stat: 'ConsumedPool', div: 100 }],
+        source: 'test',
+      });
+
+      expect(db.sum('INC', 'Damage')).toBe(0);
+      expect(db.sum('BASE', 'SpellBonus')).toBe(0);
+
+      // Survives setEvalContext replacement and late stat/condition updates
+      db.setEvalContext({
+        conditions: { PrereqMet: true },
+        multipliers: {},
+        stats: { ManaUnreserved: 1000 },
+      });
+      expect(db.sum('INC', 'Damage')).toBe(50);
+      expect(db.sum('BASE', 'SpellBonus')).toBe(5);
+
+      // Explicit setMultiplier must NOT double-count store Multiplier:* mods (e.g. ElementalHitAilmentOnEnemy)
+      const ehDb = new ModDB();
+      ehDb.setCondition('EnemyIgnited', true);
+      ehDb.setCondition('EnemyShocked', true);
+      ehDb.addMod({
+        name: 'Multiplier:ElementalHitAilmentOnEnemy',
+        type: 'BASE',
+        value: 1,
+        flags: 0,
+        keywordFlags: 0,
+        tags: [{ type: 'Condition', var: 'EnemyIgnited' }],
+        source: 'eh',
+      });
+      ehDb.addMod({
+        name: 'Multiplier:ElementalHitAilmentOnEnemy',
+        type: 'BASE',
+        value: 1,
+        flags: 0,
+        keywordFlags: 0,
+        tags: [{ type: 'Condition', var: 'EnemyShocked' }],
+        source: 'eh',
+      });
+      ehDb.addMod({
+        name: 'Damage',
+        type: 'MORE',
+        value: 10,
+        flags: 0,
+        keywordFlags: 0,
+        tags: [{ type: 'Multiplier', var: 'ElementalHitAilmentOnEnemy' }],
+        source: 'eh',
+      });
+      ehDb.setMultiplier('ElementalHitAilmentOnEnemy', 2);
+      expect(ehDb.more('Damage')).toBeCloseTo(1.2, 4);
+    });
+
+    it('itemParser fixes Rune: None sockets, Runeforged Champion Cuirass local Armour isolation, slot inference, Graftblood headers, duplicate variants, and PoE 2 catalysts', () => {
+      // 1. Rune: None must not inflate runes or filledSocketCount
+      const emptySocketsItem = parseItemText(
+        [
+          'Rarity: UNIQUE',
+          'The Brass Dome',
+          'Champion Cuirass',
+          'Armour: 3746',
+          'Sockets: S S S',
+          'Rune: None',
+          'Rune: None',
+          'Rune: None',
+          'Implicits: 0',
+          '500% increased Armour',
+        ].join('\n'),
+        'bd1',
+        'poe2',
+      )!;
+      expect(emptySocketsItem.slotType).toBe('Body Armour');
+      expect(emptySocketsItem.socketCount).toBe(3);
+      expect(emptySocketsItem.runes).toBeUndefined();
+      expect(emptySocketsItem.filledSocketCount).toBe(0);
+
+      // 2. Runeforged Champion Cuirass (The Brass Dome) must classify as Body Armour and NOT leak 528% increased Armour globally
+      const runeforgedBrassDome = parseItemText(
+        [
+          'Rarity: UNIQUE',
+          'The Brass Dome',
+          'Runeforged Champion Cuirass',
+          'Quality: 20',
+          'Implicits: 1',
+          '+892 to maximum Runic Ward',
+          '528% increased Armour',
+        ].join('\n'),
+        'bd2',
+        'poe2',
+      )!;
+      expect(runeforgedBrassDome.slotType).toBe('Body Armour');
+      const withFlatArmour = makePoe2Build({
+        items: { bd2: runeforgedBrassDome },
+        equipped: { 'Body Armour': 'bd2' },
+        customMods: '+1000 to Armour',
+      });
+      // If 528% increased Armour leaked globally, Armour would be ~6280 instead of 1000
+      expect(calculateBuild(withFlatArmour).defence.armour).toBe(1000);
+
+      // 3. Word-boundary slot inference & baseName-first priority
+      expect(
+        parseItemText('Rarity: RARE\nFocus Guard\nTorturer\'s Mask\nImplicits: 0\n+50 to maximum Life', 'h1', 'poe1')?.slotType,
+      ).toBe('Helmet');
+      expect(
+        parseItemText('Rarity: RARE\nEagle Tread\nDaggerfoot Shoes\nImplicits: 0\n+20 to maximum Life', 'b1', 'poe2')?.slotType,
+      ).toBe('Boots');
+      expect(
+        parseItemText('Rarity: RARE\nBramble Shell\nOrnate Ringmail\nImplicits: 0\n+50 to maximum Life', 'ba1', 'poe1')?.slotType,
+      ).toBe('Body Armour');
+      expect(
+        parseItemText('Rarity: RARE\nRift Knuckle\nRuneforged Fists of Stone\nImplicits: 0\nHas +2 to Evasion Rating per player level', 'g1', 'poe2')?.slotType,
+      ).toBe('Gloves');
+      expect(
+        parseItemText('Rarity: RARE\nRuneseeker\'s Call\nRunic Fork\nImplicits: 0\n+1 to Level of all Spell Skills', 'w1', 'poe2')?.slotType,
+      ).toBe('Weapon 1');
+      expect(
+        parseItemText('Rarity: RARE\nIron Step\nPlate Greaves\nImplicits: 0\n+20 to Armour', 'b2', 'poe1')?.slotType,
+      ).toBe('Boots');
+      expect(
+        parseItemText('Rarity: RARE\nTough Strap\nLeather Belt\nImplicits: 0\n+40 to maximum Life', 'belt1', 'poe1')?.slotType,
+      ).toBe('Belt');
+
+      // 4. Graftblood / Intangibility / Charm Slots metadata headers must not leak into explicits
+      const graft = parseItemText(
+        [
+          'Rarity: RARE',
+          'Brittle Caress',
+          'Impaling Uulgraft',
+          'Graftblood: 6125/10177',
+          'Intangibility: 10',
+          'Charm Slots: 3',
+          'Implicits: 0',
+          '+20 to Strength',
+        ].join('\n'),
+        'gr1',
+        'poe1',
+      )!;
+      expect(graft.slotType).toBe('Graft 1');
+      expect(graft.explicits).toEqual(['+20 to Strength']);
+
+      // 5. Allow Duplicate Variants repeats duplicate selected lines without double-counting options.variantAlts
+      const dupVarItem = parseItemText(
+        [
+          'Rarity: UNIQUE',
+          'Test Belt',
+          'Utility Belt',
+          'Variant: Alpha',
+          'Variant: Beta',
+          'Selected Variant: 1',
+          'Has Alt Variant: true',
+          'Selected Alt Variant: 1',
+          'Allow Duplicate Variants: true',
+          'Implicits: 0',
+          '{variant:1}+10 to Strength',
+          '{variant:2}+10 to Dexterity',
+        ].join('\n'),
+        'dv1',
+        'poe2',
+        { variant: 1, variantAlts: [1] },
+      )!;
+      expect(dupVarItem.explicits).toEqual(['+10 to Strength', '+10 to Strength']);
+
+      // 6. PoE 2 Catalyst scaling scales tagged ranged lines and skips {unscalable}
+      const catRing = parseItemText(
+        [
+          'Rarity: RARE',
+          'Storm Band',
+          'Ruby Ring',
+          'Catalyst: Carapace',
+          'CatalystQuality: 20',
+          'Implicits: 0',
+          '{tags:defences,armour}{range:1}+(10-100) to Armour',
+          '{unscalable}{tags:defences,armour}{range:1}+(10-50) to Evasion Rating',
+        ].join('\n'),
+        'cat1',
+        'poe2',
+      )!;
+      expect(catRing.explicits).toEqual(['+120 to Armour', '+50 to Evasion Rating']);
+    });
+
+    it('gems.ts strips singular Metadata/Items/Gem/, resolves PoE 2 aliases/companions, blocks fuzzy support hijacks, and treeLoader hydrates full KeywordFlag/ModFlag', () => {
+      const prevPoe2 = getGemsForGame('poe2');
+      try {
+        const hydrated = registerGemsData('poe2', {
+          game: 'poe2',
+          count: 6,
+          gems: [
+            {
+              id: 'poe2_cirelscultivationsupport',
+              en: "Cirel's Cultivation",
+              cat: 'support',
+              color: 'green',
+              tags: ['Support', 'Totem'],
+              altIds: ['SupportGemGreatwood'],
+            },
+            {
+              id: 'poe2_ascendancypoisonousconcoction',
+              en: 'Acidic Concoction',
+              cat: 'active',
+              color: 'green',
+              tags: ['Attack', 'Projectile', 'Chaos', 'Crossbow'],
+            },
+            {
+              id: 'poe2_summonbeast',
+              en: 'Tamed Companion',
+              cat: 'active',
+              color: 'green',
+              tags: ['Spell', 'Minion', 'Spirit'],
+              sr: 30,
+            },
+            {
+              id: 'poe2_shocksupport',
+              en: 'Shock',
+              cat: 'support',
+              color: 'blue',
+              tags: ['Support', 'Lightning'],
+            },
+            {
+              id: 'poe2_terrainchainsupporttwo',
+              en: 'Ricochet II',
+              cat: 'support',
+              color: 'green',
+              tags: ['Support', 'Projectile'],
+            },
+            {
+              id: 'poe2_test_warcry',
+              en: 'Seismic Cry',
+              cat: 'active',
+              color: 'red',
+              tags: ['Warcry', 'Area', 'Physical', 'Quarterstaff'],
+            },
+          ],
+        });
+
+        // Singular Metadata/Items/Gem/ path stripping
+        expect(
+          resolveGemFromPobRef('poe2', {
+            gemId: 'Metadata/Items/Gem/SupportGemGreatwood',
+            nameSpec: 'Greatwood I',
+          })?.id,
+        ).toBe('poe2_cirelscultivationsupport');
+
+        // PoE 2 legacy alias + Companion prefix resolution
+        expect(
+          resolveGemFromPobRef('poe2', {
+            skillId: 'PoisonousConcoctionPlayer',
+            nameSpec: 'Poisonous Concoction',
+          })?.id,
+        ).toBe('poe2_ascendancypoisonousconcoction');
+        expect(
+          resolveGemFromPobRef('poe2', { nameSpec: 'Companion: Quadrilla' })?.id,
+        ).toBe('poe2_summonbeast');
+
+        // Step-6 fuzzy fallback must NOT mis-resolve removed active meta skills or higher Roman tiers
+        expect(
+          resolveGemFromPobRef('poe2', {
+            nameSpec: 'Cast on Shock',
+            skillId: 'MetaCastOnShockPlayer',
+            gemId: 'Metadata/Items/Gems/SkillGemCastOnShock',
+          }),
+        ).toBeUndefined();
+        expect(
+          resolveGemFromPobRef('poe2', {
+            nameSpec: 'Ricochet III',
+            skillId: 'SupportRicochetPlayerThree',
+            gemId: 'Metadata/Items/Gem/SupportGemRicochetThree',
+          }),
+        ).toBeUndefined();
+
+        // treeLoader synthesizeGemDefinition KeywordFlag & ModFlag hydration
+        const companion = hydrated.find((g) => g.id === 'poe2_summonbeast')!;
+        expect(companion.keywordFlags & KeywordFlag.Minion).toBe(KeywordFlag.Minion);
+        expect(companion.keywordFlags & KeywordFlag.Spirit).toBe(KeywordFlag.Spirit);
+        const concoction = hydrated.find((g) => g.id === 'poe2_ascendancypoisonousconcoction')!;
+        expect(concoction.modFlags & ModFlag.Crossbow).toBe(ModFlag.Crossbow);
+        const warcry = hydrated.find((g) => g.id === 'poe2_test_warcry')!;
+        expect(warcry.keywordFlags & KeywordFlag.Warcry).toBe(KeywordFlag.Warcry);
+        expect(warcry.modFlags & ModFlag.Quarterstaff).toBe(ModFlag.Quarterstaff);
+        const totemSup = hydrated.find((g) => g.id === 'poe2_cirelscultivationsupport')!;
+        expect(totemSup.keywordFlags & KeywordFlag.Totem).toBe(KeywordFlag.Totem);
+      } finally {
+        setRegisteredGems('poe2', prevPoe2);
+      }
     });
   });
 });
