@@ -2042,7 +2042,11 @@ export function evaluatePostPoolBuildEnablingUniques(
         const lowest = Math.max(0, Math.min(armour, evasion));
         const val = Math.floor(lowest / Math.max(1, Number(mPersev[2]))) * Number(mPersev[1]);
         perseveranceAttackInc += val;
-        if (val > 0 && !hasStatSource(db, 'Damage', 'INC', item.name, val)) {
+        if (
+          val > 0 &&
+          !hasPerAttrOrPerStatFromItem(['Damage']) &&
+          !hasStatSource(db, 'Damage', 'INC', item.name, val)
+        ) {
           db.addMod(mkMod('Damage', 'INC', val, src, ModFlag.Attack));
         }
         appliedSources.push(src);

@@ -1337,4 +1337,74 @@ describe('skillActorRuntime — 5. PoB 1 & PoB 2 Ailment, Skill DoT, Routing & M
     // Single stack = 0.90 * 1000 * 3.0 = 2700
     expect(convRes.ignite.singleStackDps).toBeCloseTo(2700, 1);
   });
+
+  it('scopes SpiritualCommand to Attack speed only, evaluates PoE 2 CriticalStrike ailment magnitude, and honors Minion CritChance OVERRIDE (SRS of Enormity)', () => {
+    // 1. SpiritualCommand copies Minion Attack Speed strictly to ModFlag.Attack (NEVER ModFlag.Spell)
+    const buses = createActorModBuses();
+    routeModToActorBuses(buses, mkMod('MinionAttackSpeed', 'INC', 25), { spiritualCommand: true });
+    routeModToActorBuses(buses, mkMod('MinionCastSpeed', 'INC', 30), { spiritualCommand: true });
+    expect(buses.playerDb.sum('INC', 'Speed', ModFlag.Attack)).toBe(25);
+    expect(buses.playerDb.sum('INC', 'Speed', ModFlag.Spell)).toBe(0);
+
+    // 2. PoE 2 CriticalStrike-conditioned BleedingMagnitude / PoisonMagnitude / IgniteMagnitude
+    const critBleedDb = new ModDB();
+    critBleedDb.addMod(mkMod('BleedChance', 'BASE', 100));
+    critBleedDb.addMod({
+      ...mkMod('BleedingMagnitude', 'INC', 100),
+      tags: [{ type: 'Condition', var: 'CriticalStrike' }],
+    });
+    // 0% crit -> CriticalStrike=false -> magMult = 1.0 -> 0.15 * 1000 = 150
+    const nonCritBleed = computeAuthenticAilmentAndSkillDots({
+      game: 'poe2',
+      skillDb: critBleedDb,
+      enemyDb: new ModDB(),
+      baseDamageByType: { Physical: 1000 },
+      preMitigationHitByType: { Physical: 1000 },
+      flags: ModFlag.Attack | ModFlag.Hit,
+      speed: 1,
+      critChancePct: 0,
+      critMultiplierPct: 200,
+    });
+    expect(nonCritBleed.bleed.singleStackDps).toBeCloseTo(150, 1);
+
+    // 100% crit -> CriticalStrike=true -> magMult = 2.0 -> 0.15 * 1000 * 2.0 = 300
+    const fullCritBleed = computeAuthenticAilmentAndSkillDots({
+      game: 'poe2',
+      skillDb: critBleedDb,
+      enemyDb: new ModDB(),
+      baseDamageByType: { Physical: 1000 },
+      preMitigationHitByType: { Physical: 1000 },
+      flags: ModFlag.Attack | ModFlag.Hit,
+      speed: 1,
+      critChancePct: 100,
+      critMultiplierPct: 200,
+    });
+    expect(fullCritBleed.bleed.singleStackDps).toBeCloseTo(300, 1);
+
+    // 3. Minion CritChance OVERRIDE (SRS of Enormity = 100% CritChance)
+    const minionDb = new ModDB();
+    minionDb.addMod({
+      name: 'CritChance',
+      type: 'OVERRIDE',
+      value: 100,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Skill: Summon Raging Spirit of Enormity',
+    });
+    const srsRes = computeMinionGroupOffence({
+      game: 'poe1',
+      minionBase: {
+        physicalMin: 100,
+        physicalMax: 200,
+        attacksPerSecond: 1.5,
+        critChance: 5,
+        critMultiplier: 130,
+        baseLimit: 6,
+      },
+      minionDb,
+      enemyDb: new ModDB(),
+      effLevel: 20,
+    });
+    expect(srsRes.perMinion.critChance).toBe(100);
+  });
 });

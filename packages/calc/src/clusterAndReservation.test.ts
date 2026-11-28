@@ -1550,4 +1550,167 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     expect(sublimeDb.sum('BASE', 'Armour')).toBeGreaterThan(0);
     expect(sublimeDb.sum('BASE', 'Evasion')).toBe(0);
   });
+
+  it('deduplicates PoE 2 Sigil of Power across duplicate groups and prevents MetaDeadeyeMarks from stacking dual Marks (Sniper + Freezing)', () => {
+    const sigilDef: GemDefinition = {
+      id: 'poe2_sigilofpower',
+      name: { en: 'Sigil of Power', zh: '力量法印' },
+      category: 'active',
+      game: 'poe2',
+      color: 'blue',
+      tags: ['area', 'duration', 'spell', 'stages'],
+      modFlags: 0,
+      keywordFlags: KeywordFlag.Spell,
+      stats: [],
+      compiledMods: [
+        {
+          name: 'Damage',
+          type: 'MORE',
+          value: 14,
+          flags: ModFlag.Spell,
+          keywordFlags: 0,
+          target: 'player',
+          tags: [{ type: 'Multiplier', var: 'SigilOfPowerStage' }],
+        },
+      ],
+    };
+    const metaMarksDef: GemDefinition = {
+      id: 'poe2_metadeadeyemarks',
+      name: { en: 'Called Shots', zh: '精准点名' },
+      category: 'active',
+      game: 'poe2',
+      color: 'green',
+      tags: ['meta', 'trigger'],
+      modFlags: 0,
+      keywordFlags: 0,
+      stats: [],
+    };
+    const snipersMarkDef: GemDefinition = {
+      id: 'poe2_snipersmark',
+      name: { en: "Sniper's Mark", zh: '狙击印记' },
+      category: 'active',
+      game: 'poe2',
+      color: 'green',
+      tags: ['mark', 'duration'],
+      modFlags: 0,
+      keywordFlags: KeywordFlag.Curse,
+      stats: [],
+      compiledMods: [
+        {
+          name: 'SelfCritMultiplier',
+          type: 'BASE',
+          value: 77,
+          flags: 0,
+          keywordFlags: 0,
+          target: 'enemy',
+        },
+      ],
+    };
+    const freezingMarkDef: GemDefinition = {
+      id: 'poe2_freezingmark',
+      name: { en: 'Freezing Mark', zh: '冰霜印记' },
+      category: 'active',
+      game: 'poe2',
+      color: 'green',
+      tags: ['mark', 'cold', 'buff', 'duration'],
+      modFlags: 0,
+      keywordFlags: KeywordFlag.Curse,
+      stats: [],
+      compiledMods: [
+        {
+          name: 'DamageGainAsCold',
+          type: 'BASE',
+          value: 30,
+          flags: 0,
+          keywordFlags: 0,
+          target: 'player',
+        },
+      ],
+    };
+    const poe2Lookup = (_game: 'poe1' | 'poe2', gemId: string) => {
+      if (gemId === 'poe2_sigilofpower') return sigilDef;
+      if (gemId === 'poe2_metadeadeyemarks') return metaMarksDef;
+      if (gemId === 'poe2_snipersmark') return snipersMarkDef;
+      if (gemId === 'poe2_freezingmark') return freezingMarkDef;
+      return undefined;
+    };
+
+    // 1. Two Sigil of Power groups (socketed + Weapon 1 Swap Chiming Staff) apply MORE Spell Damage strictly ONCE
+    const sigilDb = new ModDB();
+    const sigilBuild = mkBuild({
+      game: 'poe2',
+      skills: [
+        {
+          id: 'sg-sigil-1',
+          label: 'Sigil Socketed',
+          enabled: true,
+          gems: [{ instanceId: 's1', gemId: 'poe2_sigilofpower', level: 20, quality: 0, enabled: true }],
+        },
+        {
+          id: 'sg-sigil-2',
+          label: 'Sigil Swap Staff',
+          slot: 'Weapon 1 Swap',
+          enabled: true,
+          gems: [{ instanceId: 's2', gemId: 'poe2_sigilofpower', level: 20, quality: 0, enabled: true }],
+        },
+      ],
+    });
+    evaluateAurasAndWatchersEye({
+      build: sigilBuild,
+      playerDb: sigilDb,
+      getGemByIdFn: poe2Lookup,
+      maxMana: 1000,
+    });
+    expect(sigilDb.more('Damage', ModFlag.Spell)).toBeCloseTo(1.14, 4);
+
+    // 2. MetaDeadeyeMarks with both Sniper's Mark (lv18) and Freezing Mark (lv19) keeps only highest-level Mark (Freezing Mark)
+    const dualMarkDb = new ModDB();
+    const dualMarkBuild = mkBuild({
+      game: 'poe2',
+      skills: [
+        {
+          id: 'sg-meta',
+          label: 'Called Shots',
+          enabled: true,
+          gems: [
+            { instanceId: 'm0', gemId: 'poe2_metadeadeyemarks', level: 20, quality: 0, enabled: true },
+            { instanceId: 'm1', gemId: 'poe2_snipersmark', level: 18, quality: 20, enabled: true },
+            { instanceId: 'm2', gemId: 'poe2_freezingmark', level: 19, quality: 0, enabled: true },
+          ],
+        },
+      ],
+    });
+    const dualMarkRes = evaluateAurasAndWatchersEye({
+      build: dualMarkBuild,
+      playerDb: dualMarkDb,
+      getGemByIdFn: poe2Lookup,
+      maxMana: 1000,
+    });
+    expect(dualMarkDb.sum('BASE', 'DamageGainAsCold')).toBe(30);
+    expect(dualMarkRes.enemyDb.sum('BASE', 'SelfCritMultiplier')).toBe(0);
+
+    // 3. MetaDeadeyeMarks with ONLY Sniper's Mark still applies Sniper's Mark normally
+    const singleMarkDb = new ModDB();
+    const singleMarkBuild = mkBuild({
+      game: 'poe2',
+      skills: [
+        {
+          id: 'sg-meta-single',
+          label: 'Called Shots Single',
+          enabled: true,
+          gems: [
+            { instanceId: 'm0', gemId: 'poe2_metadeadeyemarks', level: 20, quality: 0, enabled: true },
+            { instanceId: 'm1', gemId: 'poe2_snipersmark', level: 18, quality: 20, enabled: true },
+          ],
+        },
+      ],
+    });
+    const singleMarkRes = evaluateAurasAndWatchersEye({
+      build: singleMarkBuild,
+      playerDb: singleMarkDb,
+      getGemByIdFn: poe2Lookup,
+      maxMana: 1000,
+    });
+    expect(singleMarkRes.enemyDb.sum('BASE', 'SelfCritMultiplier')).toBe(77);
+  });
 });

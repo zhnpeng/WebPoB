@@ -1400,5 +1400,39 @@ describe('uniqueMechanicsRuntime — 5. Pool-Conversion Keystones & Faithguard',
 
     // Elevated Tailwind: 8% * 1.25 = 10% ActionSpeed INC
     expect(db.sum('INC', 'ActionSpeed')).toBe(10);
+
+    // Perseverance must NOT double-count when generic PerStat:LowestOfArmourAndEvasion is already on db
+    const persevDb = new ModDB();
+    persevDb.setStat('LowestOfArmourAndEvasion', 10000);
+    const persevBelt = makeItem({
+      id: 'belt-persev',
+      name: 'Perseverance',
+      baseName: 'Vanguard Belt',
+      slotType: 'Belt',
+      explicits: ['1% increased Attack Damage per 200 of the lowest of Armour and Evasion Rating'],
+    });
+    persevDb.addMod({
+      name: 'Damage',
+      type: 'INC',
+      value: 1,
+      flags: ModFlag.Attack,
+      keywordFlags: 0,
+      source: 'Item (Belt): Perseverance',
+      tags: [{ type: 'PerStat', stat: 'LowestOfArmourAndEvasion', div: 200 }],
+    });
+    evaluatePostPoolBuildEnablingUniques({
+      db: persevDb,
+      equippedItems: [{ slot: 'Belt', item: persevBelt }],
+      str: 100,
+      dex: 100,
+      int: 100,
+      life: 4000,
+      mana: 500,
+      energyShield: 0,
+      armour: 12000,
+      evasion: 10000,
+    });
+    // 10000 / 200 = 50% Attack Damage INC (strictly once, NOT 100%!)
+    expect(persevDb.sum('INC', 'Damage', ModFlag.Attack)).toBe(50);
   });
 });

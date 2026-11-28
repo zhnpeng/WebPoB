@@ -1236,9 +1236,10 @@ export function routeModToActorBuses(
     }
     if (opts.spiritualCommand && mod.type === 'INC') {
       for (const nm of normalized) {
-        if (nm.name === 'Speed') {
+        // PoE 1 Spiritual Command: "Increases and Reductions to Minion Attack Speed also affect you"
+        // Copies strictly to ModFlag.Attack (never ModFlag.Spell).
+        if (nm.name === 'Speed' && (nm.flags === 0 || (nm.flags & ModFlag.Attack) !== 0)) {
           buses.playerDb.addMod({ ...nm, flags: ModFlag.Attack, source: `${nm.source} (Spiritual Command)` });
-          buses.playerDb.addMod({ ...nm, flags: ModFlag.Spell, source: `${nm.source} (Spiritual Command)` });
         }
       }
     }
@@ -2274,21 +2275,25 @@ export function computeAuthenticAilmentAndSkillDots(input: AuthenticDotInput): A
             critFrac > 0 && critFrac < 1 && stackPotential > 1
               ? 1 - Math.pow(Math.max(0, 1 - critFrac), Math.max(1, stackPotential))
               : critFrac;
-          const effectivePreTotal = weightByCrit(
+          const evalPoisonMagMult = (isCrit: boolean): number =>
+            withTemporaryCondition(skillDb, 'CriticalStrike', isCrit, () => {
+              const magInc = skillDb.sum('INC', ['AilmentMagnitude', 'PoisonMagnitude'], ailmentDamageFlags, poisonKw);
+              const magMore = skillDb.more(['AilmentMagnitude', 'PoisonMagnitude'], ailmentDamageFlags, poisonKw);
+              return Math.max(0, 1 + magInc / 100) * magMore;
+            });
+          const nonCritMagMult = evalPoisonMagMult(false);
+          const critMagMult = noCritAilments ? nonCritMagMult : evalPoisonMagMult(true);
+          const effectivePreMagTotal = weightByCrit(
             effPoisonChanceOnHitPct,
             effPoisonChanceOnCritPct,
             overCritFrac,
-            nonCritPre,
-            nonCritPre * baseCritMult,
+            nonCritPre * nonCritMagMult,
+            nonCritPre * baseCritMult * critMagMult,
           );
-          const magInc = skillDb.sum('INC', ['AilmentMagnitude', 'PoisonMagnitude'], ailmentDamageFlags, poisonKw);
-          const magMore = skillDb.more(['AilmentMagnitude', 'PoisonMagnitude'], ailmentDamageFlags, poisonKw);
           singleStackPoisonDps =
             0.2 *
-            effectivePreTotal *
+            effectivePreMagTotal *
             rollUplift *
-            Math.max(0, 1 + magInc / 100) *
-            magMore *
             poisonEffectMod *
             poisonFasterMult *
             poisonEnemyMult;
@@ -2583,31 +2588,35 @@ export function computeAuthenticAilmentAndSkillDots(input: AuthenticDotInput): A
           const baseCritMult = noCritAilments ? 1 : Math.max(1, (input.critMultiplierPct ?? 200) / 100);
           const baseCritEff = 1 - critFrac + critFrac * baseCritMult;
           const nonCritPre = baseCritEff > 0 ? preBleedTotal / baseCritEff : preBleedTotal;
-          const effectivePreBleed = weightByCrit(
+          const evalBleedMagMult = (isCrit: boolean): number =>
+            withTemporaryCondition(skillDb, 'CriticalStrike', isCrit, () => {
+              const magInc = skillDb.sum(
+                'INC',
+                ['AilmentMagnitude', 'BleedingMagnitude', 'BleedMagnitude'],
+                ailmentDamageFlags,
+                bleedKw,
+              );
+              const magMore = skillDb.more(
+                ['AilmentMagnitude', 'BleedingMagnitude', 'BleedMagnitude'],
+                ailmentDamageFlags,
+                bleedKw,
+              );
+              return Math.max(0, 1 + magInc / 100) * magMore;
+            });
+          const nonCritMagMult = evalBleedMagMult(false);
+          const critMagMult = noCritAilments ? nonCritMagMult : evalBleedMagMult(true);
+          const effectivePreMagBleed = weightByCrit(
             bleedChanceOnHitPct,
             bleedChanceOnCritPct,
             bleedOverCritFrac,
-            nonCritPre,
-            nonCritPre * baseCritMult,
-          );
-          const magInc = skillDb.sum(
-            'INC',
-            ['AilmentMagnitude', 'BleedingMagnitude', 'BleedMagnitude'],
-            ailmentDamageFlags,
-            bleedKw,
-          );
-          const magMore = skillDb.more(
-            ['AilmentMagnitude', 'BleedingMagnitude', 'BleedMagnitude'],
-            ailmentDamageFlags,
-            bleedKw,
+            nonCritPre * nonCritMagMult,
+            nonCritPre * baseCritMult * critMagMult,
           );
           const baseCoeff = isAggravatedOrMoving ? 0.3 : 0.15;
           singleStackBleedDps =
             baseCoeff *
-            effectivePreBleed *
+            effectivePreMagBleed *
             rollUplift *
-            Math.max(0, 1 + magInc / 100) *
-            magMore *
             bleedEffectMod *
             bleedFasterMult *
             enemyPhysTakenMult;
@@ -2887,22 +2896,26 @@ export function computeAuthenticAilmentAndSkillDots(input: AuthenticDotInput): A
           const baseCritMult = noCritAilments ? 1 : Math.max(1, (input.critMultiplierPct ?? 200) / 100);
           const baseCritEff = 1 - critFrac + critFrac * baseCritMult;
           const nonCritPre = baseCritEff > 0 ? poe2IgnitePreTotal / baseCritEff : poe2IgnitePreTotal;
-          const effectivePreTotal = weightByCrit(
+          const evalIgniteMagMult = (isCrit: boolean): number =>
+            withTemporaryCondition(skillDb, 'CriticalStrike', isCrit, () => {
+              const magInc = skillDb.sum('INC', ['AilmentMagnitude', 'IgniteMagnitude'], ailmentDamageFlags, igniteKw);
+              const magMore = skillDb.more(['AilmentMagnitude', 'IgniteMagnitude'], ailmentDamageFlags, igniteKw);
+              return Math.max(0, 1 + magInc / 100) * magMore;
+            });
+          const nonCritMagMult = evalIgniteMagMult(false);
+          const critMagMult = noCritAilments ? nonCritMagMult : evalIgniteMagMult(true);
+          const effectivePreMagTotal = weightByCrit(
             igniteChanceOnHitPct,
             igniteChanceOnCritPct,
             igniteOverCritFrac,
-            nonCritPre,
-            nonCritPre * baseCritMult,
+            nonCritPre * nonCritMagMult,
+            nonCritPre * baseCritMult * critMagMult,
           );
 
-          const magInc = skillDb.sum('INC', ['AilmentMagnitude', 'IgniteMagnitude'], ailmentDamageFlags, igniteKw);
-          const magMore = skillDb.more(['AilmentMagnitude', 'IgniteMagnitude'], ailmentDamageFlags, igniteKw);
           const preEnemyDps =
             0.2 *
-            effectivePreTotal *
+            effectivePreMagTotal *
             rollUplift *
-            Math.max(0, 1 + magInc / 100) *
-            magMore *
             igniteEffectMod *
             igniteFasterMult;
           igniteBurningGroundBase = preEnemyDps;
@@ -3675,6 +3688,8 @@ export function computeMinionGroupOffence(input: MinionOffenceInput): MinionGrou
   let critMultiplier: number;
   let effectiveCritMultiplier: number;
 
+  const critOverride = minionDb.override('CritChance', flags, kwFlags);
+
   if (game === 'poe2') {
     // Base bonus is `minionBase.critMultiplier - 100` (e.g. 130 -> +30% bonus, or 200 -> +100% bonus).
     // `computePoe2CritMultiplier` starts at 100, so offset `flatBonusPct` relative to 100.
@@ -3697,12 +3712,21 @@ export function computeMinionGroupOffence(input: MinionOffenceInput): MinionGrou
       neverCrit,
       noCritMultiplier: noCritExtra,
     });
-    critChance = round2(poe2Crit.effectiveCritChance * (isSpell ? 1 : hitChance / 100));
+    const effPoe2Crit = neverCrit
+      ? 0
+      : critOverride !== null
+        ? clamp(critOverride, 0, 100)
+        : poe2Crit.effectiveCritChance;
+    critChance = round2(effPoe2Crit * (isSpell ? 1 : hitChance / 100));
     critMultiplier = neverCrit ? 0 : Math.round(poe2Crit.critMultiplierPct);
     effectiveCritMultiplier =
       neverCrit || noCritExtra ? 1 : 1 + (critChance / 100) * Math.max(0, poe2Crit.critMultiplierPct / 100 - 1);
   } else {
-    const preCrit = neverCrit ? 0 : clamp(baseCrit * Math.max(0, 1 + critInc / 100) * critMore, 0, 100);
+    const preCrit = neverCrit
+      ? 0
+      : critOverride !== null
+        ? clamp(critOverride, 0, 100)
+        : clamp(baseCrit * Math.max(0, 1 + critInc / 100) * critMore, 0, 100);
     critChance = round2(preCrit * (isSpell ? 1 : hitChance / 100));
     critMultiplier = neverCrit
       ? 0

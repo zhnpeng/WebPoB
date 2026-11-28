@@ -2733,9 +2733,43 @@ export function evaluateAurasAndWatchersEye(
       }
     }
 
+    // In PoE 2, MetaDeadeyeMarks (Called Shots) cannot apply multiple Marks simultaneously
+    // (e.g. Sniper's Mark + Freezing Mark in the same group). Keep only the highest-level Mark
+    // (tie-breaking to last-socketed) in a MetaDeadeyeMarks group.
+    let poe2DeadeyeMetaWinnerGemId: string | null = null;
+    if (build.game === 'poe2') {
+      const hasMetaDeadeyeMarks = group.gems.some(
+        (g) => g.enabled && /metadeadeyemarks/i.test(g.gemId),
+      );
+      if (hasMetaDeadeyeMarks) {
+        const markGemsInGroup = group.gems
+          .filter((g) => {
+            if (!g.enabled) return false;
+            const d = lookupGem('poe2', g.gemId);
+            return Boolean(d && d.category === 'active' && d.tags.some((t) => t.toLowerCase() === 'mark'));
+          });
+        if (markGemsInGroup.length > 1) {
+          let best = markGemsInGroup[0]!;
+          for (let mi = 1; mi < markGemsInGroup.length; mi++) {
+            const cur = markGemsInGroup[mi]!;
+            if (cur.level >= best.level) {
+              best = cur;
+            }
+          }
+          poe2DeadeyeMetaWinnerGemId = best.gemId;
+        }
+      }
+    }
+
     // Evaluate active auras / buffs / curses in this skill group
     for (const gemInst of group.gems) {
       if (!gemInst.enabled) continue;
+      if (poe2DeadeyeMetaWinnerGemId && gemInst.gemId !== poe2DeadeyeMetaWinnerGemId) {
+        const maybeMark = lookupGem('poe2', gemInst.gemId);
+        if (maybeMark && maybeMark.tags.some((t) => t.toLowerCase() === 'mark')) {
+          continue;
+        }
+      }
       const rawDef = lookupGem(build.game, gemInst.gemId);
       if (!rawDef) continue;
 
@@ -2848,6 +2882,13 @@ export function evaluateAurasAndWatchersEye(
         const isSigilOfPowerBuff =
           lowerGemName === 'sigil of power' &&
           (build.game === 'poe2' || (playerDb.getEvalContext().multipliers.SigilOfPowerStage ?? 0) > 0);
+        if (
+          isSigilOfPowerBuff &&
+          build.game === 'poe2' &&
+          hasStatSource(playerDb, 'Damage', 'MORE', 'Sigil of Power')
+        ) {
+          continue;
+        }
         if (
           isSigilOfPowerBuff &&
           build.game === 'poe2' &&
