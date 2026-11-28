@@ -1778,4 +1778,88 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     expect(db.sum('INC', 'Speed', ModFlag.Attack)).toBe(225);
     expect(db.sum('INC', 'Speed', ModFlag.Spell)).toBe(225);
   });
+
+  it('deduplicates multiple PoE 2 Sigil of Power skill groups (e.g. Chiming Staff + gem slot) before injection, keeping only the highest level', () => {
+    const sigilPoe2Def: GemDefinition = {
+      id: 'poe2_sigilofpower',
+      name: { en: 'Sigil of Power', zh: '力量法印' },
+      category: 'active',
+      game: 'poe2',
+      color: 'blue',
+      tags: ['area', 'duration', 'spell'],
+      modFlags: 0,
+      keywordFlags: KeywordFlag.Spell,
+      stats: [],
+      compiledMods: [
+        {
+          name: 'Damage',
+          type: 'MORE',
+          value: 14,
+          flags: ModFlag.Spell,
+          keywordFlags: 0,
+          target: 'player',
+          tags: [{ type: 'Multiplier', var: 'SigilOfPowerStage' }],
+        },
+      ],
+      levelScaling: {
+        9: {
+          compiledMods: [
+            {
+              name: 'Damage',
+              type: 'MORE',
+              value: 12,
+              flags: ModFlag.Spell,
+              keywordFlags: 0,
+              target: 'player',
+              tags: [{ type: 'Multiplier', var: 'SigilOfPowerStage' }],
+            },
+          ],
+        },
+        19: {
+          compiledMods: [
+            {
+              name: 'Damage',
+              type: 'MORE',
+              value: 16,
+              flags: ModFlag.Spell,
+              keywordFlags: 0,
+              target: 'player',
+              tags: [{ type: 'Multiplier', var: 'SigilOfPowerStage' }],
+            },
+          ],
+        },
+      },
+    };
+    const db = new ModDB();
+    db.setMultiplier('SigilOfPowerStage', 1);
+    const build = mkBuild({
+      game: 'poe2',
+      config: {
+        ...mkBuild().config,
+        rawInputs: { sigilOfPowerStages: 1 },
+      },
+      skills: [
+        {
+          id: 'sg-sigil-1',
+          label: 'Sigil (Gem)',
+          enabled: true,
+          gems: [{ instanceId: 'sp1', gemId: 'poe2_sigilofpower', level: 9, quality: 0, enabled: true }],
+        },
+        {
+          id: 'sg-sigil-2',
+          label: 'Sigil (Chiming Staff)',
+          enabled: true,
+          gems: [{ instanceId: 'sp2', gemId: 'poe2_sigilofpower', level: 19, quality: 0, enabled: true }],
+        },
+      ],
+    });
+    evaluateAurasAndWatchersEye({
+      build,
+      playerDb: db,
+      getGemByIdFn: (_g, id) => (id === 'poe2_sigilofpower' ? sigilPoe2Def : undefined),
+      maxMana: 1000,
+    });
+    // Must keep ONLY the single Lv.19 Sigil of Power (1.16x), NEVER 1.12 * 1.16 = 1.2992x!
+    expect(db.more('Damage', ModFlag.Spell)).toBeCloseTo(1.16, 4);
+  });
 });

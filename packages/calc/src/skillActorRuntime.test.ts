@@ -1407,4 +1407,31 @@ describe('skillActorRuntime — 5. PoB 1 & PoB 2 Ailment, Skill DoT, Routing & M
     });
     expect(srsRes.perMinion.critChance).toBe(100);
   });
+
+  it('emits PoE 1 Infused Channelling 10% MORE Infusion buff gated on InfusionActive without double-counting on quality pass', () => {
+    const icBuses = createActorModBuses();
+    injectCompiledGemMods(
+      icBuses.playerDb,
+      icBuses.enemyDb,
+      icBuses.minionDb,
+      [{ name: 'Damage', type: 'MORE', value: 29, flags: 0, keywordFlags: 0 }],
+      'Support: Infused Channelling',
+      { game: 'poe1' },
+    );
+    // Without InfusionActive condition -> only 29% MORE
+    expect(icBuses.playerDb.more('Damage')).toBeCloseTo(1.29, 2);
+    // With InfusionActive=true -> 1.29 * 1.10 = 1.419 -> 1.42 (ModDB rounds MORE to 2 decimals)
+    icBuses.playerDb.setCondition('InfusionActive', true);
+    expect(icBuses.playerDb.more('Damage')).toBeCloseTo(1.42, 2);
+    // Re-injecting (e.g. quality pass) must NOT double-count the 10% Infusion buff
+    injectCompiledGemMods(
+      icBuses.playerDb,
+      icBuses.enemyDb,
+      icBuses.minionDb,
+      [{ name: 'Damage', type: 'INC', value: 10, flags: 0, keywordFlags: 0 }],
+      'Support: Infused Channelling (Q20)',
+      { game: 'poe1' },
+    );
+    expect(icBuses.playerDb.more('Damage')).toBeCloseTo(1.42, 2);
+  });
 });

@@ -3179,7 +3179,23 @@ export function evaluateAurasAndWatchersEye(
     }
     return 2;
   };
-  const nonCurseCandidates = allCandidates.filter((c) => !c.isCurseOrMark);
+  const rawNonCurseCandidates = allCandidates.filter((c) => !c.isCurseOrMark);
+  // Deduplicate Sigil of Power candidates (e.g. Chiming Staff item-granted + gem slot in PoE 2):
+  // keep only the single highest-level Sigil of Power so its MORE Spell Damage is never double-counted.
+  let bestSigilIdx = -1;
+  let bestSigilLv = -1;
+  for (let i = 0; i < rawNonCurseCandidates.length; i++) {
+    const c = rawNonCurseCandidates[i]!;
+    if (c.def.name.en.trim().toLowerCase() === 'sigil of power') {
+      if (c.effLevel > bestSigilLv) {
+        bestSigilLv = c.effLevel;
+        bestSigilIdx = i;
+      }
+    }
+  }
+  const nonCurseCandidates = rawNonCurseCandidates.filter(
+    (c, idx) => c.def.name.en.trim().toLowerCase() !== 'sigil of power' || idx === bestSigilIdx,
+  );
   const curseCandidates = allCandidates
     .filter((c) => c.isCurseOrMark)
     .sort((a, b) => hexPriority(a) - hexPriority(b));

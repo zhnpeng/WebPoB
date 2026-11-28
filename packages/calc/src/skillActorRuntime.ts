@@ -1598,6 +1598,26 @@ export function injectCompiledGemMods(
     }
   }
 
+  // PoE 1 Infused Channelling Support: when `InfusionActive` condition is enabled
+  // (`infusedChannellingInfusion=true`), Infusion grants 10% more Damage of types matching
+  // the supported channelling skill's tags (not emitted in compiled cmods).
+  if (
+    opts.game === 'poe1' &&
+    /\binfused channelling\b/i.test(source) &&
+    !skillDb.calcStat('Damage').sources.some((s) => s.type === 'MORE' && s.source.includes('Infusion'))
+  ) {
+    skillDb.addMod({
+      name: 'Damage',
+      type: 'MORE',
+      value: 10,
+      flags: 0,
+      keywordFlags: 0,
+      source: `${source} (Infusion)`,
+      tags: [{ type: 'Condition', var: 'InfusionActive' }],
+    });
+    playerCount++;
+  }
+
   return { playerCount, enemyCount, minionCount };
 }
 
