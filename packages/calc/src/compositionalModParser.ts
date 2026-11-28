@@ -1027,7 +1027,7 @@ function matchPostPeelStructural(state: PeelState, source: string): Mod[] | null
   if (m) {
     return [emitScopedMod('CharmSlots', 'BASE', Number(m[1]), source, state)];
   }
-  m = s.match(/^Gain (\d+) Rage(?: on (?:Melee )?Hit| when Hit by an Enemy)?$/i);
+  m = s.match(/^Gain (\d+) Rage(?: on (?:Melee |Attack |Melee Weapon )?Hit| when Hit by an Enemy)?$/i);
   if (m) {
     return [emitScopedMod('RageOnHit', 'BASE', Number(m[1]), source, state, ModFlag.Hit)];
   }

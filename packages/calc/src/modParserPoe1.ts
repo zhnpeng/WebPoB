@@ -1297,12 +1297,21 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
     pattern: /^Your Maximum Frenzy Charges is equal to your Maximum Power Charges$/i,
     build: (_, src) => [mkMod('MaxFrenzyEqualsMaxPower', 'FLAG', true, src)],
   },
-  // Wave 4Q: Eldritch Glove Exposure-on-Hit implicits (consumed natively by engine.ts applyPoe1Exposure)
+  // Wave 4Q/4R: Eldritch Glove Exposure-on-Hit implicits (PoB 1 ModParser.lua:4393-4395):
+  // Emits <El>ExposureChance + Enemy<El>Resist gated by Condition:Enemy<El>Exposure so builds
+  // without Exposure enabled in Config (e.g. Elementalist EK Ignite / Vaal Flameblast) never regress.
   {
     pattern: /^Inflict (Fire|Cold|Lightning) Exposure on Hit, applying -(\d+)% to (?:Fire|Cold|Lightning) Resistance$/i,
-    build: (m, src) => [
-      mkMod(`Enemy${capFirst(m[1]!)}Resist`, 'BASE', -Number(m[2]), `${src} (Exposure)`),
-    ],
+    build: (m, src) => {
+      const el = capFirst(m[1]!);
+      return [
+        mkMod(`${el}ExposureChance`, 'BASE', 100, src),
+        {
+          ...mkMod(`Enemy${el}Resist`, 'BASE', -Number(m[2]), `${src} (Exposure)`),
+          tags: [{ type: 'Condition' as const, var: `Enemy${el}Exposure` }],
+        },
+      ];
+    },
   },
   // Wave 4Q: Vaal Skill Crit Chance (Soul Catcher / Soul Ripper)
   {

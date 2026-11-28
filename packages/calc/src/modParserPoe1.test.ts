@@ -996,21 +996,31 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
     expect(
       parseModLine('Inflict Cold Exposure on Hit, applying -12% to Cold Resistance', 'Item (Gloves)'),
     ).toEqual([
+      expect.objectContaining({ name: 'ColdExposureChance', type: 'BASE', value: 100 }),
       expect.objectContaining({
         name: 'EnemyColdResist',
         type: 'BASE',
         value: -12,
         source: 'Item (Gloves) (Exposure)',
+        tags: [{ type: 'Condition', var: 'EnemyColdExposure' }],
       }),
     ]);
     expect(
       parseModLine('Inflict Lightning Exposure on Hit, applying -13% to Lightning Resistance', 'Item (Gloves)'),
     ).toEqual([
+      expect.objectContaining({ name: 'LightningExposureChance', type: 'BASE', value: 100 }),
       expect.objectContaining({
         name: 'EnemyLightningResist',
         type: 'BASE',
         value: -13,
+        tags: [{ type: 'Condition', var: 'EnemyLightningExposure' }],
       }),
+    ]);
+    expect(parseModLine('Gain 2 Rage on Attack Hit', 'item')).toEqual([
+      expect.objectContaining({ name: 'RageOnHit', type: 'BASE', value: 2 }),
+    ]);
+    expect(parseModLine('Gain 1 Rage on Melee Weapon Hit', 'item')).toEqual([
+      expect.objectContaining({ name: 'RageOnHit', type: 'BASE', value: 1 }),
     ]);
     expect(parseModLine('80% increased Critical Strike Chance with Vaal Skills during effect', 'item')).toEqual([
       expect.objectContaining({
