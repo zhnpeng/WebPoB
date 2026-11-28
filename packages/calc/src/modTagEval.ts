@@ -397,6 +397,27 @@ function evalSingleConditionVar(varExpr: string, ctx?: ModEvalContext): boolean 
       (ctx.multipliers.MineDetonatedRecently ?? ctx.multipliers.MinesDetonatedRecently ?? 0) > 0
     );
   }
+  if (varExpr === 'Fortified') {
+    return Boolean(
+      ctx.conditions.HaveFortification ||
+        (ctx.multipliers.Fortification ?? ctx.multipliers.FortifyStacks ?? 0) > 0,
+    );
+  }
+  if (varExpr === 'TwoRareOrUniqueNearby') {
+    return (ctx.multipliers.NearbyRareOrUniqueEnemies ?? 0) >= 2;
+  }
+  if (varExpr === 'NonInstantSpellCastInPast8Sec') {
+    return Boolean(
+      ctx.conditions.NonInstantSpellCastRecently ||
+        (ctx.multipliers.NonInstantSpellCastRecently ?? 0) > 0,
+    );
+  }
+  if (varExpr === 'EnemyHeavyStunned') {
+    return Boolean(ctx.conditions.HeavyStunned);
+  }
+  if (varExpr === 'BeenHitRecently') {
+    return Boolean(ctx.conditions.HitRecently);
+  }
   if (varExpr === 'OnFullLife') {
     return Boolean(ctx.conditions.FullLife);
   }
@@ -558,6 +579,17 @@ function resolveMultiplierValue(varName: string, ctx?: ModEvalContext): number {
   }
   if (varName === 'NonInstantSpellCastRecently' || varName === 'DifferentSpellsCastRecently') {
     return ctx.multipliers.NonInstantSpellCastRecently ?? ctx.multipliers.DifferentSpellsCastRecently ?? 0;
+  }
+  if (varName === 'WintertideBrandStage' || varName === 'WintertideBrandStages') {
+    return (
+      ctx.multipliers.WintertideBrandStage ??
+      ctx.multipliers.WintertideBrandStages ??
+      ctx.multipliers.WintertideBrandMaxStages ??
+      0
+    );
+  }
+  if (varName === 'WintertideBrandMaxStages') {
+    return ctx.multipliers.WintertideBrandMaxStages ?? ctx.multipliers.WintertideBrandStage ?? 0;
   }
   if (varName === 'PoisonStacks' || varName === 'PoisonStack' || varName === 'PoisonOnEnemy') {
     return ctx.multipliers.PoisonStacks ?? ctx.multipliers.PoisonOnEnemy ?? ctx.multipliers.PoisonStack ?? 0;
@@ -745,37 +777,47 @@ export function evaluateModTags(mod: Mod, ctx?: ModEvalContext): ModTagEvalResul
       case 'Multiplier': {
         const raw = resolveMultiplierValue(tag.var, ctx);
         const runtimeLimit = tag as {
+          div?: number;
           limit?: number;
+          limitVar?: string;
           limitTotal?: boolean;
           limitNegTotal?: boolean;
           noFloor?: boolean;
         };
+        const div = typeof runtimeLimit.div === 'number' && runtimeLimit.div > 0 ? runtimeLimit.div : 1;
+        const scaledRaw = div !== 1 ? raw / div : raw;
         // PoB ModStore.lua:399-402: `noFloor` preserves fractional multipliers; also bridge
         // PoE 1 Focused Channelling (`ChannellingTime = 2.5`, `limit = 60, limitTotal = true`).
         const useNoFloor = runtimeLimit.noFloor === true || tag.var === 'ChannellingTime';
-        let mult = useNoFloor ? raw : Math.floor(raw + 0.0001);
+        let mult = useNoFloor ? scaledRaw : Math.floor(scaledRaw + 0.0001);
+        const effLimit =
+          tag.limit !== undefined
+            ? tag.limit
+            : runtimeLimit.limitVar && ctx
+              ? resolveThresholdValue(runtimeLimit.limitVar, ctx, false)
+              : undefined;
         // Bridge legacy PoE 1/2 cmods whose `limitTotal = true` was not yet exported in gems JSON
         const useLimitTotal =
           runtimeLimit.limitTotal === true ||
           (runtimeLimit.limitTotal === undefined &&
-            tag.limit !== undefined &&
+            effLimit !== undefined &&
             (tag.var === 'IncisionConsumedRecently' ||
               tag.var === 'SuperchargedSlamStage' ||
               tag.var === 'ChannellingTime'));
-        if (tag.limit !== undefined && !useLimitTotal && !runtimeLimit.limitNegTotal) {
-          mult = Math.min(mult, tag.limit);
+        if (effLimit !== undefined && !useLimitTotal && !runtimeLimit.limitNegTotal) {
+          mult = Math.min(mult, effLimit);
         }
         scale *= mult;
         if (offset !== 0 || tag.base !== undefined) {
           offset = offset * mult + (tag.base ?? 0);
         }
-        if (tag.limit !== undefined && typeof mod.value === 'number' && mod.value !== 0) {
+        if (effLimit !== undefined && typeof mod.value === 'number' && mod.value !== 0) {
           const curTotal = mod.value * scale + offset;
-          if (useLimitTotal && curTotal > tag.limit) {
-            scale = tag.limit / mod.value;
+          if (useLimitTotal && curTotal > effLimit) {
+            scale = effLimit / mod.value;
             offset = 0;
-          } else if (runtimeLimit.limitNegTotal && curTotal < tag.limit) {
-            scale = tag.limit / mod.value;
+          } else if (runtimeLimit.limitNegTotal && curTotal < effLimit) {
+            scale = effLimit / mod.value;
             offset = 0;
           }
         }

@@ -1483,4 +1483,77 @@ describe('parseConditionalSuffix', () => {
       qualityBonus: 0,
     });
   });
+
+  it('Wave 6P: evaluates Fortified/TwoRareOrUniqueNearby/NonInstantSpellCastInPast8Sec/EnemyHeavyStunned/BeenHitRecently, WintertideBrandStage aliases, and Multiplier div/limitVar', () => {
+    const ctx: ModEvalContext = {
+      conditions: {
+        HeavyStunned: true,
+        HitRecently: true,
+        NonInstantSpellCastRecently: true,
+      },
+      multipliers: {
+        Fortification: 20,
+        NearbyRareOrUniqueEnemies: 2,
+        WintertideBrandMaxStages: 20,
+        EnemyPresenceSeconds: 30,
+        AttritionMaxDamage: 59,
+      },
+      stats: {},
+    };
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'Fortified' }] }), ctx).active).toBe(true);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'TwoRareOrUniqueNearby' }] }), ctx).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'NonInstantSpellCastInPast8Sec' }] }), ctx).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'EnemyHeavyStunned' }] }), ctx).active,
+    ).toBe(true);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'BeenHitRecently' }] }), ctx).active).toBe(true);
+    // WintertideBrandStage fallback to WintertideBrandMaxStages
+    expect(
+      evaluateModTags(makeMod({ value: 35, tags: [{ type: 'Multiplier', var: 'WintertideBrandStage' }] }), ctx),
+    ).toEqual({ active: true, scale: 20 });
+    // Multiplier div + limitVar + limitTotal (e.g. Attrition: 30s / 2 = 15, capped at AttritionMaxDamage = 59)
+    expect(
+      evaluateModTags(
+        makeMod({
+          value: 1,
+          tags: [
+            {
+              type: 'Multiplier',
+              var: 'EnemyPresenceSeconds',
+              div: 2,
+              limitVar: 'AttritionMaxDamage',
+              limitTotal: true,
+            } as unknown as ModTag,
+          ],
+        }),
+        ctx,
+      ),
+    ).toEqual({ active: true, scale: 15 });
+    // Cap enforcement via limitVar when EnemyPresenceSeconds exceeds limitVar * div
+    const cappedCtx: ModEvalContext = {
+      ...ctx,
+      multipliers: { ...ctx.multipliers, EnemyPresenceSeconds: 200 },
+    };
+    expect(
+      evaluateModTags(
+        makeMod({
+          value: 1,
+          tags: [
+            {
+              type: 'Multiplier',
+              var: 'EnemyPresenceSeconds',
+              div: 2,
+              limitVar: 'AttritionMaxDamage',
+              limitTotal: true,
+            } as unknown as ModTag,
+          ],
+        }),
+        cappedCtx,
+      ),
+    ).toEqual({ active: true, scale: 59 });
+  });
 });
