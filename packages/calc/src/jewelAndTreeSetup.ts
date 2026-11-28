@@ -2091,13 +2091,15 @@ export function evaluateRadiusAndDistanceJewels(
     }
 
     // --- C. PoE 1 The Light of Meaning ---
-    // Matches PoB 1 CalcSetup.lua: applies to all active non-jewel passives in radius,
+    // Matches PoB 1 ModParser.lua:6407 & CalcSetup.lua: applies to all active non-jewel,
+    // non-keystone passives in radius (`node.type ~= "Keystone" and node.type ~= "Socket" and node.type ~= "ClassStart"`),
     // excluding allocated smalls disabled by Unnatural Instinct and including unallocated
     // smalls granted by an overlapping Unnatural Instinct.
     if (allAlsoGrants.length > 0) {
       const effectiveCount = (() => {
         let cnt = 0;
         for (const n of nonJewelPassives) {
+          if (n.kind === 'keystone') continue;
           if (unnaturalSuppressedIds.has(n.id)) continue;
           cnt++;
         }

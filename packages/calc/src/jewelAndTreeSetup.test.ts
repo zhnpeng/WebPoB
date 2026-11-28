@@ -1500,4 +1500,41 @@ describe('PoE 2 The Adorned Sinister Sockets & Undying Hate Conquered Passives',
       'Take 25% less Damage',
     ]);
   });
+
+  it('excludes allocated Keystones from PoE 1 The Light of Meaning radius count (ModParser.lua:6407)', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe1',
+      version: '3_30',
+      nodes: {
+        1: mkNode(1, 'Start', 'start', 0, 0),
+        10: mkNode(10, 'Jewel Socket', 'jewel', 0, 0),
+        101: mkNode(101, 'Small Int', 'small', 400, 0, ['+10 to Intelligence']),
+        102: mkNode(102, 'Notable ES', 'notable', 600, 0, ['10% increased maximum Energy Shield']),
+        103: mkNode(103, 'Chaos Inoculation', 'keystone', 800, 0, ['Maximum Life becomes 1']),
+      },
+      groups: {},
+      classStartNodeIds: {},
+      bounds: { minX: -2000, maxX: 2000, minY: -2000, maxY: 2000 },
+    };
+    const lom = mkItem({
+      id: 'lom-1',
+      name: 'The Light of Meaning',
+      baseName: 'Prismatic Jewel',
+      rarity: 'UNIQUE',
+      explicits: ['Radius: Large', 'Passive Skills in Radius also grant 3% increased Energy Shield'],
+    });
+
+    const res = evaluateRadiusAndDistanceJewels(
+      [{ nodeId: 10, jewel: lom }],
+      tree,
+      new Set([1, 10, 101, 102, 103]),
+      1,
+    );
+    const lomLines = res.addedStatLines.flatMap((e) => e.lines);
+    // Only small (101) + notable (102) count; keystone (103) is excluded per ModParser.lua:6407
+    expect(lomLines).toEqual([
+      '3% increased Energy Shield',
+      '3% increased Energy Shield',
+    ]);
+  });
 });
