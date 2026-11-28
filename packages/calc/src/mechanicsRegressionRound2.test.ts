@@ -1869,6 +1869,31 @@ Gain 5% of Maximum Mana as Extra Maximum Energy Shield
         });
         const srGem = srHydrated.find((g) => g.id === 'poe1_scorchingrayaltx')!;
         expect(srGem.qualityCompiledMods?.[0]?.value).toBe(0.2);
+
+        // Wave 6C: Dominating Blow of Inspiring ImprovedMinionDamageAppliesToPlayer (250 BASE + 2.5/Q)
+        const dbHydrated = registerGemsData('poe1', {
+          game: 'poe1',
+          count: 1,
+          gems: [
+            {
+              id: 'poe1_dominatingblowaltx',
+              en: 'Dominating Blow of Inspiring',
+              cat: 'active',
+              color: 'red',
+              tags: ['Attack', 'Melee', 'Minion', 'Duration'],
+              cmods: [{ n: 'MinionDamageAppliesToPlayer', t: 'FLAG', v: true }],
+              qmods: [{ n: 'MinionDamageAppliesToPlayer', t: 'FLAG', v: true }],
+            },
+          ],
+        });
+        const dbGem = dbHydrated.find((g) => g.id === 'poe1_dominatingblowaltx')!;
+        expect(
+          dbGem.compiledMods?.find((m) => m.name === 'ImprovedMinionDamageAppliesToPlayer')?.value,
+        ).toBe(250);
+        expect(
+          dbGem.qualityCompiledMods?.find((m) => m.name === 'ImprovedMinionDamageAppliesToPlayer')
+            ?.value,
+        ).toBe(2.5);
       } finally {
         setRegisteredGems('poe1', prevPoe1);
       }

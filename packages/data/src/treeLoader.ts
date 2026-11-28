@@ -807,6 +807,8 @@ const UPSTREAM_MISSING_SKILL_COMPILED_MODS: Readonly<
     poe1_powersiphonaltx: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 150, flags: 0, keywordFlags: 0 }],
     poe1_vaalpowersiphonaltx: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 150, flags: 0, keywordFlags: 0 }],
     poe1_somaticshell: [{ name: 'ImprovedSpellDamageAppliesToAttacks', type: 'BASE', value: 150, flags: 0, keywordFlags: 0 }],
+    // Upstream PoB1 3.30 Data/Skills/act_str.lua:3133: active_skill_additive_minion_damage_modifiers_apply_to_all_damage_at_%_value = 250
+    poe1_dominatingblowaltx: [{ name: 'ImprovedMinionDamageAppliesToPlayer', type: 'BASE', value: 250, flags: 0, keywordFlags: 0 }],
   },
   poe2: {},
 };
@@ -885,6 +887,16 @@ const UPSTREAM_MISSING_QUALITY_COMPILED_MODS: Readonly<
         name: 'MaimEffect',
         type: 'INC',
         value: 1,
+        flags: 0,
+        keywordFlags: 0,
+      },
+    ],
+    // Upstream PoB1 3.30 Data/Skills/act_str.lua:3123: active_skill_additive_minion_damage_modifiers_apply_to_all_damage_at_%_value = 2.5/qual
+    poe1_dominatingblowaltx: [
+      {
+        name: 'ImprovedMinionDamageAppliesToPlayer',
+        type: 'BASE',
+        value: 2.5,
         flags: 0,
         keywordFlags: 0,
       },
@@ -1018,14 +1030,26 @@ function synthesizeGemDefinition(
   })();
   const rawQualityCompiledMods = hydrateCompiledMods(entry.qmods, true);
   const qualityStats = hydrateQualityStats(entry.qs);
-  const fallbackQualityMods =
-    (!rawQualityCompiledMods || rawQualityCompiledMods.length === 0) &&
-    (!qualityStats || qualityStats.length === 0)
-      ? UPSTREAM_MISSING_QUALITY_COMPILED_MODS[game][entry.id]
-      : undefined;
-  const qualityCompiledMods =
-    rawQualityCompiledMods ??
-    (fallbackQualityMods ? fallbackQualityMods.map((m) => ({ ...m })) : undefined);
+  const extraQualityMods = UPSTREAM_MISSING_QUALITY_COMPILED_MODS[game][entry.id];
+  const qualityCompiledMods = (() => {
+    if (!extraQualityMods || extraQualityMods.length === 0) return rawQualityCompiledMods;
+    if (
+      (!rawQualityCompiledMods || rawQualityCompiledMods.length === 0) &&
+      (!qualityStats || qualityStats.length === 0)
+    ) {
+      return extraQualityMods.map((m) => ({ ...m }));
+    }
+    if (rawQualityCompiledMods && rawQualityCompiledMods.length > 0) {
+      const merged = [...rawQualityCompiledMods];
+      for (const em of extraQualityMods) {
+        if (!merged.some((m) => m.name === em.name && m.type === em.type)) {
+          merged.push({ ...em });
+        }
+      }
+      return merged;
+    }
+    return rawQualityCompiledMods;
+  })();
   const rawSkillData = hydrateSkillData(entry.sdata);
   const extraSkillData = UPSTREAM_SKILL_DATA_OVERRIDES[game][entry.id];
   const skillData = (() => {
