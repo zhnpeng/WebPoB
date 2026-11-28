@@ -1980,8 +1980,12 @@ export function evaluatePostPoolBuildEnablingUniques(
         const val = Math.floor(str / Math.max(1, Number(mPillarPhys[3]))) * Number(mPillarPhys[1]);
         pillarPhysWeaponInc += val;
         const targetStat = isPhysOnly ? 'PhysicalDamage' : 'Damage';
+        const hasCompositionalPerStr = getRawModsForStat(db, targetStat).some((m) =>
+          m.tags?.some((t) => t.type === 'PerStat' && (t.stat === 'Str' || t.stat === 'Strength')),
+        );
         if (
           val > 0 &&
+          !hasCompositionalPerStr &&
           !hasPerAttrOrPerStatFromItem(['DamagePerAttr:Strength', 'MeleePhysicalDamagePerAttr:Strength', targetStat]) &&
           !hasStatSource(db, targetStat, 'INC', item.name, val)
         ) {

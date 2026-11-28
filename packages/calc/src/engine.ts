@@ -2655,7 +2655,7 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
       const gd = getGemById(build.game, gm.gemId);
       if (!gd) return false;
       const gn = gd.name.en.trim().toLowerCase();
-      if (gn.startsWith('vaal ')) return true;
+      if (gn.startsWith('vaal ') || gn === 'charge regulation') return true;
       return !auraHandledNames.has(gn);
     }),
   }));
@@ -2804,7 +2804,9 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     const exposureMinFloor = db.override('ExposureMin'); // e.g. -18 from Elemental Mastery
     const applyPoe1Exposure = (el: 'Fire' | 'Cold' | 'Lightning', cfgEnabled: boolean) => {
       const statName = `Enemy${el}Resist`;
-      // Check existing item/skill exposure mods in db (e.g. Crusader Gloves "-13% Fire Exposure on Hit")
+      const auraStatName = `${el}Resist`;
+      // Check existing item/skill exposure mods in db (e.g. Eldritch Gloves "-11% Fire Exposure on Hit")
+      // AND exposure mods already placed on auraEnemyDb (e.g. Wave of Conviction / Hydrosphere / Frost Bomb)
       const existingExpVal = db
         .calcStat(statName)
         .sources.filter(
@@ -2815,14 +2817,31 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
             (/exposure/i.test(s.source) || /item \(gloves\)/i.test(s.source)),
         )
         .reduce((acc, s) => acc + (s.value as number), 0);
-      const hasAnyExposure = cfgEnabled || existingExpVal < 0;
+      const auraExpVal = auraEnemyDb
+        .calcStat(auraStatName)
+        .sources.filter(
+          (s) =>
+            s.type === 'BASE' &&
+            typeof s.value === 'number' &&
+            s.value < 0 &&
+            /exposure/i.test(s.source),
+        )
+        .reduce((acc, s) => acc + (s.value as number), 0);
+      const hasAnyExposure = cfgEnabled || existingExpVal < 0 || auraExpVal < 0;
       if (!hasAnyExposure) return;
-      const baseExpMag = Math.max(cfgEnabled ? 10 : 0, Math.abs(existingExpVal));
-      let targetExp = -Math.floor((baseExpMag + extraExposure) * exposureEffMult + 1e-9);
-      if (exposureMinFloor !== null && exposureMinFloor < 0) {
-        targetExp = Math.min(targetExp, exposureMinFloor);
+      // PoB 1 never stacks two Exposures of the same element; auraExpVal from clusterAndReservation
+      // already includes ExtraExposure & ExposureEffect, so compute dbTarget separately and take the strongest.
+      const baseDbExpMag = Math.max(cfgEnabled ? 10 : 0, Math.abs(existingExpVal));
+      let dbTargetExp =
+        baseDbExpMag > 0
+          ? -Math.floor((baseDbExpMag + extraExposure) * exposureEffMult + 1e-9)
+          : 0;
+      if (dbTargetExp < 0 && exposureMinFloor !== null && exposureMinFloor < 0) {
+        dbTargetExp = Math.min(dbTargetExp, exposureMinFloor);
       }
-      const delta = targetExp - existingExpVal;
+      const targetExp = Math.min(dbTargetExp, auraExpVal);
+      const currentCombinedExp = existingExpVal + auraExpVal;
+      const delta = targetExp - currentCombinedExp;
       if (delta !== 0) {
         db.addMod({ name: statName, type: 'BASE', value: delta, flags: 0, keywordFlags: 0, source: `${el} Exposure` });
       }
@@ -3244,13 +3263,13 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     masterfulForm: hasMasterfulForm,
     badgeOfTheBrotherhood: hasBadgeOfBrotherhood,
     usePowerCharges: cfg.usePowerCharges,
-    countAsMaxPower: uniqueGearResult.ralakeshCharges.power,
+    countAsMaxPower: uniqueGearResult.ralakeshCharges.power || db.flag('CountAsMaxPowerCharges'),
     explicitPowerCharges: cfg.powerCharges !== 3 ? cfg.powerCharges : undefined,
     useFrenzyCharges: cfg.useFrenzyCharges,
-    countAsMaxFrenzy: uniqueGearResult.ralakeshCharges.frenzy,
+    countAsMaxFrenzy: uniqueGearResult.ralakeshCharges.frenzy || db.flag('CountAsMaxFrenzyCharges'),
     explicitFrenzyCharges: cfg.frenzyCharges !== 3 ? cfg.frenzyCharges : undefined,
     useEnduranceCharges: cfg.useEnduranceCharges,
-    countAsMaxEndurance: uniqueGearResult.ralakeshCharges.endurance,
+    countAsMaxEndurance: uniqueGearResult.ralakeshCharges.endurance || db.flag('CountAsMaxEnduranceCharges'),
     explicitEnduranceCharges: cfg.enduranceCharges !== 3 ? cfg.enduranceCharges : undefined,
     baseMaxRage: 30,
     extraMaxRage: db.sum('BASE', 'MaximumRage'),
@@ -5702,7 +5721,28 @@ function computeGroupOffence(
                 }
                 return cm;
               })
-            : supCmods;
+            : build.game === 'poe2' && lower === "atalui's bloodletting"
+              ? supCmods.map((cm) => {
+                  if (
+                    cm.name === 'DamageGainAsPhysical' &&
+                    cm.type === 'BASE' &&
+                    typeof cm.value === 'number' &&
+                    cm.value > 0 &&
+                    cm.tags?.some((t) => t.type === 'PerStat' && t.stat === 'LifeCost' && t.limit === 40)
+                  ) {
+                    // Upstream PoB 2 `sup_str.lua:483` uses `limitTotal = true, limit = 40` (40% max total = 20 steps of +2%)
+                    return {
+                      ...cm,
+                      tags: cm.tags.map((t) =>
+                        t.type === 'PerStat' && t.stat === 'LifeCost' && t.limit === 40
+                          ? { ...t, limitTotal: true }
+                          : t,
+                      ),
+                    };
+                  }
+                  return cm;
+                })
+              : supCmods;
         injectCompiledGemMods(skillDb, groupEnemyDb, groupMinionDb, adjustedSupCmods, supSrc, {
           game: build.game,
         });
@@ -5745,6 +5785,17 @@ function computeGroupOffence(
         );
       }
       applyGemQualityStats(def, effSupQuality, 'Support', supSock.qualBonus);
+    }
+    if (build.game === 'poe1' && slotItem && spellTotemEffLevel === undefined) {
+      for (const rawL of [...slotItem.implicits, ...slotItem.explicits]) {
+        const cl = rawL.replace(/^\{[^}]*\}/g, '').trim();
+        const mSt = cl.match(/^Socketed (?:Gems|Skills) are Supported by Level (\d+) (?:Spell Totem|Ballista Totem)/i);
+        if (mSt) {
+          spellTotemEffLevel = Number(mSt[1]);
+          effectiveSkillTypeSet.add('totem');
+          break;
+        }
+      }
     }
 
     const activeSock = chosen.inst.fromItem
@@ -6071,7 +6122,10 @@ function computeGroupOffence(
     ? partModFlags | ModFlag.Attack | ModFlag.Hit | weaponModFlags
     : partModFlags | ModFlag.Spell | ModFlag.Cast | ModFlag.Hit;
   const proxyKwFlags =
-    (effectiveSkillTypeSet.has('totem') || effectiveSkillTypeSet.has('summonsattacktotem')
+    (effectiveSkillTypeSet.has('totem') ||
+    effectiveSkillTypeSet.has('summonsattacktotem') ||
+    effectiveSkillTypeSet.has('usedbytotem') ||
+    effectiveSkillTypeSet.has('summonstotem')
       ? KeywordFlag.Totem
       : 0) |
     (effectiveSkillTypeSet.has('trap') || effectiveSkillTypeSet.has('trapped')
@@ -6172,6 +6226,13 @@ function computeGroupOffence(
     }
     if (build.config.rawInputs?.conditionShapeshiftToAnimal) {
       skillDb.setCondition('Shapeshifted', true);
+    }
+    if (
+      (effectiveSkillTypeSet.has('grenade') ||
+        activeDef.tags.some((t) => t.toLowerCase() === 'grenade')) &&
+      skillDb.getEvalContext().multipliers.DifferentGrenadeFired === undefined
+    ) {
+      skillDb.setMultiplier('DifferentGrenadeFired', 1);
     }
     // PoE 2 Berserk scales Rage Effect (`Berserk` gem grants +50..69% Rage Effect -> e.g. 52 Rage -> 90% MORE!).
     // Guard against double-counting when evaluateAurasAndWatchersEye / evaluatePersistentBuffAndStanceSkills already applied Berserk.
@@ -6440,6 +6501,24 @@ function computeGroupOffence(
         const earlyMaxImpale = 5 + skillDb.sum('BASE', 'ImpaleStacksMax', flags, kwFlags);
         skillDb.setMultiplier('EnemyImpaleStacks', earlyMaxImpale);
       }
+    }
+    // PoE 1 Unnerve on Hit: 10% increased Spell Damage Taken when enemy is not already Unnerved
+    if (
+      !isAttack &&
+      skillDb.sum('BASE', 'UnnerveOnHitChance', flags, kwFlags) > 0 &&
+      !groupEnemyDb.getEvalContext().conditions.Unnerved &&
+      !skillDb.getEvalContext().conditions.EnemyUnnerved
+    ) {
+      groupEnemyDb.setCondition('Unnerved', true);
+      skillDb.setCondition('EnemyUnnerved', true);
+      groupEnemyDb.addMod({
+        name: 'SpellDamageTaken',
+        type: 'INC',
+        value: 10,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Unnerved (On Hit)',
+      });
     }
   }
   // PoE 1 Sap of the Seasons `ManaBurn` multiplier
@@ -6942,7 +7021,17 @@ function computeGroupOffence(
     ),
   );
   const lifeCostMore = skillDb.more('LifeCost', flags, kwFlags);
-  const estLifeCost = Math.round(((baseSkillManaCost * lifeCostConvPct) / 100) * lifeCostMore);
+  const nonChanLifeCostPct =
+    build.game === 'poe2' &&
+    !isAttack &&
+    !effectiveSkillTypeSet.has('channelling') &&
+    !effectiveSkillTypeSet.has('channel')
+      ? Math.max(0, skillDb.sum('BASE', 'NonChannellingSpellLifeCostPct', flags, kwFlags))
+      : 0;
+  const extraNonChanLifeCost =
+    nonChanLifeCostPct > 0 ? Math.round((_defence.life * nonChanLifeCostPct) / 100) : 0;
+  const estLifeCost =
+    Math.round(((baseSkillManaCost * lifeCostConvPct) / 100) * lifeCostMore) + extraNonChanLifeCost;
   const estManaCost = Math.max(0, Math.round(baseSkillManaCost - estLifeCost));
   skillDb.setStat('LifeCost', estLifeCost);
   skillDb.setStat('ManaCost', estManaCost);
@@ -7469,6 +7558,31 @@ function computeGroupOffence(
       const wMax = weaponStats?.physicalMax ?? 30;
       baseMin.Physical += wMin * atkMult;
       baseMax.Physical += wMax * atkMult;
+      // PoE 2 Amazon Penetrate: "Gain Added Physical Damage equal to 25% of the Accuracy Rating on the Weapon"
+      // Guard against double-counting when ascendancyMods.ts already emitted AmazonPenetrateWeaponAccPct.
+      if (
+        build.game === 'poe2' &&
+        activeWeapons.main &&
+        skillDb.sum('BASE', 'AmazonPenetrateWeaponAccPct') === 0
+      ) {
+        const accAsPhysPct = skillDb.sum('BASE', 'WeaponAccuracyAsAddedPhysPct', flags, kwFlags);
+        if (accAsPhysPct > 0) {
+          const expandedMain = expandPoe2LocalRunes
+            ? expandPoe2LocalRunes(mainSlotLabel, activeWeapons.main)
+            : activeWeapons.main;
+          let weaponLocalAcc = 0;
+          for (const rawL of [...expandedMain.implicits, ...expandedMain.explicits]) {
+            const cl = rawL.replace(/^\{[^}]*\}/g, '').trim();
+            const mAcc = cl.match(/^\+(\d+)\s+to\s+Accuracy\s+Rating$/i);
+            if (mAcc) weaponLocalAcc += Number(mAcc[1]);
+          }
+          if (weaponLocalAcc > 0) {
+            const addedPhys = Math.floor((weaponLocalAcc * accAsPhysPct) / 100 + 1e-9);
+            baseMin.Physical += addedPhys * atkMult;
+            baseMax.Physical += addedPhys * atkMult;
+          }
+        }
+      }
       if (weaponStats?.elementalDamage) {
         for (const [el, range] of Object.entries(weaponStats.elementalDamage)) {
           if (!range) continue;
@@ -9630,10 +9744,11 @@ function computeGroupOffence(
     const outerRadius = Math.max(innerRadius + 1, Math.floor(25 * radiusScale));
     const overlapChance = Math.min(1, Math.max(0, (enemyRadius + ballRadius - innerRadius) / (outerRadius - innerRadius)));
     if (activeNameLower === 'molten strike of the zenith' && partIdxForDps === 6) {
-      // PoB1 `act_str.lua`: 5th strike deals 800% MORE damage at Lv20 (stale dataset exported 600)
+      // PoB1 `act_str.lua:8060-8062`: 5th strike deals (600 + 10*Q)% MORE damage (800% at Q20, 830% at Q23)
       const rawFifthDmg =
-        typeof activeSkillData?.FifthStrikeDamage === 'number' ? activeSkillData.FifthStrikeDamage : 800;
-      const fifthDmgPct = rawFifthDmg === 600 ? 800 : rawFifthDmg;
+        typeof activeSkillData?.FifthStrikeDamage === 'number' ? activeSkillData.FifthStrikeDamage : 600;
+      const fifthDmgPct =
+        rawFifthDmg === 600 ? 600 + Math.max(0, activeQuality) * 10 : rawFifthDmg;
       const fifthExtraProj =
         typeof activeSkillData?.FifthStrikeProjectiles === 'number' ? activeSkillData.FifthStrikeProjectiles : 5;
       const fifthMult = 1 + fifthDmgPct / 100;
