@@ -1472,7 +1472,7 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
         parseModLine('Minions gain 10% of Physical Damage as Chaos Damage', 'Tree: Entropic Incarnation'),
       ).toEqual([
         expect.objectContaining({
-          name: 'MinionPhysicalGainAsChaos',
+          name: 'MinionPhysicalDamageGainAsChaos',
           type: 'BASE',
           value: 10,
           keywordFlags: KeywordFlag.Minion,

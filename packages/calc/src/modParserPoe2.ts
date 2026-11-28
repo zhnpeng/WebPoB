@@ -2326,7 +2326,7 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
   {
     pattern: /^Minions gain (\d+)% of (Physical|Fire|Cold|Lightning|Elemental) Damage as (?:Extra )?(Fire|Cold|Lightning|Chaos|Physical) Damage$/i,
     build: (m, src) => [
-      mkMod(`Minion${m[2]}GainAs${m[3]}`, 'BASE', Number(m[1]), src, 0, KeywordFlag.Minion),
+      mkMod(`Minion${m[2]}DamageGainAs${m[3]}`, 'BASE', Number(m[1]), src, 0, KeywordFlag.Minion),
     ],
   },
   // Pinpoint Shot: "Attacks gain increased Accuracy Rating equal to their Critical Hit Chance"
