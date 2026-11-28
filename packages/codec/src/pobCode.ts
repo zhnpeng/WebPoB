@@ -82,15 +82,43 @@ const POE1_CLASS_TO_NUM: Record<string, number> = {
   Shadow: 6,
 };
 
-const POE2_CLASS_TO_NUM: Record<string, number> = {
-  Witch: 1,
-  Ranger: 2,
-  Warrior: 6,
-  Sorceress: 7,
-  Huntress: 8,
-  Mercenary: 9,
-  Monk: 10,
-  Druid: 11,
+// Official PoB 2 0.5 tree.lua class indices (`classes[1..8]`) & internal integer IDs (`integerId`)
+const POE2_CLASS_META: Record<string, { treeClassId: number; internalId: number }> = {
+  Ranger: { treeClassId: 1, internalId: 2 },
+  Huntress: { treeClassId: 2, internalId: 8 },
+  Warrior: { treeClassId: 3, internalId: 6 },
+  Mercenary: { treeClassId: 4, internalId: 9 },
+  Druid: { treeClassId: 5, internalId: 11 },
+  Witch: { treeClassId: 6, internalId: 1 },
+  Sorceress: { treeClassId: 7, internalId: 7 },
+  Monk: { treeClassId: 8, internalId: 10 },
+};
+
+// Official PoB 2 0.5 tree.lua ascendancy indices (`ascendancies[1..4]`) & internal IDs (`internalId`)
+const POE2_ASCENDANCY_META: Record<string, { ascendClassId: number; internalId: string }> = {
+  Deadeye: { ascendClassId: 1, internalId: 'Ranger1' },
+  Pathfinder: { ascendClassId: 2, internalId: 'Ranger3' },
+  Amazon: { ascendClassId: 1, internalId: 'Huntress1' },
+  'Spirit Walker': { ascendClassId: 2, internalId: 'Huntress2' },
+  Ritualist: { ascendClassId: 3, internalId: 'Huntress3' },
+  Titan: { ascendClassId: 1, internalId: 'Warrior1' },
+  Warbringer: { ascendClassId: 2, internalId: 'Warrior2' },
+  'Smith of Kitava': { ascendClassId: 3, internalId: 'Warrior3' },
+  Tactician: { ascendClassId: 1, internalId: 'Mercenary1' },
+  Witchhunter: { ascendClassId: 2, internalId: 'Mercenary2' },
+  'Gemling Legionnaire': { ascendClassId: 3, internalId: 'Mercenary3' },
+  Oracle: { ascendClassId: 1, internalId: 'Druid1' },
+  Shaman: { ascendClassId: 2, internalId: 'Druid2' },
+  Infernalist: { ascendClassId: 1, internalId: 'Witch1' },
+  'Blood Mage': { ascendClassId: 2, internalId: 'Witch2' },
+  Lich: { ascendClassId: 3, internalId: 'Witch3' },
+  'Abyssal Lich': { ascendClassId: 4, internalId: 'Witch3b' },
+  Stormweaver: { ascendClassId: 1, internalId: 'Sorceress1' },
+  Chronomancer: { ascendClassId: 2, internalId: 'Sorceress2' },
+  'Disciple of Varashta': { ascendClassId: 3, internalId: 'Sorceress3' },
+  'Martial Artist': { ascendClassId: 1, internalId: 'Monk1' },
+  Invoker: { ascendClassId: 2, internalId: 'Monk2' },
+  'Acolyte of Chayula': { ascendClassId: 3, internalId: 'Monk3' },
 };
 
 /**
@@ -103,10 +131,20 @@ export function buildToPobXml(build: Build): string {
     1,
     build.skills.findIndex((s) => s.id === build.mainSkillGroupId) + 1,
   );
+  const poe2ClassMeta = build.game === 'poe2' ? POE2_CLASS_META[build.classId] : undefined;
+  const poe2AscMeta =
+    build.game === 'poe2' && build.ascendancyId
+      ? POE2_ASCENDANCY_META[build.ascendancyId]
+      : undefined;
   const classNum =
     build.game === 'poe2'
-      ? (POE2_CLASS_TO_NUM[build.classId] ?? 6)
+      ? (poe2ClassMeta?.treeClassId ?? 3)
       : (POE1_CLASS_TO_NUM[build.classId] ?? 3);
+  const ascendClassNum = build.game === 'poe2' ? (poe2AscMeta?.ascendClassId ?? 0) : 0;
+  const poe2InternalClassAttrs =
+    build.game === 'poe2'
+      ? `${poe2ClassMeta ? ` classInternalId="${poe2ClassMeta.internalId}"` : ''} ascendancyInternalId="${escapeXml(poe2AscMeta?.internalId ?? '')}"`
+      : '';
   const gemsCatalog = getGemsForGame(build.game);
   const tree = getTreeForGame(build.game);
   const targetVersion = build.game === 'poe2' ? '0_1' : '3_0';
@@ -166,7 +204,7 @@ export function buildToPobXml(build: Build): string {
 
     if (jewelSockets.length > 0 || hasWsChildren || hasOverrides) {
       lines.push(
-        `    <Spec title="${escapeXml(spec.title)}" treeVersion="${escapeXml(spec.treeVersion)}" classId="${classNum}" ascendClassId="0" nodes="${nodesStr}"${wsAttrs}${masteryAttr}>`,
+        `    <Spec title="${escapeXml(spec.title)}" treeVersion="${escapeXml(spec.treeVersion)}" classId="${classNum}" ascendClassId="${ascendClassNum}"${poe2InternalClassAttrs} nodes="${nodesStr}"${wsAttrs}${masteryAttr}>`,
       );
       if (build.game === 'poe2' && spec.weaponSet1NodeIds.length > 0) {
         lines.push(`      <WeaponSet1 nodes="${ws1Str}" />`);
@@ -196,7 +234,7 @@ export function buildToPobXml(build: Build): string {
       lines.push(`    </Spec>`);
     } else {
       lines.push(
-        `    <Spec title="${escapeXml(spec.title)}" treeVersion="${escapeXml(spec.treeVersion)}" classId="${classNum}" ascendClassId="0" nodes="${nodesStr}"${wsAttrs}${masteryAttr} />`,
+        `    <Spec title="${escapeXml(spec.title)}" treeVersion="${escapeXml(spec.treeVersion)}" classId="${classNum}" ascendClassId="${ascendClassNum}"${poe2InternalClassAttrs} nodes="${nodesStr}"${wsAttrs}${masteryAttr} />`,
       );
     }
   }

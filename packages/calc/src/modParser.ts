@@ -898,12 +898,20 @@ const PARSER_RULES: ParserRule[] = [
     build: (m, src) => [mkMod('Life', 'MORE', Number(m[1]), src)],
   },
   {
+    pattern: /^(\d+)% less maximum Life$/i,
+    build: (m, src) => [mkMod('Life', 'MORE', -Number(m[1]), src)],
+  },
+  {
     pattern: /^(\d+)% increased (?:maximum )?Energy Shield$/i,
     build: (m, src) => [mkMod('EnergyShield', 'INC', Number(m[1]), src)],
   },
   {
     pattern: /^(\d+)% more (?:maximum )?Energy Shield$/i,
     build: (m, src) => [mkMod('EnergyShield', 'MORE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^(\d+)% less (?:maximum )?Energy Shield$/i,
+    build: (m, src) => [mkMod('EnergyShield', 'MORE', -Number(m[1]), src)],
   },
   {
     pattern: /^(\d+)% increased maximum Mana$/i,
@@ -1050,7 +1058,7 @@ const PARSER_RULES: ParserRule[] = [
     },
   },
   {
-    pattern: /^\+(\d+)% to all maximum Elemental Resistances$/i,
+    pattern: /^([+-]?\d+)% to all maximum Elemental Resistances$/i,
     build: (m, src) => {
       const v = Number(m[1]);
       return [
@@ -1061,8 +1069,12 @@ const PARSER_RULES: ParserRule[] = [
     },
   },
   {
-    pattern: /^\+(\d+)% to maximum (Fire|Cold|Lightning|Chaos) Resistance$/i,
+    pattern: /^([+-]?\d+)% to maximum (Fire|Cold|Lightning|Chaos) Resistance$/i,
     build: (m, src) => [mkMod(`${m[2]}ResistMax`, 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Your Maximum Resistances are (\d+)%$/i,
+    build: (m, src) => [mkMod('AllResistMaxOverride', 'OVERRIDE', Number(m[1]), src)],
   },
   {
     pattern: /^\+(\d+)% to (Fire|Cold|Lightning|Chaos) and (Fire|Cold|Lightning|Chaos) Resistances$/i,

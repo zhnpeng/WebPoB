@@ -1479,7 +1479,15 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
       implicits: expandPerPlayerLevelMods(runeExpandedItem.implicits, build.level),
       explicits: expandPerPlayerLevelMods(runeExpandedItem.explicits, build.level),
     };
-    const resolved = resolveItemEffectiveStats(levelExpandedItem, build.game, itemModOpts);
+    // Fox Idol ("Idols socketed in this item gain the benefits of their Bonded modifiers") unlocks Bonded mods on this item
+    const itemHasBondedUnlock =
+      build.game === 'poe2' &&
+      !allowBonded &&
+      [...levelExpandedItem.implicits, ...levelExpandedItem.explicits].some((l) =>
+        /Idols socketed in this item gain the benefits of their Bonded modifiers|镶嵌在该物品上的雕像获得其自身的绑定词缀/i.test(l),
+      );
+    const thisItemModOpts = allowBonded || itemHasBondedUnlock ? { allowBonded: true } : itemModOpts;
+    const resolved = resolveItemEffectiveStats(levelExpandedItem, build.game, thisItemModOpts);
     const filledSockets = countFilledSockets(item);
     totalSocketFilledCount += filledSockets;
     if (slot === 'Body Armour') {
@@ -1667,13 +1675,6 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     if (resolved.armourStats?.blockChance) {
       db.addMod({ name: 'BlockChance', type: 'BASE', value: resolved.armourStats.blockChance, flags: 0, keywordFlags: 0, source: src });
     }
-    const thisItemAllowBonded =
-      allowBonded ||
-      (build.game === 'poe2' &&
-        [...item.implicits, ...item.explicits].some((l) =>
-          /gain the benefits of their Bonded modifiers/i.test(l),
-        ));
-    const thisItemModOpts = thisItemAllowBonded ? { allowBonded: true } : undefined;
     const parsedImpMods = parseModLines(effectiveImplicits, `${src} [Implicit]`, thisItemModOpts);
     const parsedExpMods = parseModLines(effectiveExplicits, src, thisItemModOpts);
     const isPoe2QuiverOffensiveStat = (name: string): boolean =>
@@ -1955,6 +1956,44 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
 
   // PoE 2 Morior Invictus / per-Socket / per-Empty-Socket & Ingenuity / Ritualist Mystic Attunement Ring+Amulet scaling
   evaluatePerSocketItemModifiers(nonFlaskEquippedForUniques, db, itemModOpts);
+  // PoE 2 Estra's Path ("+X% to Fire and Cold Resistances per Equipped Item with a Lightning Resistance Modifier")
+  for (const { slot, item } of nonFlaskEquippedForUniques) {
+    for (const rawLine of [...item.implicits, ...item.explicits]) {
+      const mEstra = rawLine
+        .trim()
+        .match(
+          /^\+(\d+)% to (Fire|Cold|Lightning|Chaos) and (Fire|Cold|Lightning|Chaos) Resistances per Equipped Item with a (Fire|Cold|Lightning|Chaos) Resistance Modifier$/i,
+        );
+      if (!mEstra) continue;
+      const perItemVal = Number(mEstra[1]);
+      const target1 = mEstra[2]!.charAt(0).toUpperCase() + mEstra[2]!.slice(1).toLowerCase();
+      const target2 = mEstra[3]!.charAt(0).toUpperCase() + mEstra[3]!.slice(1).toLowerCase();
+      const condEl = mEstra[4]!.charAt(0).toUpperCase() + mEstra[4]!.slice(1).toLowerCase();
+      const isCondEle = condEl !== 'Chaos';
+      const condRe = new RegExp(
+        isCondEle
+          ? `(?:\\b${condEl}(?:\\s+and\\s+\\w+|\\s+or\\s+\\w+)?\\s+Resistances?\\b|\\ball\\s+Elemental\\s+Resistances\\b)`
+          : `\\bChaos\\s+Resistances?\\b`,
+        'i',
+      );
+      let matchingCount = 0;
+      for (const eq of nonFlaskEquippedForUniques) {
+        const lines = [...eq.item.implicits, ...eq.item.explicits];
+        const hasCond = lines.some(
+          (l) =>
+            condRe.test(l) &&
+            !/per Equipped Item|maximum|Minions? have|Enemies|Companion|Allies/i.test(l),
+        );
+        if (hasCond) matchingCount++;
+      }
+      if (matchingCount > 0) {
+        const totalBonus = perItemVal * matchingCount;
+        const src = `${slot}: ${item.name} (${matchingCount}x ${condEl} Res items)`;
+        db.addMod({ name: `${target1}Resist`, type: 'BASE', value: totalBonus, flags: 0, keywordFlags: 0, source: src });
+        db.addMod({ name: `${target2}Resist`, type: 'BASE', value: totalBonus, flags: 0, keywordFlags: 0, source: src });
+      }
+    }
+  }
   const hasMysticAttunement =
     build.game === 'poe2' &&
     allAllocatedNodeDefs.some((n) => n.name.en.trim().toLowerCase() === 'mystic attunement');
@@ -4937,16 +4976,29 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
   }
 
   // Pre-evaluate raw & max resistances before Armour/Evasion so Breach/Grasping Mail Overcapped/Uncapped Resist scaling works!
-  let fireMaxResist = Math.min(90, Math.round(db.sum('BASE', 'FireResistMax')));
-  let coldMaxResist = Math.min(90, Math.round(db.sum('BASE', 'ColdResistMax')));
-  let lightningMaxResist = Math.min(90, Math.round(db.sum('BASE', 'LightningResistMax')));
+  const allResMaxOverride = db.override('AllResistMaxOverride');
+  let fireMaxResist =
+    allResMaxOverride !== null
+      ? Math.min(90, Math.round(allResMaxOverride))
+      : Math.min(90, Math.round(db.sum('BASE', 'FireResistMax')));
+  let coldMaxResist =
+    allResMaxOverride !== null
+      ? Math.min(90, Math.round(allResMaxOverride))
+      : Math.min(90, Math.round(db.sum('BASE', 'ColdResistMax')));
+  let lightningMaxResist =
+    allResMaxOverride !== null
+      ? Math.min(90, Math.round(allResMaxOverride))
+      : Math.min(90, Math.round(db.sum('BASE', 'LightningResistMax')));
   if (uniqueGearResult.meldingOfTheFleshActive) {
     const highestEleMax = Math.max(fireMaxResist, coldMaxResist, lightningMaxResist);
     fireMaxResist = highestEleMax;
     coldMaxResist = highestEleMax;
     lightningMaxResist = highestEleMax;
   }
-  const chaosMaxResist = Math.min(90, Math.round(db.sum('BASE', 'ChaosResistMax')));
+  const chaosMaxResist =
+    allResMaxOverride !== null
+      ? Math.min(90, Math.round(allResMaxOverride))
+      : Math.min(90, Math.round(db.sum('BASE', 'ChaosResistMax')));
 
   const evalSignedResist = (stat: string): number => {
     const ov = db.override(stat);
