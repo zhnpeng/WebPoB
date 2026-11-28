@@ -10,7 +10,7 @@ import {
   parseWeGamePoe2Build,
   type WeGamePoe2Bundle,
 } from './wegameImporter.js';
-import { buildToPobXml } from './pobCode.js';
+import { buildToPobXml, xmlToBuild } from './pobCode.js';
 
 beforeAll(() => {
   const treePath = path.resolve(process.cwd(), 'apps/web/public/data/poe2-tree-0_5.json');
@@ -599,5 +599,40 @@ describe('parseWeGamePoe2Build', () => {
     expect(xml).toContain('Ward: 420');
     expect(xml).toContain('Radius: Small');
     expect(xml).toContain('Radius: Variable');
+  });
+
+  it('exports PoE 2 Sceptre Spirit as a Spirit: <N> header instead of an implicit line (Wave 6J)', () => {
+    const bundle: WeGamePoe2Bundle = {
+      roleInfo: { role: { name: 'SceptreTest', level: 95, class_name: 'Infernalist' } },
+      equipments: {
+        equipments: [
+          {
+            id: 'sceptre_0001',
+            inventoryId: 'Offhand',
+            frameType: 3,
+            rarity: 'Unique',
+            name: '神圣之火',
+            baseType: '圣地权杖',
+            properties: [{ name: '[Spirit|精魂]', type: 25, values: [['164', 1]] }],
+            explicitMods: [{ description: '在场范围提高 50%' }],
+          },
+        ],
+      },
+    };
+
+    const build = parseWeGamePoe2Build(bundle);
+    const sceptre = build.items[build.equipped['Weapon 2']!]!;
+    expect(sceptre.baseName).toBe('Shrine Sceptre');
+    expect(sceptre.implicits).toContain('+164 to Spirit');
+
+    const xml = buildToPobXml(build);
+    expect(xml).toContain('Spirit: 164');
+    expect(xml).toContain('Implicits: 0');
+    expect(xml).not.toContain('+164 to Spirit');
+
+    // Lossless round-trip back through xmlToBuild / parseItemText
+    const reparsed = xmlToBuild(xml);
+    const reparsedSceptre = reparsed.items[reparsed.equipped['Weapon 2']!]!;
+    expect(reparsedSceptre.implicits).toContain('+164 to Spirit');
   });
 });

@@ -976,8 +976,21 @@ export function formatItemToPobText(item: Item): string {
     lines.push(`Critical Strike Chance: ${item.weaponStats.critChance}%`);
     lines.push(`Attacks per Second: ${item.weaponStats.attacksPerSecond}`);
   }
-  lines.push(`Implicits: ${item.implicits.length}`);
-  for (const imp of item.implicits) {
+  // PoE 2 Sceptres carry total Spirit as a `Spirit: <N>` header property rather than an implicit line
+  // so Desktop PoB 2 / LuaJIT does not double-add the Sceptre's inherent +100 base Spirit.
+  let exportImplicits = item.implicits;
+  if (/\bSceptre\b/i.test(item.baseName) || /权杖/.test(item.baseNameZh ?? '')) {
+    const spiritImpIdx = item.implicits.findIndex((imp) => /^\+\d+ to Spirit$/i.test(imp.trim()));
+    if (spiritImpIdx >= 0) {
+      const mSp = item.implicits[spiritImpIdx]!.trim().match(/^\+(\d+) to Spirit$/i);
+      if (mSp) {
+        lines.push(`Spirit: ${mSp[1]}`);
+        exportImplicits = item.implicits.filter((_, idx) => idx !== spiritImpIdx);
+      }
+    }
+  }
+  lines.push(`Implicits: ${exportImplicits.length}`);
+  for (const imp of exportImplicits) {
     lines.push(imp);
   }
   for (const exp of item.explicits) {
