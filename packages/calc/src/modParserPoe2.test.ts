@@ -1906,5 +1906,33 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
         }),
       ]);
     });
+
+    it('parses Wave 4X PoE 2 Cooldown/Shock/Curse/Totem/Unlucky semantic rules', () => {
+      expect(
+        parseModLine('Skills have 33% chance to not consume a Cooldown when used', 'Tree:10987'),
+      ).toEqual([expect.objectContaining({ name: 'ChanceToNotConsumeCooldown', type: 'BASE', value: 33 })]);
+      expect(
+        parseModLine('25% chance on Consuming a Shock on an Enemy to reapply it', 'Tree:8273'),
+      ).toEqual([expect.objectContaining({ name: 'ChanceToReapplyShockOnConsume', type: 'BASE', value: 25 })]);
+      expect(parseModLine('Your Curses have infinite Duration', 'Tree:27667')).toEqual([
+        expect.objectContaining({ name: 'InfiniteCurseDuration', type: 'FLAG', value: true }),
+      ]);
+      expect(parseModLine('Unlimited number of Summoned Totems', 'Tree:45202')).toEqual([
+        expect.objectContaining({ name: 'UnlimitedTotems', type: 'FLAG', value: true }),
+      ]);
+      expect(parseModLine('Enemy Critical Hit Chance against you is Unlucky', 'Tree:34313')).toEqual([
+        expect.objectContaining({ name: 'EnemyCritChanceUnlucky', type: 'FLAG', value: true }),
+      ]);
+      expect(
+        parseModLine('Damage of Enemies Hitting you is Unlucky while you are on Low Life', 'Item:2'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'EnemyDamageUnlucky',
+          type: 'FLAG',
+          value: true,
+          tags: [{ type: 'Condition', var: 'LowLife' }],
+        }),
+      ]);
+    });
   });
 });

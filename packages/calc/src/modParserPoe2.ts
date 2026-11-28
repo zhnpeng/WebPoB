@@ -2840,6 +2840,36 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
       ];
     },
   },
+  // Wave 4X: Chronomancer Now and Again (0_2), Shock reapply, Infinite Curse, Unlimited Totems & Enemy Unlucky mods
+  {
+    pattern: /^Skills have (\d+)% chance to not consume a Cooldown when used$/i,
+    build: (m, src) => [mkMod('ChanceToNotConsumeCooldown', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^(\d+)% chance on Consuming a Shock on an Enemy to reapply it$/i,
+    build: (m, src) => [mkMod('ChanceToReapplyShockOnConsume', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Your Curses have infinite Duration$/i,
+    build: (_, src) => [mkMod('InfiniteCurseDuration', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Unlimited number of Summoned Totems$/i,
+    build: (_, src) => [mkMod('UnlimitedTotems', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Enemy Critical Hit Chance against you is Unlucky$/i,
+    build: (_, src) => [mkMod('EnemyCritChanceUnlucky', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Damage of Enemies Hitting you is Unlucky( while you are on Low Life)?$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('EnemyDamageUnlucky', 'FLAG', true, src),
+        ...(m[1] ? { tags: [{ type: 'Condition' as const, var: 'LowLife' }] } : {}),
+      },
+    ],
+  },
 
   // =========================================================================
   // 5. PoE 2 Skill-Specific & Tag Gem Level Scaling (+X to Level of all <SkillName|Nova|...> Skills)
