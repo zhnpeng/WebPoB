@@ -245,6 +245,20 @@ export interface SocketedGemBonusRule {
   value: number;
 }
 
+function interpolateSocketedRange(raw: string): string {
+  const rangeMatch = raw.match(/\{range:([0-9.]+)\}/i);
+  const ratio = rangeMatch ? Math.min(1, Math.max(0, Number(rangeMatch[1]))) : 0.5;
+  return raw.replace(
+    /([+-])\((\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)\)/g,
+    (_, sign: string, minStr: string, maxStr: string) => {
+      const min = Number(minStr);
+      const max = Number(maxStr);
+      const val = Math.round(min + (max - min) * ratio);
+      return `${sign}${val}`;
+    },
+  );
+}
+
 /**
  * Extracts `+N to Level of Socketed [...] Gems` and `+N% to Quality of Socketed [...] Gems`
  * from an item's implicit + explicit mod lines (scoped strictly to gems socketed in that slot).
@@ -252,7 +266,7 @@ export interface SocketedGemBonusRule {
 export function parseSocketedGemBonuses(lines: readonly string[]): SocketedGemBonusRule[] {
   const rules: SocketedGemBonusRule[] = [];
   for (const raw of lines) {
-    const line = normalizeStatLineToEn(raw);
+    const line = normalizeStatLineToEn(interpolateSocketedRange(raw));
     if (!line) continue;
 
     // +N / -N to Level of Socketed [Filter] [Active Skill | Skill | Support |] Gems

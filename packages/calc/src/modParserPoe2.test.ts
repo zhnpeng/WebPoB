@@ -1936,17 +1936,21 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
       ]);
     });
 
-    it('parses negative socketed gem level & quality modifiers in gemBonus (Wave 5A)', () => {
+    it('parses negative and range-interpolated socketed gem level & quality modifiers in gemBonus (Wave 5A/5B)', () => {
       expect(
         parseSocketedGemBonuses([
           '-2 to Level of Socketed Support Gems',
           '+2 to Level of Socketed AoE Gems',
           '-5% to Quality of Socketed Gems',
+          '{range:1}+(5-8) to Level of Socketed Gems',
+          '{range:0.5}+(5-8)% to Quality of Socketed Support Gems',
         ]),
       ).toEqual([
         { kind: 'level', filterKey: 'support', activeOnly: false, supportOnly: true, value: -2 },
         { kind: 'level', filterKey: 'area', activeOnly: false, supportOnly: false, value: 2 },
         { kind: 'quality', filterKey: 'all', activeOnly: false, supportOnly: false, value: -5 },
+        { kind: 'level', filterKey: 'all', activeOnly: false, supportOnly: false, value: 8 },
+        { kind: 'quality', filterKey: 'support', activeOnly: false, supportOnly: true, value: 7 },
       ]);
     });
   });
