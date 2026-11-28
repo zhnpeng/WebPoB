@@ -1731,6 +1731,33 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
       },
     ],
   },
+  // Wave 4V: Elementalist Shaper of Storms (ShockMinimum wired natively in engine.ts:5728)
+  {
+    pattern: /^Shocks from your Hits always increase Damage taken by at least (\d+)%$/i,
+    build: (m, src) => [mkMod('ShockMinimum', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Hits always Shock$/i,
+    build: (_, src) => [mkMod('ShockChance', 'BASE', 100, src)],
+  },
+  {
+    pattern: /^(\d+)% increased Area of Effect while you don't have Convergence$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('AreaOfEffect', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'Convergence', neg: true }],
+      },
+    ],
+  },
+  {
+    pattern: /^Nearby Hindered Enemies deal (\d+)% reduced Damage over Time$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('EnemyDamageDealtOverTime', 'INC', -Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'EnemyHindered' }],
+      },
+    ],
+  },
 ];
 
 /**

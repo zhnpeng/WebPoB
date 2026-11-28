@@ -408,5 +408,24 @@ Implicits: 1
     const harbBuild = xmlToBuild(harbXml);
     expect(harbBuild.config.customMods).toContain('Gain 20% of Maximum Mana as Extra Maximum Energy Shield');
     expect(harbBuild.config.customMods).toContain('55% increased Cooldown Recovery Rate');
+
+    // Wave 4V: PoE 1 3.28+ <Skill imbuedSupport="..."> adds Level 1 Imbued Support gem to the skill group
+    const imbuedXml = `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding>
+  <Build className="Ranger" ascendClassName="Deadeye" level="95" mainSocketGroup="1" />
+  <Tree activeSpec="1"><Spec title="Default" nodes="1" /></Tree>
+  <Skills>
+    <Skill enabled="true" slot="Body Armour" imbuedSupport="Spell Echo">
+      <Gem nameSpec="Arc" level="20" quality="20" enabled="true" />
+    </Skill>
+  </Skills>
+  <Items />
+  <Config />
+</PathOfBuilding>`;
+    const imbuedBuild = xmlToBuild(imbuedXml);
+    expect(imbuedBuild.skills[0]!.gems).toHaveLength(2);
+    expect(imbuedBuild.skills[0]!.gems[1]!.gemId).toBe('poe1_sup_spell_echo');
+    expect(imbuedBuild.skills[0]!.gems[1]!.level).toBe(1);
+    expect(imbuedBuild.skills[0]!.gems[1]!.fromItem).toBe(true);
   });
 });

@@ -829,6 +829,22 @@ export function xmlToBuild(xml: string): Build {
           });
         }
       }
+      // PoE 1 3.28+ Imbued Support Gem on <Skill imbuedSupport="..."> (Level 1 support linked to the skill group)
+      if (game === 'poe1' && attrs.imbuedSupport && attrs.imbuedSupport !== 'nil') {
+        const imbuedId =
+          matchGemId(game, undefined, attrs.imbuedSupport, undefined, undefined) ??
+          matchGemId(game, undefined, `${attrs.imbuedSupport} Support`, undefined, undefined);
+        if (imbuedId && !gems.some((g) => g.gemId === imbuedId)) {
+          gems.push({
+            instanceId: `${prefix}_g_${groupCounter}_${gemCounter++}`,
+            gemId: imbuedId,
+            level: 1,
+            quality: 0,
+            enabled: true,
+            fromItem: true,
+          });
+        }
+      }
       if (gems.length === 0 && attrs.skillId) {
         const itemSkillMatched = matchGemId(game, undefined, attrs.label, attrs.skillId, undefined);
         if (itemSkillMatched) {

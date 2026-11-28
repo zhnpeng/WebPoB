@@ -1201,4 +1201,23 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       ),
     ).toHaveLength(2);
   });
+
+  it('Wave 4V: Elementalist Shaper of Storms ShockMinimum, Hits always Shock & Heart of Destruction AoE', () => {
+    expect(
+      parseModLine('Shocks from your Hits always increase Damage taken by at least 25%', 'Tree: Shaper of Storms'),
+    ).toEqual([expect.objectContaining({ name: 'ShockMinimum', type: 'BASE', value: 25 })]);
+    expect(parseModLine('Hits always Shock', 'Tree: Shaper of Storms')).toEqual([
+      expect.objectContaining({ name: 'ShockChance', type: 'BASE', value: 100 }),
+    ]);
+    expect(
+      parseModLine("60% increased Area of Effect while you don't have Convergence", 'Tree: Heart of Destruction'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'AreaOfEffect',
+        type: 'INC',
+        value: 60,
+        tags: [{ type: 'Condition', var: 'Convergence', neg: true }],
+      }),
+    ]);
+  });
 });
