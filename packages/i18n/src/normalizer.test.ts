@@ -161,6 +161,19 @@ describe('normalizer bilingual parity (PoE 1 & PoE 2)', () => {
       ['具有 2 个咒符位', 'Has 2 Charm Slots'],
       ['对稀有或传奇敌人的攻击伤害提高 30%', '30% increased Attack Damage against Rare or Unique Enemies'],
       ['对稀有或传奇敌人的伤害提高 25%', '25% increased Damage against Rare or Unique Enemies'],
+      ['使用时开始能量护盾充能', 'Energy Shield Recharge starts on use'],
+      ['效果期间将所受伤害的 28% 吸纳为生命', '28% of Damage Taken Recouped as Life during Effect'],
+      ['效果期间被敌人击中时获得 3 点怒火', 'Gain 3 Rage when Hit by an Enemy during Effect'],
+      ['效果期间不具有固有的怒火损失', 'No inherent loss of Rage during Effect'],
+      ['Bonded: 执政官间隔期的消减速度加快 30%', 'Bonded: Archon recovery period expires 30% faster'],
+      ['充能次数提高 47%', '47% increased Charges'],
+      ['获得的充能提高 55%', '55% increased Charges gained'],
+      ['每次使用消耗的充能次数降低 27%', '27% reduced Charges per use'],
+      ['回复量提高 60%', '60% increased Amount Recovered'],
+      ['回复量降低 70%', '70% reduced Amount Recovered'],
+      ['允许的前缀 -1', '-1 Prefix Modifier allowed'],
+      ['允许的后缀 +1', '+1 Suffix Modifier allowed'],
+      ['生命回复提高 99%', '99% increased Life Recovery'],
     ];
 
     for (const [zh, en] of cases) {
