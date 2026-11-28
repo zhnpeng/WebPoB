@@ -5349,8 +5349,11 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
   } else if (cfg.activeGuardSkill === 'ArcaneCloak') {
     const spentMana = manaUnreserved * 0.64;
     guardPool = Math.round(spentMana * 0.75);
+    const alreadyHasArcaneCloakLightning = db
+      .calcStat('LightningMax', ModFlag.Hit)
+      .sources.some((s) => /arcane cloak/i.test(s.source));
     const cloakLightning = Math.floor(spentMana * 0.14);
-    if (cloakLightning > 0) {
+    if (!alreadyHasArcaneCloakLightning && cloakLightning > 0) {
       db.addMod({
         name: 'LightningMin',
         type: 'BASE',
@@ -8468,6 +8471,9 @@ function computeGroupOffence(
     isAttack &&
     (flags & ModFlag.Melee) !== 0 &&
     !effectiveSkillTypeSet.has('neverexertable') &&
+    !effectiveSkillTypeSet.has('retaliation') &&
+    !activeDef.tags.some((t) => t.toLowerCase() === 'retaliation') &&
+    !Boolean(activeSkillData?.cannotBeExerted) &&
     !effectiveSkillTypeSet.has('vaal') &&
     !effectiveSkillTypeSet.has('channel') &&
     !effectiveSkillTypeSet.has('totem') &&
@@ -8886,11 +8892,17 @@ function computeGroupOffence(
         }
       }
       // PoE 1 Poisonous Concoction / of Bouncing: Added Chaos Damage from highest-recovery equipped Life Flask
-      if (build.game === 'poe1' && activeNameLower.startsWith('poisonous concoction')) {
+      // Official PoB1 (CalcSetup.lua / act_dex.lua): uses the flask's local recovery amount (base * quality * local inc)
+      // scaled by `ChaosPerLifeFlaskPercent` (gem level scaling), and only when Part 2 ("Life") is active (not Part 1 "No Flask").
+      if (
+        build.game === 'poe1' &&
+        activeNameLower.startsWith('poisonous concoction') &&
+        (resolvedPartStats?.partIndex ?? 2) !== 1
+      ) {
         let bestFlaskLife = 0;
-        const flaskRecInc =
-          skillDb.sum('INC', ['FlaskRecovery', 'FlaskLifeRecovery', 'FlaskEffect']) +
-          baseBuses.playerDb.sum('INC', ['FlaskRecovery', 'FlaskLifeRecovery', 'FlaskEffect']);
+        // Official PoB1 (CalcSetup.lua): Life Flask recovery amount scales with `FlaskRecovery` / `FlaskLifeRecovery`
+        // (single-counted via `skillDb`, NOT `FlaskEffect` which only scales utility flask buffs).
+        const flaskRecInc = skillDb.sum('INC', ['FlaskRecovery', 'FlaskLifeRecovery']);
         for (const fSlot of ['Flask 1', 'Flask 2', 'Flask 3', 'Flask 4', 'Flask 5'] as const) {
           const fId = build.equipped[fSlot];
           const fItem = fId ? build.items[fId] : undefined;
@@ -8912,12 +8924,18 @@ function computeGroupOffence(
             const mRed = fl.match(/(\d+)%\s+reduced\s+(?:Amount\s+Recovered|Life\s+Recovered)/i);
             if (mRed) localRecInc -= Number(mRed[1]);
           }
-          const qualMult = 1 + Math.max(0, fItem.quality || 20) / 100;
+          const qualMult = 1 + Math.max(0, fItem.quality || 0) / 100;
           const totalRec = rawBase * qualMult * Math.max(0, 1 + localRecInc / 100) * Math.max(0, 1 + flaskRecInc / 100);
           if (totalRec > bestFlaskLife) bestFlaskLife = totalRec;
         }
         if (bestFlaskLife > 0) {
-          const flaskPct = activeNameLower.includes('bouncing') ? 0.11 : 0.09;
+          const gemFlaskPct = skillDb.sum('BASE', 'ChaosPerLifeFlaskPercent', flags, kwFlags);
+          const flaskPct =
+            gemFlaskPct > 0
+              ? gemFlaskPct / 100
+              : activeNameLower.includes('bouncing')
+                ? 0.18
+                : 0.09;
           const flatFlaskChaos = bestFlaskLife * flaskPct;
           baseMin.Chaos += flatFlaskChaos;
           baseMax.Chaos += flatFlaskChaos;
@@ -10266,7 +10284,11 @@ function computeGroupOffence(
   const dealNoEle =
     skillDb.flag('DealNoElemental', flags, kwFlags) || (dealNoFire && dealNoCold && dealNoLight);
   const dealNoChaos = skillDb.flag('DealNoChaos', flags, kwFlags);
+  const dealNoNonPhys = skillDb.flag('DealNoNonPhysical', flags, kwFlags);
   const dealNoNonFire = skillDb.flag('DealNoNonFire', flags, kwFlags);
+  const dealNoNonCold = skillDb.flag('DealNoNonCold', flags, kwFlags);
+  const dealNoNonLight = skillDb.flag('DealNoNonLightning', flags, kwFlags);
+  const dealNoNonChaos = skillDb.flag('DealNoNonChaos', flags, kwFlags);
   const globalMinMore = skillDb.more('MinDamage', flags, kwFlags);
   const globalMaxMore = skillDb.more('MaxDamage', flags, kwFlags);
   const isUnexcitingDmg = skillDb.flag('Unexciting', flags, kwFlags);
@@ -10284,7 +10306,11 @@ function computeGroupOffence(
       (dt === 'Lightning' && dealNoLight) ||
       (isEle && dealNoEle) ||
       (dt === 'Chaos' && dealNoChaos) ||
-      (dealNoNonFire && dt !== 'Fire')
+      (dealNoNonPhys && dt !== 'Physical') ||
+      (dealNoNonFire && dt !== 'Fire') ||
+      (dealNoNonCold && dt !== 'Cold') ||
+      (dealNoNonLight && dt !== 'Lightning') ||
+      (dealNoNonChaos && dt !== 'Chaos')
     ) {
       damageByType[dt] = { min: 0, max: 0, average: 0 };
       continue;
@@ -11672,8 +11698,7 @@ function computeGroupOffence(
     !effectiveSkillTypeSet.has('grenade');
   const hasHitTimeOverride =
     typeof activeSkillData?.hitTimeOverride === 'number' && activeSkillData.hitTimeOverride > 0;
-  const poe2SelfCastCooldownDisablesAvg =
-    build.game === 'poe2' &&
+  const selfCastCooldownDisablesAvg =
     Boolean(effCooldown && effCooldown > 0) &&
     !isTrapSkill &&
     !isMineSkill;
@@ -11682,7 +11707,7 @@ function computeGroupOffence(
     triggerRate === undefined &&
     !isPoe2CrossbowNonGrenade &&
     !hasHitTimeOverride &&
-    !poe2SelfCastCooldownDisablesAvg;
+    !selfCastCooldownDisablesAvg;
   const avgDamagePerHit = Math.round(avgHitWithCrit * (hitChance / 100) * 100) / 100;
   const showAvgImpalePerHit =
     showAverage && impaleDps > 0 && speedExact > 0 ? impaleDps / speedExact : 0;

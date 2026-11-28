@@ -1863,4 +1863,147 @@ describe('Mechanism-Layer Regression Suite (PoE 1 & PoE 2)', () => {
       expect(outWilma.defence.armour).toBeGreaterThanOrEqual(outNoWilma.defence.armour + 800);
     });
   });
+
+  describe('Wave 5C: Retaliation cannotBeExerted, DealNoNon*, Arcane Cloak dedup & PConc Life Flask', () => {
+    it('prevents Intimidating Cry from exerting Retaliation skills (Crushing Fist)', () => {
+      const base = createSamplePoe1Build();
+      const shield = {
+        id: 'retal_shield',
+        name: 'Tower Shield',
+        baseName: 'Colossal Tower Shield',
+        rarity: 'RARE' as const,
+        slotType: 'Weapon 2' as const,
+        quality: 20,
+        armourStats: { armour: 2000, evasion: 0, energyShield: 0 },
+        implicits: [],
+        explicits: [],
+      };
+      const noCry: Build = {
+        ...base,
+        items: { ...base.items, [shield.id]: shield },
+        equipped: { ...base.equipped, 'Weapon 2': shield.id },
+        skills: [
+          {
+            id: 'sg_cf',
+            label: 'Crushing Fist',
+            enabled: true,
+            gems: [{ instanceId: 'g_cf', gemId: 'poe1_crushingfist', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_cf',
+      };
+      const withCry: Build = {
+        ...noCry,
+        skills: [
+          ...noCry.skills,
+          {
+            id: 'sg_ic',
+            label: 'Intimidating Cry',
+            enabled: true,
+            gems: [{ instanceId: 'g_ic', gemId: 'poe1_intimidatingcry', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+      };
+      const outNoCry = calculateBuild(noCry);
+      const outWithCry = calculateBuild(withCry);
+      expect(outNoCry.offence.averageHit).toBeGreaterThan(0);
+      expect(outWithCry.offence.averageHit).toBeCloseTo(outNoCry.offence.averageHit, 1);
+    });
+
+    it('zeros non-target damage types when DealNoNonLightning is active', () => {
+      const base = createSamplePoe1Build();
+      const sword = makeWeapon({
+        id: 'tri_sword',
+        name: 'Tri Sword',
+        baseName: 'Jewelled Foil',
+        slotType: 'Weapon 1',
+        weaponStats: {
+          weaponType: 'Sword',
+          twoHanded: false,
+          physicalMin: 100,
+          physicalMax: 200,
+          attacksPerSecond: 1.6,
+          critChance: 5,
+          elementalDamage: {
+            Fire: [100, 200],
+            Cold: [100, 200],
+            Lightning: [100, 200],
+          },
+        },
+      });
+      const plain: Build = {
+        ...base,
+        items: { ...base.items, [sword.id]: sword },
+        equipped: { ...base.equipped, 'Weapon 1': sword.id },
+        skills: [
+          {
+            id: 'sg_atk',
+            label: 'Attack',
+            enabled: true,
+            gems: [{ instanceId: 'g1', gemId: 'poe1_cyclone', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_atk',
+      };
+      const lightningOnly: Build = {
+        ...plain,
+        config: {
+          ...plain.config,
+          customMods: 'Deal no Non-Lightning Damage',
+        },
+      };
+      const outPlain = calculateBuild(plain);
+      const outLight = calculateBuild(lightningOnly);
+      expect(outPlain.offence.averageHit).toBeGreaterThan(outLight.offence.averageHit * 2);
+      expect(outLight.offence.averageHit).toBeGreaterThan(0);
+    });
+
+    it('does not scale Poisonous Concoction of Bouncing Life Flask chaos damage by utility FlaskEffect', () => {
+      const base = createSamplePoe1Build();
+      const flask = {
+        id: 'pconc_life_flask',
+        name: 'Concentrated Divine Life Flask',
+        baseName: 'Divine Life Flask',
+        rarity: 'MAGIC' as const,
+        slotType: 'Flask 1' as const,
+        quality: 20,
+        implicits: [],
+        explicits: ['50% increased Amount Recovered'],
+      };
+      const plain: Build = {
+        ...base,
+        items: { ...base.items, [flask.id]: flask },
+        equipped: { ...base.equipped, 'Weapon 1': undefined, 'Weapon 2': undefined, 'Flask 1': flask.id },
+        skills: [
+          {
+            id: 'sg_pconc',
+            label: 'PConc',
+            enabled: true,
+            gems: [
+              {
+                instanceId: 'g_pc',
+                gemId: 'poe1_poisonousconcoctionaltx',
+                level: 20,
+                quality: 20,
+                skillPart: 2,
+                enabled: true,
+              },
+            ],
+          },
+        ],
+        mainSkillGroupId: 'sg_pconc',
+      };
+      const withFlaskEffect: Build = {
+        ...plain,
+        config: {
+          ...plain.config,
+          customMods: '100% increased effect of Flasks on you',
+        },
+      };
+      const outPlain = calculateBuild(plain);
+      const outEff = calculateBuild(withFlaskEffect);
+      expect(outPlain.offence.averageHit).toBeGreaterThan(0);
+      expect(outEff.offence.averageHit).toBeCloseTo(outPlain.offence.averageHit, 1);
+    });
+  });
 });
