@@ -1897,7 +1897,8 @@ export function evaluateRadiusAndDistanceJewels(
         // Non-keystone passives whose stats are not disabled (smalls; plus notables only if not disabled)
         const affected = disablesNotables ? smalls : [...smalls, ...notables];
         for (const n of affected) {
-          for (const st of n.stats) {
+          const effStats = nodeOverrides?.[n.id]?.stats?.length ? nodeOverrides[n.id]!.stats! : n.stats;
+          for (const st of effStats) {
             const delta = scaleStatLineDelta(st, mult);
             if (delta) lines.push(delta);
           }
@@ -1943,9 +1944,11 @@ export function evaluateRadiusAndDistanceJewels(
         const dy = n.y - socketNode.y;
         if (dx * dx + dy * dy <= rSq) {
           const timelessAdj = timelessSmallAttrs.get(n.id);
-          // Do not grant base small stats when replaced by Elegant Hubris or Militant Faith (attribute small)
+          // Do not grant base small stats when replaced by Elegant Hubris or Militant Faith (attribute small).
+          // Honor PoE 1 Tattoo/Runegraft `nodeOverrides` on unallocated small passives in radius!
           if (!timelessAdj?.replaceBaseAttrs) {
-            unallocLines.push(...n.stats);
+            const ovStats = nodeOverrides?.[n.id]?.stats;
+            unallocLines.push(...(ovStats && ovStats.length > 0 ? ovStats : n.stats));
           }
           // Grant deterministic Lethal Pride (+2/+4 Str) or Brutal Restraint (+2/+4 Dex) on conquered unallocated smalls
           if (timelessAdj?.addStr) {

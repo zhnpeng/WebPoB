@@ -1391,4 +1391,46 @@ describe('PoE 2 The Adorned Sinister Sockets & Undying Hate Conquered Passives',
     expect(lifeDelta).toBe(-15);
     expect(manaDelta).toBe(30);
   });
+
+  it('honors Tattoo nodeOverrides on unallocated small passives granted by PoE 1 Unnatural Instinct', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe1',
+      version: '3_28',
+      nodes: {
+        1: mkNode(1, 'Start', 'start', 0, 0),
+        10: mkNode(10, 'Jewel Socket', 'jewel', 0, 0),
+        101: mkNode(101, 'Dexterity', 'small', 400, 0, ['+10 to Dexterity']),
+        102: mkNode(102, 'Dexterity', 'small', 500, 0, ['+10 to Dexterity']),
+      },
+      groups: {},
+      classStartNodeIds: {},
+      bounds: { minX: -2000, maxX: 2000, minY: -2000, maxY: 2000 },
+    };
+    const unnatural = mkItem({
+      id: 'ui-1',
+      name: 'Unnatural Instinct',
+      baseName: 'Viridian Jewel',
+      rarity: 'UNIQUE',
+      explicits: [
+        'Radius: Small',
+        'Allocated Small Passive Skills in Radius grant nothing',
+        'Grants all bonuses of Unallocated Small Passive Skills in Radius',
+      ],
+    });
+
+    const res = evaluateRadiusAndDistanceJewels(
+      [{ nodeId: 10, jewel: unnatural }],
+      tree,
+      new Set([1, 10]),
+      1,
+      undefined,
+      {
+        101: { name: 'Tattoo of the Ramako Sniper', stats: ['5% increased Projectile Speed'] },
+      },
+    );
+
+    const uiEntry = res.addedStatLines.find((e) => e.source.includes('Unnatural Instinct'));
+    // Node 101 grants its Tattoo stat instead of +10 to Dexterity; node 102 keeps +10 to Dexterity
+    expect(uiEntry?.lines).toEqual(['5% increased Projectile Speed', '+10 to Dexterity']);
+  });
 });
