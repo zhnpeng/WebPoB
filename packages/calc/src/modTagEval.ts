@@ -299,6 +299,24 @@ function evalSingleConditionVar(varExpr: string, ctx?: ModEvalContext): boolean 
         ctx.conditions.EnemyArmourFullyBroken,
     );
   }
+  if (varExpr === 'EnemyElectrocuted') {
+    return Boolean(ctx.conditions.Electrocuted);
+  }
+  if (varExpr === 'Electrocuted') {
+    return Boolean(ctx.conditions.EnemyElectrocuted);
+  }
+  if (varExpr === 'EnemyHasOpenWeakness') {
+    return Boolean(ctx.conditions.EnemyOpenWeakness);
+  }
+  if (varExpr === 'EnemyOpenWeakness') {
+    return Boolean(ctx.conditions.EnemyHasOpenWeakness);
+  }
+  if (varExpr === 'ShapeshiftedToHumanRecently') {
+    return Boolean(ctx.conditions.ShapeshiftToHuman);
+  }
+  if (varExpr === 'ShapeshiftToHuman') {
+    return Boolean(ctx.conditions.ShapeshiftedToHumanRecently);
+  }
   return false;
 }
 
@@ -658,7 +676,7 @@ const SUFFIX_RULES: readonly SuffixRule[] = [
     toTag: () => ({ type: 'Multiplier', var: 'EnemyElementalAilmentCount' }),
   },
   {
-    regex: /\s*(?:,\s*)?(?:for each|per)\s+Summoned\s+Totem\s*$/i,
+    regex: /\s*(?:,\s*)?(?:for each|per)\s+Summoned\s+Totem(?:\s+in\s+your\s+Presence)?\s*$/i,
     toTag: () => ({ type: 'Multiplier', var: 'ActiveTotem' }),
   },
   {
@@ -955,6 +973,25 @@ const SUFFIX_RULES: readonly SuffixRule[] = [
   {
     regex: /\s*(?:,\s*)?while\s+Surrounded\s*$/i,
     toTag: () => ({ type: 'Condition', var: 'Surrounded' }),
+  },
+  {
+    regex: /\s*(?:,\s*)?against\s+Electrocuted\s+Enemies\s*$/i,
+    toTag: () => ({ type: 'Condition', var: 'EnemyElectrocuted' }),
+  },
+  {
+    regex: /\s*(?:,\s*)?against\s+Enemies\s+with\s+an\s+Open\s+Weakness\s*$/i,
+    toTag: () => ({ type: 'Condition', var: 'EnemyHasOpenWeakness|EnemyOpenWeakness' }),
+  },
+  {
+    regex: /\s*(?:,\s*)?if\s+you(?:'ve|\s+have)\s+Shapeshifted\s+to\s+Human\s+form\s+Recently\s*$/i,
+    toTag: () => ({ type: 'Condition', var: 'ShapeshiftedToHumanRecently|ShapeshiftToHuman' }),
+  },
+  {
+    regex: /\s*(?:,\s*)?while\s+affected\s+by\s+an\s+Ailment\s*$/i,
+    toTag: () => ({
+      type: 'Condition',
+      var: 'Bleeding|Poisoned|Ignited|Chilled|Frozen|Shocked|Electrocuted',
+    }),
   },
 ];
 

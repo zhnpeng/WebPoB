@@ -42,6 +42,31 @@ const KNOWN_GEM_FILTER_TOKENS = new Set([
   'grenade',
   'hazard',
   'shapeshift',
+  'crossbow',
+  'spear',
+  'talisman',
+  'quarterstaff',
+  'mark',
+  'orb',
+  'banner',
+  'companion',
+  'persistent',
+  'meta',
+  'bear',
+  'wolf',
+  'wyvern',
+  'command',
+  'storm',
+  'wind',
+  'ammunition',
+  'detonator',
+  'payoff',
+  'buff',
+  'trigger',
+  'invocation',
+  'travel',
+  'chaining',
+  'remnant',
 ]);
 
 /**
@@ -79,14 +104,15 @@ function gemMatchesToken(
   if (token === 'intelligence') return def.color === 'blue' || tagSet.has('intelligence');
 
   if (tagSet.has(token)) return true;
-  if (
-    (token === 'nova' ||
-      token === 'plant' ||
-      token === 'grenade' ||
-      token === 'hazard' ||
-      token === 'shapeshift') &&
-    def.skillTypes?.some((st) => st.toLowerCase() === token)
-  ) {
+  if (tagSet.has(token)) return true;
+  if (def.skillTypes?.some((st) => {
+    const low = st.toLowerCase();
+    if (low === token) return true;
+    if (token === 'crossbow' && (low === 'crossbowskill' || low === 'crossbowammoskill')) return true;
+    if (token === 'channelling' && low === 'channel') return true;
+    if (token === 'companion' && low === 'createscompanion') return true;
+    return false;
+  })) {
     return true;
   }
 
@@ -155,9 +181,18 @@ export function gemMatchesFilterKey(
     return true;
   }
   // Specific skill name filter (e.g. GemLevel:smite, GemLevel:earthshatter, GemLevel:penance+brand)
-  const target = filterKey.replace(/^name:/, '').replace(/\+/g, ' ').trim().toLowerCase();
+  const target = filterKey
+    .replace(/^name:/, '')
+    .replace(/\+/g, ' ')
+    .replace(/[’`]/g, "'")
+    .trim()
+    .toLowerCase();
   if (!target) return false;
-  const gemLower = def.name.en.trim().toLowerCase().replace(/\s+support$/i, '');
+  const gemLower = def.name.en
+    .replace(/[’`]/g, "'")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+support$/i, '');
   const gemNoVaal = gemLower
     .replace(/^vaal\s+impurity\s+of\s+/i, 'purity of ')
     .replace(/^vaal\s+/i, '');

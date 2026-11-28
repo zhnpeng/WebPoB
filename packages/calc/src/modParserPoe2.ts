@@ -1744,7 +1744,7 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     build: (m, src) => [mkMod('Speed', 'INC', Number(m[1]), src, ModFlag.Cast, KeywordFlag.Totem)],
   },
   {
-    pattern: /^Attacks used by Totems have (\d+)% increased Attack Speed$/i,
+    pattern: /^Attacks used by (?:Totems|Ballistas) have (\d+)% increased Attack Speed$/i,
     build: (m, src) => [mkMod('Speed', 'INC', Number(m[1]), src, ModFlag.Attack, KeywordFlag.Totem)],
   },
   {
@@ -2247,13 +2247,143 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     ],
   },
   {
-    pattern: /^(\d+)% chance for (?:(Mace) )?Slam Skills you use yourself to cause an additional Aftershock$/i,
+    pattern: /^(\d+)% chance for (?:(Mace) )?(Slam|Strike) Skills you use yourself to cause (?:an additional )?Aftershocks?(?:, dealing.*)?$/i,
     build: (m, src) => [
       {
         ...mkMod('AftershockChance', 'BASE', Number(m[1]), src, m[2] ? ModFlag.Mace : 0),
-        tags: [{ type: 'SkillType', skillType: 'Slam' }],
+        tags: [{ type: 'SkillType', skillType: m[3]!.toLowerCase() === 'strike' ? 'Strike' : 'Slam' }],
       },
     ],
+  },
+  // Wave 4O-B: Stripped Defences / Exposure extra resistance lowering (PoB 2 ModParser.lua:2975-2977, 4629-4634)
+  {
+    pattern: /^Exposure you inflict lowers (?:the affected )?Resistances? by an additional (\d+)%$/i,
+    build: (m, src) => [mkMod('ExtraExposure', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Exposure you inflict applies an extra -?(\d+)% to the affected Resistance$/i,
+    build: (m, src) => [mkMod('ExtraExposure', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^(Fire|Cold|Lightning) Exposure you inflict (?:lowers (?:total )?\1 Resistance by an (?:extra|additional) |applies an extra -?)(\d+)%(?: to \1 Resistance)?$/i,
+    build: (m, src) => [mkMod(`Extra${m[1]}Exposure`, 'BASE', Number(m[2]), src)],
+  },
+  // Electrocution (PoB 2 ModParser.lua:1398, 3861): "Enemies you Electrocute have 20% increased Damage taken"
+  {
+    pattern: /^Enemies you Electrocute have (\d+)% (increased|reduced) Damage taken$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      return [
+        {
+          ...mkMod('EnemyDamageTaken', type, value, src),
+          tags: [{ type: 'Condition', var: 'EnemyElectrocuted' }],
+        },
+      ];
+    },
+  },
+  // The Molten One's Gift (PoB 2 ModParser.lua:5652-5653)
+  {
+    pattern: /^Fully Broken Armour (?:you inflict also increases|effects also apply to) Fire Damage Taken from Hits$/i,
+    build: (_, src) => [mkMod('ArmourBreakFireDamageTaken', 'FLAG', true, src)],
+  },
+  // Strike Twice (PoB 2 ModParser.lua:3408)
+  {
+    pattern: /^Targets can be affected by two of your Shocks at the same time$/i,
+    build: (_, src) => [
+      mkMod('ShockCanStack', 'FLAG', true, src),
+      mkMod('ShockStacksMax', 'OVERRIDE', 2, src),
+    ],
+  },
+  // Wyvern's Breath / Shapeshifting Elemental Ailment Chance (and other conditional Elemental Ailment Chance lines)
+  {
+    pattern: /^(\d+)% (increased|reduced) chance to inflict Elemental Ailments(?: (if|while|against|for|per) .+)$/i,
+    build: (m, src) => {
+      const { baseLine, tags } = parseConditionalSuffix(m[0]);
+      if (tags.length === 0 || baseLine === m[0]) return [];
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      return [{ ...mkMod('ElementalAilmentChance', type, value, src), tags }];
+    },
+  },
+  // Bleeding Chance on Critical Hit with Attacks/Spells
+  {
+    pattern: /^(\d+)% chance to inflict Bleeding on Critical Hit(?: with (Attacks|Spells))?$/i,
+    build: (m, src) => {
+      const flags =
+        m[2]?.toLowerCase() === 'attacks'
+          ? ModFlag.Attack
+          : m[2]?.toLowerCase() === 'spells'
+            ? ModFlag.Spell
+            : 0;
+      return [
+        {
+          ...mkMod('BleedChance', 'BASE', Number(m[1]), src, flags),
+          tags: [{ type: 'Condition', var: 'CriticalStrike' }],
+        },
+      ];
+    },
+  },
+  // Entropic Incarnation: "Minions gain 10% of Physical Damage as Chaos Damage"
+  {
+    pattern: /^Minions gain (\d+)% of (Physical|Fire|Cold|Lightning|Elemental) Damage as (?:Extra )?(Fire|Cold|Lightning|Chaos|Physical) Damage$/i,
+    build: (m, src) => [
+      mkMod(`Minion${m[2]}GainAs${m[3]}`, 'BASE', Number(m[1]), src, 0, KeywordFlag.Minion),
+    ],
+  },
+  // Pinpoint Shot: "Attacks gain increased Accuracy Rating equal to their Critical Hit Chance"
+  {
+    pattern: /^Attacks gain increased Accuracy Rating equal to their Critical Hit Chance$/i,
+    build: (_, src) => [mkMod('AccuracyFromCritChance', 'FLAG', true, src, ModFlag.Attack)],
+  },
+  // Non-ascendancy Unholy Might triggers (PoB 2 ModParser.lua:4692, 5505)
+  {
+    pattern: /^Gain Unholy Might on Block for \d+ seconds$/i,
+    build: (_, src) => [
+      {
+        ...mkMod('Condition:UnholyMight', 'FLAG', true, src),
+        tags: [{ type: 'Condition', var: 'BlockedRecently' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Gain Unholy Might during Flask effect$/i,
+    build: (_, src) => [
+      {
+        ...mkMod('Condition:UnholyMight', 'FLAG', true, src),
+        tags: [{ type: 'Condition', var: 'UsingFlask' }],
+      },
+    ],
+  },
+  // Left / Right Equipped Ring bonus effect (PoB 2 ModParser.lua:5012)
+  {
+    pattern: /^(\d+)% (increased|reduced) bonuses? gained from (left|right) Equipped Ring$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      const stat = m[3]!.toLowerCase() === 'left' ? 'Ring1Effect' : 'Ring2Effect';
+      return [mkMod(stat, type, value, src)];
+    },
+  },
+  // Fortified Location: "10% increased Attack Damage / Armour and Evasion Rating per Summoned Totem in your Presence"
+  {
+    pattern: /^(\d+)% (increased|reduced) (Attack Damage|Armour and Evasion Rating) per Summoned Totem(?: in your Presence)?$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      const isAtk = m[3]!.toLowerCase().startsWith('attack');
+      return [
+        {
+          ...mkMod(isAtk ? 'Damage' : 'ArmourAndEvasion', type, value, src, isAtk ? ModFlag.Attack : 0),
+          tags: [{ type: 'Multiplier', var: 'ActiveTotem' }],
+        },
+      ];
+    },
+  },
+  // Bonded Runic Ward & Spell Crit Armour Break (PoE 2 Idol / Rune Bonded mods)
+  {
+    pattern: /^Break Armour on Critical Hit with Spells equal to (\d+)% of Physical Damage dealt$/i,
+    build: (m, src) => [mkMod('SpellCritBreakArmourPct', 'BASE', Number(m[1]), src, ModFlag.Spell)],
+  },
+  {
+    pattern: /^Gain (\d+)% of maximum Life as Extra maximum Runic Ward$/i,
+    build: (m, src) => [mkMod('LifeGainAsRunicWard', 'BASE', Number(m[1]), src)],
   },
   // Falcon Dive (PoB 2 ModParser.lua:1620): "1% increased Attack Speed per 400 Accuracy Rating, up to 20%"
   {

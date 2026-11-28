@@ -1365,5 +1365,195 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
         }),
       ]);
     });
+
+    it('parses Wave 4O-B PoE 2 mechanics (ExtraExposure, Ballista Speed, Electrocution, Molten One, Strike Twice, Wyvern Breath, Crit Bleed, Aftershocks, Ring Effect, Bonded & gemBonus PoE 2 tags)', () => {
+      // Stripped Defences & elemental Exposure extra reduction
+      expect(
+        parseModLine('Exposure you inflict lowers Resistances by an additional 5%', 'Tree: Stripped Defences'),
+      ).toEqual([expect.objectContaining({ name: 'ExtraExposure', type: 'BASE', value: 5 })]);
+      expect(
+        parseModLine('Fire Exposure you inflict lowers total Fire Resistance by an extra 4%', 'Tree: Fire'),
+      ).toEqual([expect.objectContaining({ name: 'ExtraFireExposure', type: 'BASE', value: 4 })]);
+
+      // Ballista Attack Speed (Kept at Bay / Ballista Attack Speed)
+      expect(
+        parseModLine('Attacks used by Ballistas have 10% increased Attack Speed', 'Tree: Kept at Bay'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'Speed',
+          type: 'INC',
+          value: 10,
+          flags: ModFlag.Attack,
+          keywordFlags: KeywordFlag.Totem,
+        }),
+      ]);
+
+      // Electrocution enemy damage taken
+      expect(
+        parseModLine('Enemies you Electrocute have 20% increased Damage taken', 'Tree: Electrocution'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'EnemyDamageTaken',
+          type: 'INC',
+          value: 20,
+          tags: [{ type: 'Condition', var: 'EnemyElectrocuted' }],
+        }),
+      ]);
+
+      // The Molten One's Gift & Strike Twice
+      expect(
+        parseModLine(
+          'Fully Broken Armour you inflict also increases Fire Damage Taken from Hits',
+          "Tree: The Molten One's Gift",
+        ),
+      ).toEqual([expect.objectContaining({ name: 'ArmourBreakFireDamageTaken', type: 'FLAG', value: true })]);
+      expect(
+        parseModLine('Targets can be affected by two of your Shocks at the same time', 'Tree: Strike Twice'),
+      ).toEqual([
+        expect.objectContaining({ name: 'ShockCanStack', type: 'FLAG', value: true }),
+        expect.objectContaining({ name: 'ShockStacksMax', type: 'OVERRIDE', value: 2 }),
+      ]);
+
+      // Wyvern's Breath conditional Elemental Ailment Chance & Bleeding Chance on Critical Hit
+      expect(
+        parseModLine(
+          '40% increased chance to inflict Elemental Ailments if you have Shapeshifted to an Animal form Recently',
+          "Tree: Wyvern's Breath",
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'ElementalAilmentChance',
+          type: 'INC',
+          value: 40,
+          tags: [{ type: 'Condition', var: 'ShapeshiftedToAnimalRecently|Shapeshifted' }],
+        }),
+      ]);
+      expect(
+        parseModLine('10% chance to inflict Bleeding on Critical Hit with Attacks', 'Tree: Bleed Crit'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'BleedChance',
+          type: 'BASE',
+          value: 10,
+          flags: ModFlag.Attack,
+          tags: [{ type: 'Condition', var: 'CriticalStrike' }],
+        }),
+      ]);
+
+      // Split the Earth / Mace Aftershock Chance (plural Aftershocks & Strike)
+      expect(
+        parseModLine('8% chance for Mace Slam Skills you use yourself to cause Aftershocks', 'Tree: Mace'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'AftershockChance',
+          type: 'BASE',
+          value: 8,
+          flags: ModFlag.Mace,
+          tags: [{ type: 'SkillType', skillType: 'Slam' }],
+        }),
+      ]);
+      expect(
+        parseModLine(
+          '10% chance for Mace Strike Skills you use yourself to cause Aftershocks, dealing',
+          'Tree: Split the Earth',
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'AftershockChance',
+          type: 'BASE',
+          value: 10,
+          flags: ModFlag.Mace,
+          tags: [{ type: 'SkillType', skillType: 'Strike' }],
+        }),
+      ]);
+
+      // Entropic Incarnation, Pinpoint Shot, Unholy Might triggers, Ring Effect, Bonded Ward/Armour Break
+      expect(
+        parseModLine('Minions gain 10% of Physical Damage as Chaos Damage', 'Tree: Entropic Incarnation'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'MinionPhysicalGainAsChaos',
+          type: 'BASE',
+          value: 10,
+          keywordFlags: KeywordFlag.Minion,
+        }),
+      ]);
+      expect(
+        parseModLine(
+          'Attacks gain increased Accuracy Rating equal to their Critical Hit Chance',
+          'Tree: Pinpoint Shot',
+        ),
+      ).toEqual([
+        expect.objectContaining({ name: 'AccuracyFromCritChance', type: 'FLAG', value: true, flags: ModFlag.Attack }),
+      ]);
+      expect(parseModLine('Gain Unholy Might during Flask effect', 'Item')).toEqual([
+        expect.objectContaining({
+          name: 'Condition:UnholyMight',
+          type: 'FLAG',
+          value: true,
+          tags: [{ type: 'Condition', var: 'UsingFlask' }],
+        }),
+      ]);
+      expect(parseModLine('33% increased bonuses gained from right Equipped Ring', 'Item: Belt')).toEqual([
+        expect.objectContaining({ name: 'Ring2Effect', type: 'INC', value: 33 }),
+      ]);
+      expect(
+        parseModLine(
+          'Bonded: Break Armour on Critical Hit with Spells equal to 36% of Physical Damage dealt',
+          'Rune',
+          { allowBonded: true },
+        ),
+      ).toEqual([
+        expect.objectContaining({ name: 'SpellCritBreakArmourPct', type: 'BASE', value: 36, flags: ModFlag.Spell }),
+      ]);
+      expect(
+        parseModLine('Bonded: Gain 4% of maximum Life as Extra maximum Runic Ward', 'Rune', {
+          allowBonded: true,
+        }),
+      ).toEqual([expect.objectContaining({ name: 'LifeGainAsRunicWard', type: 'BASE', value: 4 })]);
+
+      // Fortified Location: "per Summoned Totem in your Presence"
+      expect(
+        parseModLine('10% increased Attack Damage per Summoned Totem in your Presence', 'Tree: Fortified Location'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'Damage',
+          type: 'INC',
+          value: 10,
+          flags: ModFlag.Attack,
+          tags: [{ type: 'Multiplier', var: 'ActiveTotem' }],
+        }),
+      ]);
+
+      // gemBonus.ts: PoE 2 crossbow / bear / mark / apostrophe skill-name matching
+      const crossbowMock = {
+        id: 'poe2_siegecascade',
+        game: 'poe2',
+        name: { en: 'Siege Cascade', zh: '攻城瀑雨' },
+        category: 'active',
+        color: 'red',
+        tags: ['attack', 'area', 'projectile'],
+        skillTypes: ['CrossbowSkill', 'Attack', 'Area'],
+        modFlags: ModFlag.Attack | ModFlag.Projectile | ModFlag.Area,
+        keywordFlags: KeywordFlag.Attack,
+      } as unknown as GemDefinition;
+      expect(gemMatchesFilterKey(crossbowMock, 'crossbow')).toBe(true);
+      expect(gemMatchesFilterKey(crossbowMock, 'spear')).toBe(false);
+
+      const markMock = {
+        id: 'poe2_snipersmark',
+        game: 'poe2',
+        name: { en: "Sniper's Mark", zh: '狙击印记' },
+        category: 'active',
+        color: 'green',
+        tags: ['mark', 'spell'],
+        skillTypes: ['Mark', 'Spell'],
+        modFlags: ModFlag.Spell,
+        keywordFlags: KeywordFlag.Spell,
+      } as unknown as GemDefinition;
+      expect(gemMatchesFilterKey(markMock, 'mark')).toBe(true);
+      expect(gemMatchesFilterKey(markMock, "sniper's+mark")).toBe(true);
+      expect(gemMatchesFilterKey(markMock, 'sniper’s+mark')).toBe(true);
+    });
   });
 });

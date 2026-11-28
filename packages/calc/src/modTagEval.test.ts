@@ -980,4 +980,68 @@ describe('parseConditionalSuffix', () => {
     });
     expect(applyModTagEval(1, evaluateModTags(falconMod, ctx))).toBe(20);
   });
+
+  it('parses and evaluates Wave 4O-B suffixes (Summoned Totem in Presence, Electrocuted, Open Weakness, Shapeshifted to Human, Affected by Ailment)', () => {
+    expect(
+      parseConditionalSuffix('10% increased Attack Damage per Summoned Totem in your Presence'),
+    ).toEqual({
+      baseLine: '10% increased Attack Damage',
+      tags: [{ type: 'Multiplier', var: 'ActiveTotem' }],
+    });
+    expect(parseConditionalSuffix('25% increased Damage against Electrocuted Enemies')).toEqual({
+      baseLine: '25% increased Damage',
+      tags: [{ type: 'Condition', var: 'EnemyElectrocuted' }],
+    });
+    expect(
+      parseConditionalSuffix('50% more Damage against Enemies with an Open Weakness'),
+    ).toEqual({
+      baseLine: '50% more Damage',
+      tags: [{ type: 'Condition', var: 'EnemyHasOpenWeakness|EnemyOpenWeakness' }],
+    });
+    expect(
+      parseConditionalSuffix('15% increased Movement Speed if you have Shapeshifted to Human form Recently'),
+    ).toEqual({
+      baseLine: '15% increased Movement Speed',
+      tags: [{ type: 'Condition', var: 'ShapeshiftedToHumanRecently' }],
+    });
+    expect(parseConditionalSuffix('20% increased Armour while affected by an Ailment')).toEqual({
+      baseLine: '20% increased Armour',
+      tags: [
+        {
+          type: 'Condition',
+          var: 'Bleeding|Poisoned|Ignited|Chilled|Frozen|Shocked|Electrocuted',
+        },
+      ],
+    });
+
+    const ctx = createEmptyEvalContext();
+    ctx.conditions.Electrocuted = true;
+    ctx.conditions.EnemyOpenWeakness = true;
+    ctx.conditions.ShapeshiftToHuman = true;
+    ctx.conditions.Ignited = true;
+
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'EnemyElectrocuted' }] }), ctx).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'EnemyHasOpenWeakness' }] }), ctx).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'ShapeshiftedToHumanRecently' }] }), ctx)
+        .active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(
+        makeMod({
+          tags: [
+            {
+              type: 'Condition',
+              var: 'Bleeding|Poisoned|Ignited|Chilled|Frozen|Shocked|Electrocuted',
+            },
+          ],
+        }),
+        ctx,
+      ).active,
+    ).toBe(true);
+  });
 });
