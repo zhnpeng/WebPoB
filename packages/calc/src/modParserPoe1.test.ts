@@ -1699,4 +1699,33 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       expect.objectContaining({ name: 'EnemyScorched', type: 'FLAG', value: true }),
     ]);
   });
+
+  it('Wave 6H: poe1-regression-bugs sweep (Skitterbots, Focus Recovery, Scorch on Block, Linked Minions, Flask Life on Kill)', () => {
+    expect(parseModLine('Recover 35% of Mana and Energy Shield when you Focus', 'Item')).toEqual([
+      expect.objectContaining({ name: 'ManaRecoverOnFocusPct', type: 'BASE', value: 35 }),
+      expect.objectContaining({ name: 'EsRecoverOnFocusPct', type: 'BASE', value: 35 }),
+    ]);
+    expect(parseModLine("Summoned Skitterbots' Auras affect you as well as Enemies", 'Item')).toEqual([
+      expect.objectContaining({ name: 'SkitterbotsAffectPlayer', type: 'FLAG', value: true }),
+    ]);
+    expect(
+      parseModLine('63% increased Effect of Non-Damaging Ailments inflicted by Summoned Skitterbots', 'Item'),
+    ).toEqual([
+      expect.objectContaining({ name: 'SkitterbotsAilmentEffect', type: 'INC', value: 63 }),
+    ]);
+    expect(parseModLine('Scorch Enemies in Close Range when you Block', 'Item')).toEqual([
+      expect.objectContaining({ name: 'ScorchOnBlock', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Recover 3% of Life when you Kill an Enemy during Effect', 'Flask')).toEqual([
+      expect.objectContaining({
+        name: 'LifeRecoverOnKillPct',
+        type: 'BASE',
+        value: 3,
+        tags: [{ type: 'Condition', var: 'UsingFlask' }],
+      }),
+    ]);
+    expect(parseModLine('Your Linked Minions take 67% less Damage', 'Item')).toEqual([
+      expect.objectContaining({ name: 'LinkedMinionDamageTaken', type: 'MORE', value: -67 }),
+    ]);
+  });
 });

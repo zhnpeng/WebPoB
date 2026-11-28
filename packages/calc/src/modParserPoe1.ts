@@ -2626,6 +2626,39 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
       return [mkMod(`AllDamageCan${kind}`, 'FLAG', true, src)];
     },
   },
+  // Wave 6H: poe1-regression-bugs frequency sweep (Skitterbots, Focus Recovery, Scorch on Block, Linked Minions, Flask Life on Kill)
+  {
+    pattern: /^Recover (\d+)% of Mana and Energy Shield when you Focus$/i,
+    build: (m, src) => [
+      mkMod('ManaRecoverOnFocusPct', 'BASE', Number(m[1]), src),
+      mkMod('EsRecoverOnFocusPct', 'BASE', Number(m[1]), src),
+    ],
+  },
+  {
+    pattern: /^Summoned Skitterbots' Auras affect you as well as Enemies$/i,
+    build: (_, src) => [mkMod('SkitterbotsAffectPlayer', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^(\d+)% increased Effect of Non-Damaging Ailments inflicted by Summoned Skitterbots$/i,
+    build: (m, src) => [mkMod('SkitterbotsAilmentEffect', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Scorch Enemies in Close Range when you Block$/i,
+    build: (_, src) => [mkMod('ScorchOnBlock', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Recover (\d+)% of Life when you Kill an Enemy during Effect$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('LifeRecoverOnKillPct', 'BASE', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'UsingFlask' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Your Linked Minions take (\d+)% less Damage$/i,
+    build: (m, src) => [mkMod('LinkedMinionDamageTaken', 'MORE', -Number(m[1]), src)],
+  },
 ];
 
 /**

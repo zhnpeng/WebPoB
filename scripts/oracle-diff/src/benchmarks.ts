@@ -4959,4 +4959,298 @@ Implicits: 0
   <Notes/>
 </PathOfBuilding2>`,
   },
+  // Wave 6H Layer-2 Golden Snapshots (8 new mechanism benchmarks verified against upstream PoB1/PoB2 LuaJIT)
+  {
+    id: 'poe2_titan_hulking_form_small_str',
+    title: 'PoE 2 — Titan Hulking Form scaling dedicated small Strength (+8/+12) passives',
+    game: 'poe2',
+    xml: `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding2>
+  <Build level="90" targetVersion="0_1" className="Warrior" ascendClassName="Titan" mainSocketGroup="1" buildName="Oracle: PoE2 Titan Hulking Form Small Str"/>
+  <Tree activeSpec="1">
+    <Spec title="Titan" treeVersion="0_5" classId="6" classInternalId="6" ascendClassId="1" nodes="47175,32534,19424,60634,27418,30115,38646,23570,41031,54232,16168,25374,45969,28510,10247,28370,63526,48635,21755,54127,54282,52125,2847,34813,7218"/>
+  </Tree>
+  <Skills activeSkillSet="1" defaultGemQuality="0">
+    <SkillSet id="1">
+      <Skill enabled="true" mainActiveSkill="1" mainActiveSkillCalcs="1" set1="true" set2="true" label="Volcanic Fissure">
+        <Gem gemId="Metadata/Items/Gems/SkillGemVolcanicFissure" skillId="VolcanicFissurePlayer" nameSpec="Volcanic Fissure" variantId="VolcanicFissure" level="20" quality="0" enabled="true"/>
+      </Skill>
+    </SkillSet>
+  </Skills>
+  <Items activeItemSet="1">
+    <Item id="1">
+Rarity: RARE
+Titan Maul
+Cultist Greathammer
+Quality: 20
+Implicits: 0
+120% increased Physical Damage
+    </Item>
+    <ItemSet id="1">
+      <Slot name="Weapon 1" itemId="1"/>
+    </ItemSet>
+  </Items>
+  <Config activeConfigSet="1"><ConfigSet id="1"/></Config>
+  <Notes/>
+</PathOfBuilding2>`,
+  },
+  {
+    id: 'poe2_crossbow_additional_bolt_instant_reload',
+    title: 'PoE 2 — Mercenary Crossbow Loads an additional bolt + 20% chance not to consume bolt',
+    game: 'poe2',
+    xml: `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding2>
+  <Build level="90" targetVersion="0_1" className="Mercenary" ascendClassName="None" mainSocketGroup="1" buildName="Oracle: PoE2 Crossbow Additional Bolt"/>
+  <Tree activeSpec="1">
+    <Spec title="Merc" treeVersion="0_5" classId="9" classInternalId="9" ascendClassId="0" nodes="50986"/>
+  </Tree>
+  <Skills activeSkillSet="1" defaultGemQuality="0">
+    <SkillSet id="1">
+      <Skill enabled="true" mainActiveSkill="1" mainActiveSkillCalcs="1" set1="true" set2="true" label="Explosive Shot">
+        <Gem gemId="Metadata/Items/Gem/SkillGemExplosiveShot" skillId="ExplosiveShotAmmoPlayer" nameSpec="Explosive Shot" variantId="ExplosiveShot" level="20" quality="0" enabled="true"/>
+      </Skill>
+    </SkillSet>
+  </Skills>
+  <Items activeItemSet="1">
+    <Item id="1">
+Rarity: RARE
+Bolt Striker
+Siege Crossbow
+Quality: 20
+Implicits: 0
+100% increased Physical Damage
+Loads an additional bolt
+    </Item>
+    <ItemSet id="1">
+      <Slot name="Weapon 1" itemId="1"/>
+    </ItemSet>
+  </Items>
+  <Config activeConfigSet="1">
+    <ConfigSet id="1">
+      <Input name="customMods" string="20% chance for Crossbow Attacks to not consume a bolt"/>
+    </ConfigSet>
+  </Config>
+  <Notes/>
+</PathOfBuilding2>`,
+  },
+  {
+    id: 'poe2_grenade_repeating_explosives',
+    title: 'PoE 2 — Mercenary Explosive Grenade + Repeating Explosives (15% activate twice)',
+    game: 'poe2',
+    xml: `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding2>
+  <Build level="90" targetVersion="0_1" className="Mercenary" ascendClassName="None" mainSocketGroup="1" buildName="Oracle: PoE2 Repeating Explosives"/>
+  <Tree activeSpec="1">
+    <Spec title="Merc" treeVersion="0_5" classId="9" classInternalId="9" ascendClassId="0" nodes="50986,59915,7741,42500,59881,54417,49657,63526,48635,21755,54127,54282,52125,2847,55802,3717,35653,65468"/>
+  </Tree>
+  <Skills activeSkillSet="1" defaultGemQuality="0">
+    <SkillSet id="1">
+      <Skill enabled="true" mainActiveSkill="1" mainActiveSkillCalcs="1" set1="true" set2="true" label="Explosive Grenade">
+        <Gem gemId="Metadata/Items/Gem/SkillGemExplosiveGrenade" skillId="ExplosiveGrenadePlayer" nameSpec="Explosive Grenade" variantId="ExplosiveGrenade" level="20" quality="0" enabled="true"/>
+      </Skill>
+    </SkillSet>
+  </Skills>
+  <Items activeItemSet="1">
+    <Item id="1">
+Rarity: RARE
+Grenade Launcher
+Siege Crossbow
+Quality: 20
+Implicits: 0
+100% increased Physical Damage
+    </Item>
+    <ItemSet id="1">
+      <Slot name="Weapon 1" itemId="1"/>
+    </ItemSet>
+  </Items>
+  <Config activeConfigSet="1"><ConfigSet id="1"/></Config>
+  <Notes/>
+</PathOfBuilding2>`,
+  },
+  {
+    id: 'poe1_lacerate_haemorrhage_q20_bleed',
+    title: 'PoE 1 — Lacerate of Haemorrhage Lv.20 Q20 Additive MORE Bleeding Damage',
+    game: 'poe1',
+    xml: `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding>
+  <Build level="90" targetVersion="3_0" bandit="None" className="Marauder" ascendClassName="None" mainSocketGroup="1" buildName="Oracle: Lacerate Haemorrhage Q20"/>
+  <Tree activeSpec="1">
+    <Spec title="Default" treeVersion="3_30" classId="1" ascendClassId="0" nodes="47175"/>
+  </Tree>
+  <Skills activeSkillSet="1" defaultGemQuality="0">
+    <SkillSet id="1">
+      <Skill enabled="true" mainActiveSkill="1" mainActiveSkillCalcs="1" slot="Body Armour" label="Lacerate">
+        <Gem gemId="Metadata/Items/Gems/SkillGemLacerate" skillId="LacerateAltY" variantId="LacerateAltY" nameSpec="Lacerate of Haemorrhage" level="20" quality="20" enabled="true"/>
+      </Skill>
+    </SkillSet>
+  </Skills>
+  <Items activeItemSet="1">
+    <Item id="1">
+Rarity: RARE
+Blood Cleaver
+Siege Axe
+Quality: 20
+Implicits: 0
+150% increased Physical Damage
+    </Item>
+    <ItemSet id="1">
+      <Slot name="Weapon 1" itemId="1"/>
+    </ItemSet>
+  </Items>
+  <Config activeConfigSet="1"><ConfigSet id="1"/></Config>
+  <Notes/>
+</PathOfBuilding>`,
+  },
+  {
+    id: 'poe1_dual_wield_per_hand_crit',
+    title: 'PoE 1 — Dual-Wielding Different Local Crit Bases (Ambusher Dagger + Siege Axe)',
+    game: 'poe1',
+    xml: `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding>
+  <Build level="90" targetVersion="3_0" bandit="None" className="Shadow" ascendClassName="None" mainSocketGroup="1" buildName="Oracle: Dual Wield Per-Hand Crit"/>
+  <Tree activeSpec="1">
+    <Spec title="Default" treeVersion="3_30" classId="6" ascendClassId="0" nodes="44683"/>
+  </Tree>
+  <Skills activeSkillSet="1" defaultGemQuality="0">
+    <SkillSet id="1">
+      <Skill enabled="true" mainActiveSkill="1" mainActiveSkillCalcs="1" slot="Body Armour" label="Cyclone">
+        <Gem gemId="Metadata/Items/Gems/SkillGemCyclone" skillId="Cyclone" nameSpec="Cyclone" level="20" quality="0" enabled="true"/>
+      </Skill>
+    </SkillSet>
+  </Skills>
+  <Items activeItemSet="1">
+    <Item id="1">
+Rarity: RARE
+Crit Fang
+Ambusher
+Quality: 20
+Implicits: 1
+30% increased Global Critical Strike Chance
+120% increased Physical Damage
+30% increased Critical Strike Chance
+    </Item>
+    <Item id="2">
+Rarity: RARE
+Heavy Foil
+Jewelled Foil
+Quality: 20
+Implicits: 1
++25% to Global Critical Strike Multiplier
+120% increased Physical Damage
+    </Item>
+    <ItemSet id="1">
+      <Slot name="Weapon 1" itemId="1"/>
+      <Slot name="Weapon 2" itemId="2"/>
+    </ItemSet>
+  </Items>
+  <Config activeConfigSet="1"><ConfigSet id="1"/></Config>
+  <Notes/>
+</PathOfBuilding>`,
+  },
+  {
+    id: 'poe1_additional_poison_chance',
+    title: 'PoE 1 — Viper Strike + 40% Additional Poison Chance (Poison Mastery / Graft)',
+    game: 'poe1',
+    xml: `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding>
+  <Build level="90" targetVersion="3_0" bandit="None" className="Ranger" ascendClassName="None" mainSocketGroup="1" buildName="Oracle: Additional Poison Chance"/>
+  <Tree activeSpec="1">
+    <Spec title="Default" treeVersion="3_30" classId="2" ascendClassId="0" nodes="50459"/>
+  </Tree>
+  <Skills activeSkillSet="1" defaultGemQuality="0">
+    <SkillSet id="1">
+      <Skill enabled="true" mainActiveSkill="1" mainActiveSkillCalcs="1" slot="Body Armour" label="Viper Strike">
+        <Gem gemId="Metadata/Items/Gems/SkillGemViperStrike" skillId="ViperStrike" nameSpec="Viper Strike" level="20" quality="0" enabled="true"/>
+      </Skill>
+    </SkillSet>
+  </Skills>
+  <Items activeItemSet="1">
+    <Item id="1">
+Rarity: RARE
+Venom Fang
+Imperial Claw
+Quality: 20
+Implicits: 0
+120% increased Physical Damage
+    </Item>
+    <ItemSet id="1">
+      <Slot name="Weapon 1" itemId="1"/>
+    </ItemSet>
+  </Items>
+  <Config activeConfigSet="1">
+    <ConfigSet id="1">
+      <Input name="customMods" string="40% chance to inflict an additional Poison on the same Target when you inflict Poison"/>
+    </ConfigSet>
+  </Config>
+  <Notes/>
+</PathOfBuilding>`,
+  },
+  {
+    id: 'poe1_punishment_curse_low_life',
+    title: 'PoE 1 — Punishment Curse Lv.20 on Low Life Enemy + Arc Lv.20',
+    game: 'poe1',
+    xml: `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding>
+  <Build level="90" targetVersion="3_0" bandit="None" className="Witch" ascendClassName="None" mainSocketGroup="1" buildName="Oracle: Punishment Low Life"/>
+  <Tree activeSpec="1">
+    <Spec title="Default" treeVersion="3_30" classId="3" ascendClassId="0" nodes="54447"/>
+  </Tree>
+  <Skills activeSkillSet="1" defaultGemQuality="0">
+    <SkillSet id="1">
+      <Skill enabled="true" mainActiveSkill="1" mainActiveSkillCalcs="1" slot="Body Armour" label="Arc">
+        <Gem gemId="Metadata/Items/Gems/SkillGemArc" skillId="Arc" nameSpec="Arc" level="20" quality="0" enabled="true"/>
+      </Skill>
+      <Skill enabled="true" mainActiveSkill="1" mainActiveSkillCalcs="1" slot="Helmet" label="Punishment">
+        <Gem gemId="Metadata/Items/Gems/SkillGemPunishment" skillId="Punishment" variantId="Punishment" nameSpec="Punishment" level="20" quality="0" enabled="true"/>
+      </Skill>
+    </SkillSet>
+  </Skills>
+  <Items activeItemSet="1"><ItemSet id="1"/></Items>
+  <Config activeConfigSet="1">
+    <ConfigSet id="1">
+      <Input name="conditionEnemyLowLife" boolean="true"/>
+    </ConfigSet>
+  </Config>
+  <Notes/>
+</PathOfBuilding>`,
+  },
+  {
+    id: 'poe1_focused_channelling_cyclone',
+    title: 'PoE 1 — Cyclone + Focused Channelling Support Lv.20 (3s ChannellingTime)',
+    game: 'poe1',
+    xml: `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding>
+  <Build level="90" targetVersion="3_0" bandit="None" className="Marauder" ascendClassName="None" mainSocketGroup="1" buildName="Oracle: Focused Channelling Cyclone"/>
+  <Tree activeSpec="1">
+    <Spec title="Default" treeVersion="3_30" classId="1" ascendClassId="0" nodes="47175"/>
+  </Tree>
+  <Skills activeSkillSet="1" defaultGemQuality="0">
+    <SkillSet id="1">
+      <Skill enabled="true" mainActiveSkill="1" mainActiveSkillCalcs="1" slot="Body Armour" label="Cyclone">
+        <Gem gemId="Metadata/Items/Gems/SkillGemCyclone" skillId="Cyclone" nameSpec="Cyclone" level="20" quality="0" enabled="true"/>
+        <Gem gemId="Metadata/Items/Gems/SupportGemFocusedChannelling" skillId="SupportFocusedChannelling" variantId="SupportFocusedChannelling" nameSpec="Focused Channelling" level="20" quality="0" enabled="true"/>
+      </Skill>
+    </SkillSet>
+  </Skills>
+  <Items activeItemSet="1">
+    <Item id="1">
+Rarity: RARE
+Channelling Axe
+Vaal Axe
+Quality: 20
+Implicits: 0
+120% increased Physical Damage
+    </Item>
+    <ItemSet id="1">
+      <Slot name="Weapon 1" itemId="1"/>
+    </ItemSet>
+  </Items>
+  <Config activeConfigSet="1">
+    <ConfigSet id="1">
+      <Input name="multiplierChannelling" number="3"/>
+    </ConfigSet>
+  </Config>
+  <Notes/>
+</PathOfBuilding>`,
+  },
 ];
