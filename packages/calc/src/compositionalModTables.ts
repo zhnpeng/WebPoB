@@ -1058,6 +1058,10 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
     apply: () => ({ tags: [{ type: 'Multiplier', var: 'EnemyImpaleStacks' }] }),
   },
   {
+    regex: /(?:\s*,\s*|\s+)(?:for each|per)\s+Socketed Rune(?:\s+or Soul Core)?$/i,
+    apply: () => ({ tags: [{ type: 'Multiplier', var: 'SocketedRune' }] }),
+  },
+  {
     regex: /(?:\s*,\s*|\s+)(?:for each|per)\s+Buff on you$/i,
     apply: () => ({ tags: [{ type: 'Multiplier', var: 'BuffOnSelf' }] }),
   },
@@ -1819,6 +1823,8 @@ export const MOD_NAME_TABLE: Record<string, ModNameTarget> = {
   'start of energy shield recharge': { names: ['EnergyShieldRechargeFaster'] },
   'restoration of ward': { names: ['WardRechargeFaster'] },
   'life recovery rate': { names: ['LifeRecoveryRate'] },
+  'life cost efficiency': { names: ['LifeCostEfficiency'] },
+  'weapon damage': { names: ['Damage'], flags: ModFlag.Attack },
   'mana recovery rate': { names: ['ManaRecoveryRate'] },
   'energy shield recovery rate': { names: ['EnergyShieldRecoveryRate'] },
   'recovery rate of life, mana and energy shield': {

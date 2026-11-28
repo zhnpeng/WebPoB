@@ -58,7 +58,7 @@ const SLOT_KEYWORDS: Array<{ pattern: RegExp; slot: EquipmentSlotId | 'Any'; wea
   { pattern: /\b(?:two[\s-]hand(?:ed)? axe|greataxe|chopper|labrys|fleshripper|poleaxe|halberd|bardiche)\b|双手斧/i, slot: 'Weapon 1', weaponType: 'Axe', twoHanded: true },
   { pattern: /\b(?:axes?|cleaver|hatchet|tomahawk)\b|斧/i, slot: 'Weapon 1', weaponType: 'Axe', twoHanded: false },
   { pattern: /\b(?:two[\s-]hand(?:ed)? mace|greatmace|greatclub|greathammer|maul|sledgehammer|piledriver|meatgrinder)\b|双手锤/i, slot: 'Weapon 1', weaponType: 'Mace', twoHanded: true },
-  { pattern: /\b(?:maces?|sceptres?|flails?|hammers?|clubs?|gavel|cudgel|bludgeon|morningstar|fetish)\b|权杖|短杖|连枷|锤/i, slot: 'Weapon 1', weaponType: 'Mace', twoHanded: false },
+  { pattern: /\b(?:maces?|sceptres?|flails?|hammers?|clubs?|gavel|cudgel|bludgeon|morningstar|fetish|sekhem)\b|权杖|短杖|连枷|锤/i, slot: 'Weapon 1', weaponType: 'Mace', twoHanded: false },
   // Body Armour (checked after Gloves/Boots/Helmet/Belt/Shield/Weapons)
   { pattern: /\b(?:body armour|robe|garb|plate|regalia|vestments?|vest|coat|tunic|brigandine|doublet|jacket|cuirass|armour|hauberk|lamellar|lamellae|chainmail|ringmail|scalemail|mail|mantle|raiment|leather|dragonscale|wyrmscale|garment|markings|jerkin|silks|corselet|breastplate|kaftan|shroud|toga|surcoat)\b|胸甲|长袍|战甲|法衣|背心|外衣|护胸|盔甲/i, slot: 'Body Armour' },
 ];
@@ -676,16 +676,30 @@ export function parseItemText(
       if (!trimmed) continue;
       if (
         merged.length > 0 &&
-        !trimmed.startsWith('{') &&
         !trimmed.startsWith('<') &&
         !/^(?:Corrupted|Mirrored|Split|Unidentified|Fractured|Synthesised|Grants\s+Skill:|Allocates\s)/i.test(trimmed)
       ) {
         const prev = merged[merged.length - 1]!;
-        const startsLower = /^[a-z]/.test(trimmed);
-        const endsDangling = danglingEndRe.test(prev.replace(/\s+$/, ''));
-        if (startsLower || endsDangling) {
-          merged[merged.length - 1] = `${prev.replace(/\s+$/, '')} ${trimmed}`;
-          continue;
+        if (!trimmed.startsWith('{')) {
+          const startsLower = /^[a-z]/.test(trimmed);
+          const endsDangling = danglingEndRe.test(prev.replace(/\s+$/, ''));
+          if (startsLower || endsDangling) {
+            merged[merged.length - 1] = `${prev.replace(/\s+$/, '')} ${trimmed}`;
+            continue;
+          }
+        } else {
+          // Handle PoB wrapped rune/enchant lines where both halves carry the identical leading tag prefix
+          // (e.g. `{enchant}{rune}Bonded: ... to gain an` + `{enchant}{rune}additional Elemental Infusion...`)
+          const prevTagPrefix = prev.match(/^((?:\{[^}]+\})+)/)?.[1] ?? '';
+          const curTagPrefix = trimmed.match(/^((?:\{[^}]+\})+)/)?.[1] ?? '';
+          if (prevTagPrefix && curTagPrefix === prevTagPrefix) {
+            const prevBody = prev.slice(prevTagPrefix.length).replace(/\s+$/, '');
+            const curBody = trimmed.slice(curTagPrefix.length).trim();
+            if (curBody && (/^[a-z]/.test(curBody) || danglingEndRe.test(prevBody))) {
+              merged[merged.length - 1] = `${prevTagPrefix}${prevBody} ${curBody}`;
+              continue;
+            }
+          }
         }
       }
       merged.push(raw);

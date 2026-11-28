@@ -1008,5 +1008,31 @@ describe('Real-World Corpus Coverage (parseModLine + parseModCompositional fallb
         ],
       }),
     ]);
+
+    // Wave 4Q additions: Weapon Damage per Str, Socketed Rune/Soul Core, Life Cost Efficiency
+    expect(parseModCompositional('12% increased Weapon Damage per 5 Strength', 'item')).toEqual([
+      expect.objectContaining({
+        name: 'Damage',
+        type: 'INC',
+        value: 12,
+        flags: ModFlag.Attack,
+        tags: [{ type: 'PerStat', stat: 'Str', div: 5 }],
+      }),
+    ]);
+    expect(parseModCompositional('+10 to Spirit per Socketed Rune or Soul Core', 'item')).toEqual([
+      expect.objectContaining({
+        name: 'Spirit',
+        type: 'BASE',
+        value: 10,
+        tags: [{ type: 'Multiplier', var: 'SocketedRune' }],
+      }),
+    ]);
+    expect(parseModCompositional('40% increased Life Cost Efficiency', 'item')).toEqual([
+      expect.objectContaining({
+        name: 'LifeCostEfficiency',
+        type: 'INC',
+        value: 40,
+      }),
+    ]);
   });
 });

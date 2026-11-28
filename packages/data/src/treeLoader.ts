@@ -540,6 +540,7 @@ function synthesizeGemDefinition(
   entry: CompactGemsPayload['gems'][number],
 ): GemDefinition {
   const tagSet = new Set(entry.tags.map((t) => t.toLowerCase()));
+  const stypeSet = new Set((entry.stypes ?? []).map((t) => t.toLowerCase()));
   const isSpell = tagSet.has('spell');
   const isAttack = tagSet.has('attack');
   const hasMinionProfile = Boolean(entry.mb);
@@ -561,12 +562,21 @@ function synthesizeGemDefinition(
     modFlags |= ModFlag.Spell | ModFlag.Hit;
     kwFlags |= KeywordFlag.Spell | KeywordFlag.Hit;
   }
-  if (tagSet.has('projectile')) modFlags |= ModFlag.Projectile;
-  if (tagSet.has('melee')) modFlags |= ModFlag.Melee;
-  if (tagSet.has('area')) modFlags |= ModFlag.Area;
-  if (tagSet.has('bow')) modFlags |= ModFlag.Bow;
-  if (tagSet.has('wand')) modFlags |= ModFlag.Wand;
-  if (tagSet.has('crossbow')) modFlags |= ModFlag.Crossbow;
+  if (tagSet.has('projectile') || stypeSet.has('projectile')) modFlags |= ModFlag.Projectile;
+  if (tagSet.has('melee') || stypeSet.has('melee')) modFlags |= ModFlag.Melee;
+  if (tagSet.has('area') || stypeSet.has('area') || stypeSet.has('areaspell')) modFlags |= ModFlag.Area;
+  if (tagSet.has('bow') || stypeSet.has('bow')) modFlags |= ModFlag.Bow;
+  if (tagSet.has('wand') || stypeSet.has('wandattack')) modFlags |= ModFlag.Wand;
+  if (
+    tagSet.has('crossbow') ||
+    tagSet.has('ammunition') ||
+    stypeSet.has('crossbowskill') ||
+    stypeSet.has('crossbowammoskill') ||
+    (game === 'poe2' && (tagSet.has('grenade') || stypeSet.has('grenade')))
+  ) {
+    modFlags |= ModFlag.Crossbow;
+  }
+  if (tagSet.has('staff') || stypeSet.has('requiresstaff')) modFlags |= ModFlag.Staff;
   if (tagSet.has('quarterstaff')) modFlags |= ModFlag.Quarterstaff;
   if (tagSet.has('talisman')) modFlags |= ModFlag.Talisman;
   if (tagSet.has('fire')) kwFlags |= KeywordFlag.Fire;
@@ -574,14 +584,20 @@ function synthesizeGemDefinition(
   if (tagSet.has('lightning')) kwFlags |= KeywordFlag.Lightning;
   if (tagSet.has('chaos')) kwFlags |= KeywordFlag.Chaos;
   if (tagSet.has('physical')) kwFlags |= KeywordFlag.Physical;
-  if (tagSet.has('totem')) kwFlags |= KeywordFlag.Totem;
+  if (tagSet.has('totem') || stypeSet.has('summonstotem') || stypeSet.has('summonsattacktotem')) {
+    kwFlags |= KeywordFlag.Totem;
+  }
   if (tagSet.has('trap')) kwFlags |= KeywordFlag.Trap;
   if (tagSet.has('mine')) kwFlags |= KeywordFlag.Mine;
-  if (tagSet.has('warcry')) kwFlags |= KeywordFlag.Warcry;
-  if (tagSet.has('movement') || tagSet.has('travel')) kwFlags |= KeywordFlag.Movement;
-  if (tagSet.has('aura')) kwFlags |= KeywordFlag.Aura;
-  if (tagSet.has('curse') || tagSet.has('hex')) kwFlags |= KeywordFlag.Curse;
-  if (tagSet.has('minion') || hasMinionProfile) kwFlags |= KeywordFlag.Minion;
+  if (tagSet.has('warcry') || stypeSet.has('warcry')) kwFlags |= KeywordFlag.Warcry;
+  if (tagSet.has('movement') || tagSet.has('travel') || stypeSet.has('movement') || stypeSet.has('travel')) {
+    kwFlags |= KeywordFlag.Movement;
+  }
+  if (tagSet.has('aura') || stypeSet.has('aura')) kwFlags |= KeywordFlag.Aura;
+  if (tagSet.has('curse') || tagSet.has('hex') || stypeSet.has('appliescurse')) kwFlags |= KeywordFlag.Curse;
+  if (tagSet.has('minion') || hasMinionProfile || stypeSet.has('minion') || stypeSet.has('createsminion')) {
+    kwFlags |= KeywordFlag.Minion;
+  }
   if (tagSet.has('spirit') || (entry.sr ?? 0) > 0) kwFlags |= KeywordFlag.Spirit;
 
   const altIds = hydrateStringList(entry.altIds);

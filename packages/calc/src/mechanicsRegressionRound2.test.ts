@@ -1202,5 +1202,90 @@ describe('Mechanism-Layer Regression Suite — Round 2 (Upstream PoB spec/System
         setRegisteredGems('poe2', prevPoe2);
       }
     });
+
+    it('hydrates weapon/delivery ModFlags & KeywordFlags from stypes in treeLoader and merges wrapped {enchant}{rune} lines (Wave 4Q)', () => {
+      const prevPoe1 = getGemsForGame('poe1');
+      const prevPoe2 = getGemsForGame('poe2');
+      try {
+        const poe1Hydrated = registerGemsData('poe1', {
+          game: 'poe1',
+          count: 1,
+          gems: [
+            {
+              id: 'poe1_kineticfusillade',
+              en: 'Kinetic Fusillade',
+              cat: 'active',
+              color: 'blue',
+              tags: ['area', 'attack', 'duration', 'projectile'],
+              stypes: ['Area', 'Attack', 'Projectile', 'WandAttack'],
+            },
+          ],
+        });
+        const kf = poe1Hydrated.find((g) => g.id === 'poe1_kineticfusillade')!;
+        expect(kf.modFlags & ModFlag.Wand).toBe(ModFlag.Wand);
+
+        const poe2Hydrated = registerGemsData('poe2', {
+          game: 'poe2',
+          count: 3,
+          gems: [
+            {
+              id: 'poe2_siegecascade',
+              en: 'Siege Cascade',
+              cat: 'active',
+              color: 'green',
+              tags: ['ammunition', 'area', 'attack', 'projectile'],
+              stypes: ['Area', 'Attack', 'CrossbowAmmoSkill', 'CrossbowSkill'],
+            },
+            {
+              id: 'poe2_clustergrenade',
+              en: 'Cluster Grenade',
+              cat: 'active',
+              color: 'red',
+              tags: ['area', 'attack', 'fire', 'grenade', 'projectile'],
+              stypes: ['Area', 'Attack', 'Fire', 'Grenade', 'Projectile'],
+            },
+            {
+              id: 'poe2_snipe',
+              en: 'Snipe',
+              cat: 'active',
+              color: 'green',
+              tags: ['area', 'attack', 'channelling', 'cold', 'projectile'],
+              stypes: ['Area', 'Attack', 'Bow', 'Channel', 'Cold'],
+            },
+          ],
+        });
+        expect(poe2Hydrated.find((g) => g.id === 'poe2_siegecascade')!.modFlags & ModFlag.Crossbow).toBe(
+          ModFlag.Crossbow,
+        );
+        expect(poe2Hydrated.find((g) => g.id === 'poe2_clustergrenade')!.modFlags & ModFlag.Crossbow).toBe(
+          ModFlag.Crossbow,
+        );
+        expect(poe2Hydrated.find((g) => g.id === 'poe2_snipe')!.modFlags & ModFlag.Bow).toBe(ModFlag.Bow);
+      } finally {
+        setRegisteredGems('poe1', prevPoe1);
+        setRegisteredGems('poe2', prevPoe2);
+      }
+
+      // Sekhem fallback weapon slot + wrapped {enchant}{rune} continuation merge
+      const sekhem = parseItemText("Rarity: UNIQUE\nSign of the Sin Eater\nTyrant's Sekhem\nImplicits: 0", 'poe1');
+      expect(sekhem?.slotType).toBe('Weapon 1');
+
+      const wrappedRune = parseItemText(
+        [
+          'Rarity: RARE',
+          'Test Vest',
+          'Slipstrike Vest',
+          'Implicits: 1',
+          '{enchant}{rune}Bonded: 12% chance when collecting an Elemental Infusion to gain an',
+          '{enchant}{rune}additional Elemental Infusion of the same type',
+          '+80 to maximum Life',
+        ].join('\n'),
+        'poe2',
+      );
+      expect(wrappedRune?.implicits).toEqual([
+        'Bonded: 12% chance when collecting an Elemental Infusion to gain an additional Elemental Infusion of the same type',
+      ]);
+      expect(wrappedRune?.explicits).toEqual(['+80 to maximum Life']);
+    });
   });
 });
