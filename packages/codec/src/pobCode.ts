@@ -296,6 +296,13 @@ export function buildToPobXml(build: Build): string {
           gem.statSetIndex !== undefined && gem.statSetIndex >= 1
             ? ` statSetIndex="${gem.statSetIndex}" statSetIndexCalcs="${gem.statSetIndex}"`
             : '';
+        const gemStageCountAttr =
+          gem.stageCount !== undefined && gem.stageCount >= 1
+            ? ` skillStageCount="${gem.stageCount}"`
+            : '';
+        const gemCorrupted = (gem as GemInstance & { corrupted?: boolean }).corrupted;
+        const gemCorruptedAttr =
+          gemCorrupted !== undefined ? ` corrupted="${gemCorrupted}"` : '';
         const global1Attr =
           gem.enableGlobal1 !== undefined ? ` enableGlobal1="${gem.enableGlobal1}"` : '';
         const global2Attr =
@@ -306,7 +313,7 @@ export function buildToPobXml(build: Build): string {
             ? ` corruptLevel="${gem.corruptLevel}"`
             : '';
         lines.push(
-          `        <Gem gemId="${escapeXml(gem.gemId)}" nameSpec="${escapeXml(nameSpec)}" level="${xmlBaseLevel}"${corruptLevelAttr} quality="${gem.quality}" enabled="${gem.enabled}"${countAttr}${gemPartAttr}${gemStatSetAttr}${global1Attr}${global2Attr} />`,
+          `        <Gem gemId="${escapeXml(gem.gemId)}" nameSpec="${escapeXml(nameSpec)}" level="${xmlBaseLevel}"${corruptLevelAttr} quality="${gem.quality}" enabled="${gem.enabled}"${gemCorruptedAttr}${countAttr}${gemPartAttr}${gemStatSetAttr}${gemStageCountAttr}${global1Attr}${global2Attr} />`,
         );
       }
       lines.push(`      </Skill>`);

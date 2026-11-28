@@ -2452,6 +2452,89 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
     pattern: /^Your Mercenary and their Minions deal (\d+)% more Damage for each Unique item they have equipped$/i,
     build: (m, src) => [mkMod('MercenaryDamagePerUnique', 'BASE', Number(m[1]), src)],
   },
+  // Wave 6E: Timeless Keystones & PoE 1 3.30 Ascendancy / Reliquarian / Harbinger / Bloodline semantic rules
+  {
+    pattern: /^Armour applies to Fire, Cold and Lightning Damage taken from Hits instead of Physical Damage$/i,
+    build: (_, src) => [
+      mkMod('Transcendence', 'FLAG', true, src),
+      mkMod('ArmourAppliesToEle', 'BASE', 100, src),
+      mkMod('ArmourDoesNotApplyToPhys', 'FLAG', true, src),
+    ],
+  },
+  {
+    pattern: /^Your Damage with Critical Strikes is Lucky$/i,
+    build: (_, src) => [mkMod('CritDamageIsLucky', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Maximum Energy Shield is 0$/i,
+    build: (_, src) => [mkMod('EnergyShield', 'OVERRIDE', 0, src)],
+  },
+  {
+    pattern: /^(\d+)% more Effect of Auras from your Skills on you$/i,
+    build: (m, src) => [mkMod('AuraEffectOnSelf', 'MORE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Gain no inherent bonuses from Attributes$/i,
+    build: (_, src) => [mkMod('NoAttributeBonus', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Ignore Attribute Requirements of Items$/i,
+    build: (_, src) => [mkMod('IgnoreAttributeRequirements', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Life Recovery from Flasks also applies to Energy Shield$/i,
+    build: (_, src) => [mkMod('LifeFlaskRecoveryAppliesToEs', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^80% of Maximum Mana is Converted to Double that value of Armour$/i,
+    build: (_, src) => [mkMod('PowerOfPurpose', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Life Leech effects Recover Energy Shield instead while on Full Life$/i,
+    build: (_, src) => [mkMod('ImmortalAmbition', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^(\d+)% less Damage taken for every (\d+)% Recovery per second from Life Leech$/i,
+    build: (_, src) => [mkMod('StrengthOfBlood', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Strength provides no bonus to Maximum Life$/i,
+    build: (_, src) => [mkMod('NoStrengthBonusToLife', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Your Maximum Endurance Charges is equal to your Maximum Frenzy Charges$/i,
+    build: (_, src) => [mkMod('MaxEnduranceEqualsMaxFrenzy', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^([A-Z][a-zA-Z' ]+?) has no Reservation if Cast as an Aura$/,
+    build: (m, src) => [mkMod(`NoReservationAsAura:${m[1]!.trim()}`, 'FLAG', true, src)],
+  },
+  {
+    pattern: /^(\d+)% of Armour also applies to Chaos Damage taken from Hits$/i,
+    build: (m, src) => [mkMod('ArmourAppliesToChaos', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^All Damage can Shock$/i,
+    build: (_, src) => [mkMod('AllDamageCanShock', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Minions have Unholy Might$/i,
+    build: (_, src) => [mkMod('MinionUnholyMight', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^(\d+)% (increased|reduced) Soul Gain Prevention Duration$/i,
+    build: (m, src) => {
+      const val = m[2]!.toLowerCase() === 'reduced' ? -Number(m[1]) : Number(m[1]);
+      return [mkMod('SoulGainPreventionDuration', 'INC', val, src)];
+    },
+  },
+  {
+    pattern: /^Vaal Skills require (\d+)% (less|more) Souls per Use$/i,
+    build: (m, src) => {
+      const val = m[2]!.toLowerCase() === 'less' ? -Number(m[1]) : Number(m[1]);
+      return [mkMod('VaalSoulCost', 'MORE', val, src)];
+    },
+  },
 ];
 
 /**

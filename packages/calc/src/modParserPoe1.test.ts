@@ -1600,4 +1600,49 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       expect.objectContaining({ name: 'MercenaryDamagePerUnique', type: 'BASE', value: 8 }),
     ]);
   });
+
+  it('Wave 6E: Timeless Keystones & PoE 1 3.30 Ascendancy / Reliquarian / Harbinger / Bloodline rules', () => {
+    expect(
+      parseModLine('Armour applies to Fire, Cold and Lightning Damage taken from Hits instead of Physical Damage', 'Keystone: Transcendence'),
+    ).toEqual([
+      expect.objectContaining({ name: 'Transcendence', type: 'FLAG', value: true }),
+      expect.objectContaining({ name: 'ArmourAppliesToEle', type: 'BASE', value: 100 }),
+      expect.objectContaining({ name: 'ArmourDoesNotApplyToPhys', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Your Damage with Critical Strikes is Lucky', 'Keystone: Dance with Death')).toEqual([
+      expect.objectContaining({ name: 'CritDamageIsLucky', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Maximum Energy Shield is 0', 'Keystone: The Agnostic')).toEqual([
+      expect.objectContaining({ name: 'EnergyShield', type: 'OVERRIDE', value: 0 }),
+    ]);
+    expect(parseModLine('50% more Effect of Auras from your Skills on you', 'Keystone: Supreme Ego')).toEqual([
+      expect.objectContaining({ name: 'AuraEffectOnSelf', type: 'MORE', value: 50 }),
+    ]);
+    expect(parseModLine('Strength provides no bonus to Maximum Life', 'Tree: The Brass Dome')).toEqual([
+      expect.objectContaining({ name: 'NoStrengthBonusToLife', type: 'FLAG', value: true }),
+    ]);
+    expect(
+      parseModLine('Your Maximum Endurance Charges is equal to your Maximum Frenzy Charges', 'Tree: Masterful Form'),
+    ).toEqual([
+      expect.objectContaining({ name: 'MaxEnduranceEqualsMaxFrenzy', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Temporal Chains has no Reservation if Cast as an Aura', 'Tree: Harbinger')).toEqual([
+      expect.objectContaining({ name: 'NoReservationAsAura:Temporal Chains', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('15% of Armour also applies to Chaos Damage taken from Hits', 'Tree: Unbreakable')).toEqual([
+      expect.objectContaining({ name: 'ArmourAppliesToChaos', type: 'BASE', value: 15 }),
+    ]);
+    expect(parseModLine('All Damage can Shock', 'Tree: Shaper of Storms')).toEqual([
+      expect.objectContaining({ name: 'AllDamageCanShock', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Minions have Unholy Might', 'Tree: Unnatural Strength')).toEqual([
+      expect.objectContaining({ name: 'MinionUnholyMight', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('20% reduced Soul Gain Prevention Duration', 'Tree: Priest of Yaomac')).toEqual([
+      expect.objectContaining({ name: 'SoulGainPreventionDuration', type: 'INC', value: -20 }),
+    ]);
+    expect(parseModLine('Vaal Skills require 30% less Souls per Use', 'Tree: Priest of Yaomac')).toEqual([
+      expect.objectContaining({ name: 'VaalSoulCost', type: 'MORE', value: -30 }),
+    ]);
+  });
 });

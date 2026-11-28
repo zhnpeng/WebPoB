@@ -492,5 +492,27 @@ Bismuth Flask
     const corruptedBuild = xmlToBuild(corruptedGemXml);
     expect((corruptedBuild.skills[0]!.gems[0] as unknown as { corrupted?: boolean }).corrupted).toBe(false);
     expect((corruptedBuild.skills[0]!.gems[1] as unknown as { corrupted?: boolean }).corrupted).toBe(true);
+
+    // Wave 6E: buildToPobXml round-trips skillStageCount & corrupted on <Gem> without data loss
+    const stageXml = `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding>
+  <Build className="Witch" ascendClassName="Occultist" level="95" mainSocketGroup="1" />
+  <Tree activeSpec="1"><Spec title="Default" nodes="1" /></Tree>
+  <Skills>
+    <Skill enabled="true">
+      <Gem nameSpec="Cyclone" level="20" quality="20" corrupted="true" skillStageCount="6" enabled="true" />
+    </Skill>
+  </Skills>
+  <Items />
+  <Config />
+</PathOfBuilding>`;
+    const parsedStage = xmlToBuild(stageXml);
+    expect(parsedStage.skills[0]!.gems[0]!.stageCount).toBe(6);
+    const reserialized = buildToPobXml(parsedStage);
+    expect(reserialized).toContain('skillStageCount="6"');
+    expect(reserialized).toContain('corrupted="true"');
+    const roundTripped = xmlToBuild(reserialized);
+    expect(roundTripped.skills[0]!.gems[0]!.stageCount).toBe(6);
+    expect((roundTripped.skills[0]!.gems[0] as unknown as { corrupted?: boolean }).corrupted).toBe(true);
   });
 });
