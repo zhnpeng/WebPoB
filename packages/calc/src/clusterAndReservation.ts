@@ -2174,13 +2174,11 @@ function getActiveEquippedItemsSimple(build: Build): Array<{ slot: EquipmentSlot
   for (const [slotKey, itemId] of Object.entries(build.equipped)) {
     if (!itemId) continue;
     const slot = slotKey as EquipmentSlotId;
-    if (build.game === 'poe2') {
-      if (build.activeWeaponSet === 1 && (slot === 'Weapon 1 Swap' || slot === 'Weapon 2 Swap')) {
-        continue;
-      }
-      if (build.activeWeaponSet === 2 && hasSwap && (slot === 'Weapon 1' || slot === 'Weapon 2')) {
-        continue;
-      }
+    if (build.activeWeaponSet === 1 && (slot === 'Weapon 1 Swap' || slot === 'Weapon 2 Swap')) {
+      continue;
+    }
+    if (build.activeWeaponSet === 2 && hasSwap && (slot === 'Weapon 1' || slot === 'Weapon 2')) {
+      continue;
     }
     const item = build.items[itemId];
     if (item) result.push({ slot, item });
@@ -2778,6 +2776,12 @@ export function evaluateAurasAndWatchersEye(
       !group.weaponSets.includes(build.activeWeaponSet)
     ) {
       continue;
+    }
+    if (build.game === 'poe1' && group.slot) {
+      const isSwapSlot = group.slot === 'Weapon 1 Swap' || group.slot === 'Weapon 2 Swap';
+      const isMainWeaponSlot = group.slot === 'Weapon 1' || group.slot === 'Weapon 2';
+      if (build.activeWeaponSet === 1 && isSwapSlot) continue;
+      if (build.activeWeaponSet === 2 && isMainWeaponSlot) continue;
     }
 
     const slotItem =
@@ -3659,6 +3663,8 @@ export function evaluateAurasAndWatchersEye(
     const baseCompiledMods = resolveAuraLevelCompiledMods(def, effLevel);
     let qualCurseEffInc = 0;
     let qualGolemBuffEffInc = 0;
+    let qualArcaneCloakBuffEffInc = 0;
+    const isArcaneCloakCand = build.game === 'poe1' && lowerAuraName === 'arcane cloak';
     const scaledQualityMods =
       effQuality > 0 && def.qualityCompiledMods
         ? def.qualityCompiledMods
@@ -3669,6 +3675,10 @@ export function evaluateAurasAndWatchersEye(
               }
               if (isGolemBuff && qm.name === 'BuffEffect' && qm.type === 'INC' && typeof qm.value === 'number') {
                 qualGolemBuffEffInc += Math.trunc(qm.value * effQuality + Math.sign(qm.value) * 1e-9);
+                return null;
+              }
+              if (isArcaneCloakCand && qm.name === 'BuffEffect' && qm.type === 'INC' && typeof qm.value === 'number') {
+                qualArcaneCloakBuffEffInc += Math.trunc(qm.value * effQuality + Math.sign(qm.value) * 1e-9);
                 return null;
               }
               if (typeof qm.value === 'number') {
@@ -4176,7 +4186,39 @@ export function evaluateAurasAndWatchersEye(
           (isAura || isHerald) &&
           lowerAuraName !== 'righteous fire' &&
           lowerAuraName !== 'righteous fire of arcane devotion';
-        if (playerMult > 0) {
+        if (isArcaneCloakCand) {
+          // Upstream PoB1 act_int.lua: Arcane Cloak's LightningMin/LightningMax are scalable Buff mods
+          // (scaled by gem quality `+1% BuffEffect` per 1% Q, `BuffEffectOnSelf`, and skill-specific buff effect),
+          // while GuardAbsorbRate, GuardAbsorbLimit, ArcaneCloakConsumedMana, and ManaSpentRecently are `unscalable = true`.
+          const arcaneCloakBuffMult = Math.max(
+            0,
+            1 +
+              (qualArcaneCloakBuffEffInc +
+                playerDb.sum('INC', 'BuffEffectOnSelf') +
+                skillSpecificEffectPct) /
+                100,
+          );
+          const scalableCloakMods = allyCmods.filter(
+            (m) => m.name === 'LightningMin' || m.name === 'LightningMax',
+          );
+          const unscalableCloakMods = allyCmods.filter(
+            (m) => m.name !== 'LightningMin' && m.name !== 'LightningMax',
+          );
+          if (unscalableCloakMods.length > 0) {
+            injectCompiledGemMods(tmpPlayer, tmpEnemy, tmpMinion, unscalableCloakMods, sourceLabel, {
+              game: build.game,
+              effectMultiplier: 1,
+              scaleMore: false,
+            });
+          }
+          if (scalableCloakMods.length > 0 && arcaneCloakBuffMult > 0) {
+            injectCompiledGemMods(tmpPlayer, tmpEnemy, tmpMinion, scalableCloakMods, sourceLabel, {
+              game: build.game,
+              effectMultiplier: arcaneCloakBuffMult,
+              scaleMore: false,
+            });
+          }
+        } else if (playerMult > 0) {
           injectCompiledGemMods(tmpPlayer, tmpEnemy, tmpMinion, allyCmods, sourceLabel, {
             game: build.game,
             effectMultiplier: playerMult,

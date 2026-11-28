@@ -1555,7 +1555,13 @@ export function injectCompiledGemMods(
       typeof val === 'number' &&
       (cm.type === 'BASE' || cm.type === 'INC' || (scaleMore && cm.type === 'MORE'))
     ) {
-      const hasMultiplierTag = Boolean(cm.tags?.some((t) => t.type === 'Multiplier'));
+      const hasMultiplierTag = Boolean(
+        cm.tags?.some(
+          (t) =>
+            t.type === 'Multiplier' ||
+            (t.type === 'Condition' && typeof t.var === 'string' && t.var.startsWith('PercentStat:')),
+        ),
+      );
       val =
         Number.isInteger(val) && !hasMultiplierTag
           ? Math.trunc(val * mult + Math.sign(val) * 1e-9)

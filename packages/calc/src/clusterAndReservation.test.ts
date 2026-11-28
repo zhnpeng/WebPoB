@@ -2958,4 +2958,151 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     const lyciaMod = db.calcStat('Damage').sources.find((s) => s.source === 'Uptime Scaled Pact of Lycia');
     expect(lyciaMod?.value).toBeCloseTo(4.21, 1);
   });
+
+  it('skips inactive PoE 1 weapon swap skill groups so off-swap auras/buffs do not reserve mana or grant stats', () => {
+    const graceDef: GemDefinition = {
+      id: 'poe1_grace',
+      name: { en: 'Grace', zh: '优雅' },
+      category: 'active',
+      game: 'poe1',
+      color: 'green',
+      tags: ['aura', 'spell', 'aoe', 'dexterity'],
+      modFlags: ModFlag.Spell | ModFlag.Area,
+      keywordFlags: KeywordFlag.Aura,
+      manaReservationPct: 50,
+      isAuraOrBuff: true,
+      stats: [],
+      compiledMods: [
+        { name: 'Evasion', type: 'BASE', value: 1000, flags: 0, keywordFlags: 0, target: 'player' },
+      ],
+    };
+    const wrathDef: GemDefinition = {
+      id: 'poe1_wrath',
+      name: { en: 'Wrath', zh: '雷霆' },
+      category: 'active',
+      game: 'poe1',
+      color: 'blue',
+      tags: ['aura', 'spell', 'aoe', 'lightning', 'intelligence'],
+      modFlags: ModFlag.Spell | ModFlag.Area,
+      keywordFlags: KeywordFlag.Aura,
+      manaReservationPct: 50,
+      isAuraOrBuff: true,
+      stats: [],
+      compiledMods: [
+        { name: 'LightningDamage', type: 'MORE', value: 21, flags: ModFlag.Spell, keywordFlags: 0, target: 'player' },
+      ],
+    };
+    const lookup = (_g: 'poe1' | 'poe2', id: string) =>
+      id === 'poe1_grace' ? graceDef : id === 'poe1_wrath' ? wrathDef : undefined;
+
+    const skills = [
+      {
+        id: 'sg-main-wep',
+        label: 'Weapon 1 Wrath',
+        slot: 'Weapon 1' as const,
+        enabled: true,
+        gems: [{ instanceId: 'w1', gemId: 'poe1_wrath', level: 20, quality: 0, enabled: true }],
+      },
+      {
+        id: 'sg-swap-wep',
+        label: 'Weapon 2 Swap Grace',
+        slot: 'Weapon 2 Swap' as const,
+        enabled: true,
+        gems: [{ instanceId: 'g1', gemId: 'poe1_grace', level: 20, quality: 0, enabled: true }],
+      },
+    ];
+
+    // Active Weapon Set 1: Wrath (Weapon 1) applies, Grace (Weapon 2 Swap) is ignored
+    const dbSet1 = new ModDB();
+    const res1 = evaluateAurasAndWatchersEye({
+      build: mkBuild({ game: 'poe1', activeWeaponSet: 1, skills }),
+      playerDb: dbSet1,
+      getGemByIdFn: lookup,
+      maxMana: 2000,
+    });
+    expect(res1.totalManaReservedPct).toBe(50);
+    expect(dbSet1.sum('BASE', 'Evasion')).toBe(0);
+    expect(dbSet1.more('LightningDamage', ModFlag.Spell)).toBeCloseTo(1.21, 5);
+
+    // Active Weapon Set 2: Grace (Weapon 2 Swap) applies, Wrath (Weapon 1) is ignored
+    const dbSet2 = new ModDB();
+    const res2 = evaluateAurasAndWatchersEye({
+      build: mkBuild({ game: 'poe1', activeWeaponSet: 2, skills }),
+      playerDb: dbSet2,
+      getGemByIdFn: lookup,
+      maxMana: 2000,
+    });
+    expect(res2.totalManaReservedPct).toBe(50);
+    expect(dbSet2.sum('BASE', 'Evasion')).toBe(1000);
+    expect(dbSet2.more('LightningDamage', ModFlag.Spell)).toBeCloseTo(1, 5);
+  });
+
+  it('scales PoE 1 Arcane Cloak LightningMin/Max by gem quality BuffEffect and BuffEffectOnSelf while keeping unscalable mods at 1x', () => {
+    const arcaneCloakDef: GemDefinition = {
+      id: 'poe1_arcanecloak',
+      name: { en: 'Arcane Cloak', zh: '奥术斗篷' },
+      category: 'active',
+      game: 'poe1',
+      color: 'blue',
+      tags: ['arcane', 'duration', 'guard', 'intelligence', 'lightning', 'spell'],
+      modFlags: 0,
+      keywordFlags: 0,
+      isAuraOrBuff: false,
+      stats: [],
+      compiledMods: [
+        { name: 'Multiplier:ArcaneCloakConsumedMana', type: 'BASE', value: 0.64, flags: 0, keywordFlags: 0, target: 'player' },
+        { name: 'GuardAbsorbRate', type: 'BASE', value: 75, flags: 0, keywordFlags: 0, target: 'player' },
+        {
+          name: 'LightningMin',
+          type: 'BASE',
+          value: 10,
+          flags: 0,
+          keywordFlags: 0,
+          target: 'player',
+          tags: [{ type: 'Condition', var: 'PercentStat:ManaUnreserved:ArcaneCloakConsumedMana' }],
+        },
+        {
+          name: 'LightningMax',
+          type: 'BASE',
+          value: 10,
+          flags: 0,
+          keywordFlags: 0,
+          target: 'player',
+          tags: [{ type: 'Condition', var: 'PercentStat:ManaUnreserved:ArcaneCloakConsumedMana' }],
+        },
+      ],
+      qualityCompiledMods: [
+        { name: 'BuffEffect', type: 'INC', value: 1, flags: 0, keywordFlags: 0 },
+      ],
+    };
+
+    const db = new ModDB();
+    db.setStat('ManaUnreserved', 5000);
+    // +15% BuffEffectOnSelf + 20% quality = +35% total -> 10 * 1.35 = 13.5% of consumed mana (3200) = 432
+    db.addMod({ name: 'BuffEffectOnSelf', type: 'INC', value: 15, flags: 0, keywordFlags: 0, source: 'Tree' });
+
+    evaluateAurasAndWatchersEye({
+      build: mkBuild({
+        game: 'poe1',
+        skills: [
+          {
+            id: 'sg-cloak',
+            label: 'Arcane Cloak',
+            enabled: true,
+            gems: [{ instanceId: 'ac1', gemId: 'poe1_arcanecloak', level: 20, quality: 20, enabled: true }],
+          },
+        ],
+      }),
+      playerDb: db,
+      getGemByIdFn: (_g, id) => (id === 'poe1_arcanecloak' ? arcaneCloakDef : undefined),
+      maxMana: 5000,
+    });
+
+    // Unscalable mods remain at 1x
+    expect(db.getEvalContext().multipliers.ArcaneCloakConsumedMana).toBeCloseTo(0.64, 5);
+    expect(db.sum('BASE', 'GuardAbsorbRate')).toBe(75);
+    // Scalable LightningMin/LightningMax: 5000 * 0.64 * 0.135 = 432
+    expect(db.sum('BASE', 'LightningMin')).toBeCloseTo(432, 2);
+    expect(db.sum('BASE', 'LightningMax')).toBeCloseTo(432, 2);
+  });
 });
