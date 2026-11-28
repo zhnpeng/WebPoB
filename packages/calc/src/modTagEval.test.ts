@@ -1123,4 +1123,26 @@ describe('parseConditionalSuffix', () => {
       ),
     ).toBe(40);
   });
+
+  it('evaluates Wave 4R guards (CanApplyLightningExposure gating & SpellCostsLife via LifeCost stat)', () => {
+    const ctxBlocked = createEmptyEvalContext();
+    ctxBlocked.conditions.LightningExposure = true;
+    ctxBlocked.conditions.CanApplyLightningExposure = false;
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'EnemyLightningExposure' }] }), ctxBlocked)
+        .active,
+    ).toBe(false);
+
+    const ctxAllowed = createEmptyEvalContext();
+    ctxAllowed.conditions.LightningExposure = true;
+    ctxAllowed.conditions.CanApplyLightningExposure = true;
+    ctxAllowed.stats.LifeCost = 45;
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'EnemyLightningExposure' }] }), ctxAllowed)
+        .active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'SpellCostsLife' }] }), ctxAllowed).active,
+    ).toBe(true);
+  });
 });

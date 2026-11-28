@@ -189,9 +189,18 @@ function evalSingleConditionVar(varExpr: string, ctx?: ModEvalContext): boolean 
         ctx.conditions.LightningExposure,
     );
   }
-  if (varExpr === 'EnemyFireExposure') return Boolean(ctx.conditions.FireExposure);
-  if (varExpr === 'EnemyColdExposure') return Boolean(ctx.conditions.ColdExposure);
-  if (varExpr === 'EnemyLightningExposure') return Boolean(ctx.conditions.LightningExposure);
+  if (varExpr === 'EnemyFireExposure') {
+    if (ctx.conditions.CanApplyFireExposure === false) return false;
+    return Boolean(ctx.conditions.FireExposure);
+  }
+  if (varExpr === 'EnemyColdExposure') {
+    if (ctx.conditions.CanApplyColdExposure === false) return false;
+    return Boolean(ctx.conditions.ColdExposure);
+  }
+  if (varExpr === 'EnemyLightningExposure') {
+    if (ctx.conditions.CanApplyLightningExposure === false) return false;
+    return Boolean(ctx.conditions.LightningExposure);
+  }
   if (varExpr === 'EnemyAffectedByElementalAilment') {
     return Boolean(
       ctx.conditions.EnemyShocked ||
@@ -316,6 +325,9 @@ function evalSingleConditionVar(varExpr: string, ctx?: ModEvalContext): boolean 
   }
   if (varExpr === 'ShapeshiftToHuman') {
     return Boolean(ctx.conditions.ShapeshiftedToHumanRecently);
+  }
+  if (varExpr === 'SpellCostsLife') {
+    return (ctx.stats.LifeCost ?? 0) > 0;
   }
   return false;
 }

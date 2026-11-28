@@ -2529,6 +2529,41 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     pattern: /^(\d+)% of Evasion Rating also grants Elemental Damage reduction$/i,
     build: (m, src) => [mkMod('EvasionAsEleReductionPct', 'BASE', Number(m[1]), src)],
   },
+  // Wave 4R: PoE 2 Exposure sources (PoB 2 CalcPerform.lua:188-190 hasExposureSource) & utility semantic flags
+  {
+    pattern: /^Hits that Heavy Stun inflict (Fire|Cold|Lightning) Exposure$/i,
+    build: (m, src) => [mkMod(`${m[1]}ExposureChance`, 'BASE', 100, src)],
+  },
+  {
+    pattern: /^(\d+)% chance to inflict (Fire|Cold|Lightning) Exposure on (?:Critical )?Hit$/i,
+    build: (m, src) => [mkMod(`${m[2]}ExposureChance`, 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Inflicts? (Fire|Cold|Lightning) Exposure on Hit$/i,
+    build: (m, src) => [mkMod(`${m[1]}ExposureChance`, 'BASE', 100, src)],
+  },
+  {
+    pattern: /^Skills have (\d+)% chance to not remove (Charges|Elemental Infusions) but still count as consuming them$/i,
+    build: (m, src) => [
+      mkMod(
+        m[2]!.toLowerCase().includes('infusion') ? 'ChanceToNotRemoveInfusions' : 'ChanceToNotRemoveCharges',
+        'BASE',
+        Number(m[1]),
+        src,
+      ),
+    ],
+  },
+  {
+    pattern: /^Break (\d+)% of Armour on (Heavy Stunning|Pinning) an Enemy$/i,
+    build: (m, src) => [
+      mkMod(
+        m[2]!.toLowerCase().startsWith('pin') ? 'ArmourBreakOnPinPct' : 'ArmourBreakOnHeavyStunPct',
+        'BASE',
+        Number(m[1]),
+        src,
+      ),
+    ],
+  },
   // Falcon Dive (PoB 2 ModParser.lua:1620): "1% increased Attack Speed per 400 Accuracy Rating, up to 20%"
   {
     pattern: /^(\d+)% (increased|reduced) (Attack|Cast) Speed per (\d+) Accuracy Rating(?:,\s*up to (\d+)%)?$/i,

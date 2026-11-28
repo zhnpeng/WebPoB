@@ -1716,5 +1716,29 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
         parseModLine('30% of Evasion Rating also grants Elemental Damage reduction', 'Tree: Sustainable Practices'),
       ).toEqual([expect.objectContaining({ name: 'EvasionAsEleReductionPct', type: 'BASE', value: 30 })]);
     });
+
+    it('parses Wave 4R PoE 2 Exposure source & charge/infusion/armour-break semantic rules', () => {
+      expect(
+        parseModLine('Hits that Heavy Stun inflict Fire Exposure', 'Tree: Overheating Blow'),
+      ).toEqual([expect.objectContaining({ name: 'FireExposureChance', type: 'BASE', value: 100 })]);
+      expect(
+        parseModLine('25% chance to inflict Lightning Exposure on Hit', 'Item'),
+      ).toEqual([expect.objectContaining({ name: 'LightningExposureChance', type: 'BASE', value: 25 })]);
+      expect(
+        parseModLine(
+          'Skills have 10% chance to not remove Charges but still count as consuming them',
+          'Tree: The Fabled Stag',
+        ),
+      ).toEqual([expect.objectContaining({ name: 'ChanceToNotRemoveCharges', type: 'BASE', value: 10 })]);
+      expect(
+        parseModLine(
+          'Skills have 10% chance to not remove Elemental Infusions but still count as consuming them',
+          'Tree: Everlasting Infusions',
+        ),
+      ).toEqual([expect.objectContaining({ name: 'ChanceToNotRemoveInfusions', type: 'BASE', value: 10 })]);
+      expect(
+        parseModLine('Break 50% of Armour on Heavy Stunning an Enemy', 'Tree: Shattering Blow'),
+      ).toEqual([expect.objectContaining({ name: 'ArmourBreakOnHeavyStunPct', type: 'BASE', value: 50 })]);
+    });
   });
 });
