@@ -2897,4 +2897,65 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     // Despair -48% * 0.5 (Pinnacle Boss) * (1 + trunc(23 * 0.5)/100 = 1.11) = trunc(-26.64) = -26
     expect(res.enemyDb.sum('BASE', 'ChaosResist')).toBe(-26);
   });
+
+  it('includes ActionSpeed and Onslaught/Frenzy cast speed when computing PoE 1 Pact of Lycia uptime', () => {
+    const winterOrbDef: GemDefinition = {
+      id: 'poe1_winterorb',
+      name: { en: 'Winter Orb', zh: '寒冬宝珠' },
+      category: 'active',
+      game: 'poe1',
+      color: 'blue',
+      tags: ['spell', 'channelling', 'cold', 'projectile', 'area'],
+      modFlags: ModFlag.Spell,
+      keywordFlags: KeywordFlag.Spell | KeywordFlag.Cold,
+      castTime: 0.25,
+      stats: [],
+    };
+    const lyciaDef: GemDefinition = {
+      id: 'poe1_pactoflycia',
+      name: { en: 'Pact of Lycia', zh: '莉西娅契约' },
+      category: 'active',
+      game: 'poe1',
+      color: 'white',
+      tags: ['spell', 'pact', 'channelling'],
+      modFlags: ModFlag.Spell,
+      keywordFlags: KeywordFlag.Spell,
+      castTime: 0.8,
+      cooldown: 4,
+      stats: [],
+    };
+    const lookup = (_g: 'poe1' | 'poe2', id: string) =>
+      id === 'poe1_winterorb' ? winterOrbDef : id === 'poe1_pactoflycia' ? lyciaDef : undefined;
+
+    const db = new ModDB();
+    db.addMod({ name: 'Speed', type: 'INC', value: 38, flags: ModFlag.Spell, keywordFlags: 0, source: 'Gear' });
+    const build = mkBuild({
+      game: 'poe1',
+      skills: [
+        {
+          id: 'sg-main',
+          label: 'Winter Orb',
+          enabled: true,
+          gems: [{ instanceId: 'w1', gemId: 'poe1_winterorb', level: 21, quality: 20, enabled: true }],
+        },
+        {
+          id: 'sg-pact',
+          label: 'Pact',
+          enabled: true,
+          gems: [{ instanceId: 'p1', gemId: 'poe1_pactoflycia', level: 21, quality: 20, enabled: true }],
+        },
+      ],
+    });
+    build.config.onslaught = true;
+    evaluateAurasAndWatchersEye({
+      build,
+      playerDb: db,
+      getGemByIdFn: lookup,
+      maxMana: 1000,
+    });
+    // 38% + 20% Onslaught = 58% -> speed = 4 * 1.58 = 6.32, pactCastTime = 0.8 / 1.58 = 0.5063
+    // uptime = (3 / 6.32) / (4 + 0.5063) = 0.1053 -> 40 * 0.1053 = 4.21% MORE Damage
+    const lyciaMod = db.calcStat('Damage').sources.find((s) => s.source === 'Uptime Scaled Pact of Lycia');
+    expect(lyciaMod?.value).toBeCloseTo(4.21, 1);
+  });
 });

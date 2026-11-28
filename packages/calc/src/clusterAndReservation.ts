@@ -4591,9 +4591,30 @@ export function evaluateAurasAndWatchersEye(
             Boolean(mainActiveDef.skillData?.baseDotDamage);
 
           // Estimate main spell cast speed & repeats for PoB Pact uptime calculation
+          // (CalcOffence.lua:2940 includes ActionSpeed + Onslaught/Frenzy cast speed)
           const baseCastTime = Math.max(0.1, mainActiveDef.castTime ?? 0.7);
-          const spellSpdInc = playerDb.sum('INC', 'Speed', ModFlag.Spell, KeywordFlag.Spell);
+          let spellSpdInc = playerDb.sum('INC', 'Speed', ModFlag.Spell, KeywordFlag.Spell);
           const spellSpdMore = playerDb.more('Speed', ModFlag.Spell, KeywordFlag.Spell);
+          const actionSpeedMult = Math.max(0.1, 1 + playerDb.sum('INC', 'ActionSpeed') / 100);
+          const hasOnslaughtSpeedAlready = hasStatSource(playerDb, 'Speed', 'INC', 'Onslaught');
+          if (!hasOnslaughtSpeedAlready) {
+            const hasSilverFlask = Object.entries(build.equipped).some(([slot, itemId]) => {
+              if (!itemId || !/^Flask\s+\d$/i.test(slot)) return false;
+              const it = build.items[itemId];
+              return Boolean(it && /\bsilver flask\b/i.test(`${it.name} ${it.baseName}`));
+            });
+            if (build.config.onslaught || playerDb.getEvalContext().conditions.Onslaught || hasSilverFlask) {
+              const onslaughtEff = Math.max(0, 1 + playerDb.sum('INC', 'OnslaughtEffect') / 100);
+              spellSpdInc += Math.floor(20 * onslaughtEff + 1e-9);
+            }
+          }
+          if (build.config.useFrenzyCharges && !hasStatSource(playerDb, 'Speed', 'INC', 'Frenzy')) {
+            const frenzyCount = Math.max(
+              0,
+              build.config.frenzyCharges ?? (3 + playerDb.sum('BASE', 'FrenzyChargesMax')),
+            );
+            spellSpdInc += frenzyCount * 4;
+          }
           const hasSpellEcho = Boolean(
             mainGrp?.gems.some((g) => {
               if (!g.enabled) return false;
@@ -4605,7 +4626,11 @@ export function evaluateAurasAndWatchersEye(
           const echoSpeedMult = hasSpellEcho ? 1.54 : 1;
           const repeats = hasSpellEcho ? 2 : 1;
           const estMainSpeed =
-            (1 / baseCastTime) * Math.max(0.1, 1 + spellSpdInc / 100) * spellSpdMore * echoSpeedMult;
+            (1 / baseCastTime) *
+            Math.max(0.1, 1 + spellSpdInc / 100) *
+            spellSpdMore *
+            actionSpeedMult *
+            echoSpeedMult;
           const empoweredUseRate = estMainSpeed / repeats;
           const pactMaxHit = Boolean(build.config.rawInputs?.conditionPactMaxHit);
 
@@ -4628,7 +4653,7 @@ export function evaluateAurasAndWatchersEye(
             );
             const cooldown = baseCd / Math.max(0.1, 1 + totalCdr / 100);
             const pactCastRate =
-              (1 / 0.8) * Math.max(0.1, 1 + spellSpdInc / 100) * spellSpdMore;
+              (1 / 0.8) * Math.max(0.1, 1 + spellSpdInc / 100) * spellSpdMore * actionSpeedMult;
             const pactCastTime = 1 / Math.min(pactCastRate, 30.303);
             const count =
               pact.key === 'Beidat'
