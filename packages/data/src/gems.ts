@@ -1292,3 +1292,161 @@ export function resolveGemFromPobRef(game: GameId, ref: PobGemRef): GemDefinitio
   }
   return undefined;
 }
+
+export interface Poe1SpectreProfile {
+  /** Upstream PoB1 `Data/Spectres.lua` monster metadata ID. */
+  readonly id: string;
+  /** Display name (e.g. `Forged Frostbearer`, `Perfect Pain Artist`). */
+  readonly name: string;
+  /** Monster damage multiplier (`m.damage`). */
+  readonly damageMult: number;
+  /** Base attack time in seconds (`m.attackTime`). */
+  readonly attackTime: number;
+  /** Monster life multiplier (`m.life`). */
+  readonly lifeMult: number;
+  /** Primary upstream skill IDs from `m.skillList`. */
+  readonly skillList: readonly string[];
+}
+
+/**
+ * Upstream PoB1 3.30 `Data/Spectres.lua` profiles for meta & corpus Raise Spectre monsters.
+ * Enables `engine.ts` to hydrate `skillMinion` Spectre stats & support auras cleanly.
+ */
+export const POE1_SPECTRE_PROFILES: Readonly<Record<string, Poe1SpectreProfile>> = {
+  'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/CasterDemonHigh': {
+    id: 'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/CasterDemonHigh',
+    name: 'Perfect Pain Artist',
+    damageMult: 1.25,
+    attackTime: 1.32,
+    lifeMult: 1.44,
+    skillList: [
+      'AzmeriCasterDemonProjectile',
+      'ABTTAzmeriCasterDemonCritMultiAura',
+      'AzmeriCasterDemonSpellDamageAura',
+    ],
+  },
+  'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/OakHigh': {
+    id: 'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/OakHigh',
+    name: 'Perfect Warlord',
+    damageMult: 1.73,
+    attackTime: 1.5,
+    lifeMult: 3.0,
+    skillList: ['MeleeAtAnimationSpeed', 'AzmeriOakEnduringCry', 'AzmeriOakVitality'],
+  },
+  'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/KudukuHigh': {
+    id: 'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/KudukuHigh',
+    name: 'Perfect Spirit of Fortune',
+    damageMult: 1.5,
+    attackTime: 1.5,
+    lifeMult: 3.75,
+    skillList: ['AzmeriKudukuShockNova', 'AzmeriKudukuSparkExtraProj', 'AzmeriKudukuWrath'],
+  },
+  'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/TurtleHigh': {
+    id: 'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/TurtleHigh',
+    name: 'Perfect Guardian Turtle',
+    damageMult: 1.73,
+    attackTime: 1.5,
+    lifeMult: 4.5,
+    skillList: ['MeleeAtAnimationSpeed', 'AzmeriTurtleDetermination'],
+  },
+  'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/VikingHigh': {
+    id: 'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/VikingHigh',
+    name: 'Perfect Forest Warrior',
+    damageMult: 1.95,
+    attackTime: 1.65,
+    lifeMult: 3.0,
+    skillList: ['MeleeAtAnimationSpeedFire', 'AzmeriVikingCyclone', 'AzmeriVikingUpheaval'],
+  },
+  'Metadata/Monsters/BloodChieftain/MonkeyChiefBloodEnrage': {
+    id: 'Metadata/Monsters/BloodChieftain/MonkeyChiefBloodEnrage',
+    name: 'Carnage Chieftain',
+    damageMult: 1.5,
+    attackTime: 1.905,
+    lifeMult: 2.4,
+    skillList: ['MeleeAtAnimationSpeed', 'MassFrenzy'],
+  },
+  'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/Hydra/HydraHigh_': {
+    id: 'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/Hydra/HydraHigh_',
+    name: 'Perfect Hydra',
+    damageMult: 4.5,
+    attackTime: 1.5,
+    lifeMult: 0.86,
+    skillList: ['AzmeriHydraDoomArrow', 'AzmeriHydraBarrage', 'AzmeriHydraForkArrow', 'AzmeriHydraHatred'],
+  },
+  'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/TankyZombieHigh': {
+    id: 'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/TankyZombieHigh',
+    name: 'Perfect Meatsack',
+    damageMult: 1.65,
+    attackTime: 1.5,
+    lifeMult: 7.0,
+    skillList: ['MeleeAtAnimationSpeed', 'AzmeriZombieCausticGroundWhenHit'],
+  },
+  'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/Mannequin/MannequinHigh_': {
+    id: 'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/Mannequin/MannequinHigh_',
+    name: 'Perfect Dark Marionette',
+    damageMult: 1.25,
+    attackTime: 1.5,
+    lifeMult: 2.88,
+    skillList: ['MeleeAtAnimationSpeed', 'DarkMarionetteExplodePerfect'],
+  },
+  'Metadata/Monsters/LeagueCrucible/Cold/Pyromaniac': {
+    id: 'Metadata/Monsters/LeagueCrucible/Cold/Pyromaniac',
+    name: 'Forged Frostbearer',
+    damageMult: 1.4,
+    attackTime: 1.5,
+    lifeMult: 1.68,
+    skillList: ['MMSPyromaniacIceMortar', 'CrucibleIceStormTrap'],
+  },
+  'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/TigerHigh': {
+    id: 'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/TigerHigh',
+    name: 'Perfect Forest Tiger',
+    damageMult: 1.8,
+    attackTime: 1.2,
+    lifeMult: 1.8,
+    skillList: ['MeleeAtAnimationSpeed', 'AzmeriTigerSpiritFangs', 'AzmeriTigerHaste'],
+  },
+  'Metadata/Monsters/Hellion/Hellion3Spectre': {
+    id: 'Metadata/Monsters/Hellion/Hellion3Spectre',
+    name: 'Ruins Hellion',
+    damageMult: 1.85,
+    attackTime: 1.5,
+    lifeMult: 1.0,
+    skillList: ['MeleeAtAnimationSpeed', 'HellionRallyingCry'],
+  },
+  'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/GoddessHigh': {
+    id: 'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/GoddessHigh',
+    name: 'Perfect Judgemental Spirit',
+    damageMult: 1.5,
+    attackTime: 1.5,
+    lifeMult: 2.03,
+    skillList: ['AzmeriGoddessSpiritMortar', 'AzmeriGoddessAura', 'AzmeriGoddessDiscipline'],
+  },
+  'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/DemonBossHigh': {
+    id: 'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/DemonBossHigh',
+    name: 'Perfect Blood Demon',
+    damageMult: 1.5,
+    attackTime: 1.5,
+    lifeMult: 3.75,
+    skillList: ['MeleeAtAnimationSpeedFire', 'AzmeriDemonPhysicalDamageAura'],
+  },
+  'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/GeofriHigh': {
+    id: 'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/GeofriHigh',
+    name: 'Perfect Blasphemer',
+    damageMult: 2.25,
+    attackTime: 1.5,
+    lifeMult: 2.25,
+    skillList: ['MeleeAtAnimationSpeed', 'AzmeriGeofriSlam', 'AzmeriGeofriSmite'],
+  },
+};
+
+const POE1_SPECTRE_BY_NAME_LOWER: ReadonlyMap<string, Poe1SpectreProfile> = new Map(
+  Object.values(POE1_SPECTRE_PROFILES).map((p) => [p.name.toLowerCase(), p]),
+);
+
+/** Resolves a PoE 1 Spectre profile by metadata ID (`skillMinion`) or display name. */
+export function getPoe1SpectreProfile(skillMinion?: string | null): Poe1SpectreProfile | undefined {
+  if (!skillMinion) return undefined;
+  const trimmed = skillMinion.trim();
+  if (!trimmed) return undefined;
+  return POE1_SPECTRE_PROFILES[trimmed] ?? POE1_SPECTRE_BY_NAME_LOWER.get(trimmed.toLowerCase());
+}

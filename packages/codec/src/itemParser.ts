@@ -633,38 +633,21 @@ export function parseItemText(
     const inlineRanges = parseModLineRangeTag(rawLine);
     const modRangeOverride =
       inlineRanges ?? (rawModIndex !== undefined ? modRanges.get(rawModIndex) : undefined);
-    let interpolated = interpolateModRanges(rawLine, modRangeOverride);
-    // PoE 2 `{corruptedRange:X}` (upstream PoB2 ItemTools.lua baseValueScalar):
-    // multiplies interpolated range values by X and rounds before catalyst scaling.
+    // PoE 2 `{corruptedRange:X}` (upstream PoB2 ItemTools.lua baseValueScalar) and
+    // PoE 1/2 Catalyst scaling (upstream PoB Item.lua:1198 `itemLib.applyRange`):
+    // ONLY scale numbers interpolated from `(min-max)` ranges, NEVER fixed constants such as
+    // `per 100 Maximum Mana`, `every 10 Intelligence`, `up to 200%`, or `for 4 seconds`.
     const corruptedRangeMatch = rawLine.match(/\{corruptedRange:([+-]?\d+(?:\.\d+)?)\}/i);
     const corruptedRangeScalar = corruptedRangeMatch ? Number(corruptedRangeMatch[1]) : 1;
-    if (
+    const isScalableRangeLine =
+      /\(\d/.test(rawLine) && !/\{unscalable\}|\bunscalable value\b/i.test(rawLine);
+    const applyCorruptedScale =
+      isScalableRangeLine &&
       Number.isFinite(corruptedRangeScalar) &&
       corruptedRangeScalar > 0 &&
-      corruptedRangeScalar !== 1 &&
-      /\(\d/.test(rawLine) &&
-      !/\{unscalable\}|\bunscalable value\b/i.test(rawLine)
-    ) {
-      interpolated = interpolated.replace(
-        /([+-]?)(\d+(?:\.\d+)?)/g,
-        (_full, sign: string, numStr: string) => {
-          const val = Number(numStr);
-          const dotIdx = numStr.indexOf('.');
-          if (dotIdx === -1) {
-            return `${sign}${Math.round(val * corruptedRangeScalar)}`;
-          }
-          const decimals = numStr.length - dotIdx - 1;
-          const factor = Math.pow(10, decimals);
-          return `${sign}${Math.round(val * corruptedRangeScalar * factor) / factor}`;
-        },
-      );
-    }
-    if (
-      activeCatalystTags &&
-      catalystQuality &&
-      /\(\d/.test(rawLine) &&
-      !/\{unscalable\}|\bunscalable value\b/i.test(rawLine)
-    ) {
+      corruptedRangeScalar !== 1;
+    let catMult = 1;
+    if (isScalableRangeLine && activeCatalystTags && catalystQuality) {
       const mTags = rawLine.match(/\{tags:([^}]*)\}/i);
       const lineTags = mTags?.[1]
         ? mTags[1]
@@ -675,21 +658,44 @@ export function parseItemText(
       if (/\{prefix\}/i.test(rawLine)) lineTags.push('prefix');
       if (/\{suffix\}/i.test(rawLine)) lineTags.push('suffix');
       if (lineTags.length > 0 && activeCatalystTags.some((ct) => lineTags.includes(ct))) {
-        const catMult = 1 + catalystQuality / 100;
-        interpolated = interpolated.replace(
-          /([+-]?)(\d+(?:\.\d+)?)/g,
-          (_full, sign: string, numStr: string) => {
-            const val = Number(numStr);
-            const dotIdx = numStr.indexOf('.');
-            if (dotIdx === -1) {
-              return `${sign}${Math.trunc(val * catMult + 1e-9)}`;
-            }
-            const decimals = numStr.length - dotIdx - 1;
-            const factor = Math.pow(10, decimals);
-            return `${sign}${Math.trunc(val * catMult * factor + 1e-9) / factor}`;
-          },
-        );
+        catMult = 1 + catalystQuality / 100;
       }
+    }
+    let interpolated: string;
+    if (applyCorruptedScale || catMult !== 1) {
+      const ranges =
+        typeof modRangeOverride === 'number' && Number.isFinite(modRangeOverride)
+          ? [modRangeOverride]
+          : Array.isArray(modRangeOverride) && modRangeOverride.length > 0
+            ? modRangeOverride
+            : [0.5];
+      let rangeIdx = 0;
+      const preScaled = rawLine.replace(
+        /([+-]?)\((-?\d+(?:\.\d+)?)-(-?\d+(?:\.\d+)?)\)/g,
+        (_full, sign: string, minStr: string, maxStr: string) => {
+          const r = ranges[rangeIdx] ?? ranges[0] ?? 0.5;
+          rangeIdx++;
+          const min = Number(minStr);
+          const max = Number(maxStr);
+          const minDec = minStr.includes('.') ? minStr.length - minStr.indexOf('.') - 1 : 0;
+          const maxDec = maxStr.includes('.') ? maxStr.length - maxStr.indexOf('.') - 1 : 0;
+          const decimals = Math.max(minDec, maxDec);
+          const factor = Math.pow(10, decimals);
+          let val = Math.round((min + (max - min) * r) * factor) / factor;
+          if (sign === '-') val = -val;
+          if (applyCorruptedScale) {
+            val = Math.round(val * corruptedRangeScalar * factor) / factor;
+          }
+          if (catMult !== 1) {
+            val = Math.trunc(val * catMult * factor + Math.sign(val) * 1e-9) / factor;
+          }
+          const formatted = decimals > 0 ? val.toFixed(decimals).replace(/\.?0+$/, '') : String(val);
+          return sign === '+' && val > 0 ? `+${formatted}` : formatted;
+        },
+      );
+      interpolated = interpolateModRanges(preScaled, modRangeOverride);
+    } else {
+      interpolated = interpolateModRanges(rawLine, modRangeOverride);
     }
     const normalized = normalizeStatLineToEn(interpolated);
     return normalized || null;

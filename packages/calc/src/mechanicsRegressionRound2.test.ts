@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createEmptyBuild,
   getGemsForGame,
+  getPoe1SpectreProfile,
   hydrateCompactTree,
   registerGemsData,
   resolveGemFromPobRef,
@@ -1802,6 +1803,31 @@ Gain 5% of Maximum Mana as Extra Maximum Energy Shield
 //Hits have 10% chance to deal 50% more Area Damage
 //+40 to Strength and Intelligence`);
       expect(parsed?.explicits).toEqual(['Gain 5% of Maximum Mana as Extra Maximum Energy Shield']);
+
+      // Wave 6D: Catalyst scaling must ONLY scale `(min-max)` range values, NEVER fixed `per N` divisors
+      const whispers = parseItemText(`Rarity: UNIQUE
+Whispers of Infinity
+Seaglass Amulet
+Catalyst: Noxious
+CatalystQuality: 20
+Implicits: 0
+{tags:attack,chaos_damage}{range:1}(5-10) to (20-25) Added Attack Chaos Damage per 100 Maximum Mana`);
+      expect(whispers?.explicits).toEqual([
+        '12 to 30 Added Attack Chaos Damage per 100 Maximum Mana',
+      ]);
+
+      // Wave 6D: Upstream PoE 1 Spectre profile lookup (by Metadata ID and display name)
+      expect(
+        getPoe1SpectreProfile('Metadata/Monsters/LeagueCrucible/Cold/Pyromaniac'),
+      ).toMatchObject({
+        name: 'Forged Frostbearer',
+        damageMult: 1.4,
+        attackTime: 1.5,
+      });
+      expect(getPoe1SpectreProfile('Perfect Pain Artist')).toMatchObject({
+        id: 'Metadata/Monsters/LeagueAzmeri/SpecialCorpses/CasterDemonHigh',
+        damageMult: 1.25,
+      });
     });
 
     it('hydrates off-hand shield attacks with 100% attackDamageMultiplierPct/damageEffectivenessPct and Retaliation cannotBeExerted', () => {
