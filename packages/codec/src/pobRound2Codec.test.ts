@@ -542,5 +542,26 @@ Bismuth Flask
     expect(multiBuild.activeItemSetIndex).toBe(2);
     expect(multiBuild.equipped.Amulet).toBeDefined();
     expect(multiBuild.config.customMods).toBe('25% more Damage');
+
+    // Wave 6K: PoE 2 explicit corrupted="false" on level=21 quality=23 gem decodes strictly as false
+    const poe2UncorruptedXml = `<?xml version="1.0" encoding="UTF-8"?>
+<PathOfBuilding2>
+  <Build className="Witch" ascendClassName="Infernalist" level="95" mainSocketGroup="1" />
+  <Tree activeSpec="1"><Spec title="Default" nodes="1" /></Tree>
+  <Skills activeSkillSet="1">
+    <SkillSet id="1">
+      <Skill enabled="true">
+        <Gem nameSpec="Comet" level="21" quality="23" corrupted="false" enabled="true" />
+      </Skill>
+    </SkillSet>
+  </Skills>
+  <Items />
+  <Config />
+</PathOfBuilding2>`;
+    const poe2Uncorrupted = xmlToBuild(poe2UncorruptedXml);
+    const cometGem = poe2Uncorrupted.skills[0]!.gems[0]!;
+    expect(cometGem.level).toBe(21);
+    expect(cometGem.quality).toBe(23);
+    expect((cometGem as unknown as { corrupted?: boolean }).corrupted).toBe(false);
   });
 });

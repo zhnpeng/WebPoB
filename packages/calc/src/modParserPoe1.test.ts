@@ -1767,4 +1767,26 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       expect.objectContaining({ name: 'SocketedGemLevel:support', type: 'BASE', value: -2 }),
     ]);
   });
+
+  it('Wave 6K: PascalCase stat-name normalization for lowercase custom mods and optional Damage suffix in taken-as', () => {
+    expect(parseModLine('adds 2037 to 2037 fire damage', 'Custom')).toEqual([
+      expect.objectContaining({ name: 'FireMin', type: 'BASE', value: 2037 }),
+      expect.objectContaining({ name: 'FireMax', type: 'BASE', value: 2037 }),
+    ]);
+    expect(parseModLine('+35% to lightning resistance', 'Custom')).toEqual([
+      expect.objectContaining({ name: 'LightningResist', type: 'BASE', value: 35 }),
+    ]);
+    expect(parseModLine('+35% to chaos resistance', 'Custom')).toEqual([
+      expect.objectContaining({ name: 'ChaosResist', type: 'BASE', value: 35 }),
+    ]);
+    expect(parseModLine('15% increased light radius', 'Custom')).toEqual([
+      expect.objectContaining({ name: 'LightRadius', type: 'INC', value: 15 }),
+    ]);
+    expect(parseModLine('40% of Physical damage taken as Fire', 'Custom')).toEqual([
+      expect.objectContaining({ name: 'PhysicalDamageTakenAsFire', type: 'BASE', value: 40 }),
+    ]);
+    expect(parseModLine('25% of Physical Damage from Hits taken as fire', 'Custom')).toEqual([
+      expect.objectContaining({ name: 'PhysicalDamageTakenAsFire', type: 'BASE', value: 25 }),
+    ]);
+  });
 });

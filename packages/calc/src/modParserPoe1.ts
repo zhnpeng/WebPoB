@@ -763,7 +763,7 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
     build: (m, src) => [mkMod('ManaReservationEfficiency', 'INC', Number(m[1]), src)],
   },
   {
-    pattern: /^(\d+)% of Physical Damage from Hits taken as (Fire|Cold|Lightning|Chaos) Damage$/i,
+    pattern: /^(\d+)% of Physical Damage from Hits taken as (Fire|Cold|Lightning|Chaos)(?: Damage)?$/i,
     build: (m, src) => [mkMod(`PhysicalDamageTakenAs${capFirst(m[2]!)}`, 'BASE', Number(m[1]), src)],
   },
   {
@@ -1190,7 +1190,18 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
   },
   {
     pattern: /^(\d+)% increased (Valour gained|Elusive Effect|Blind Effect|Light Radius|Mirage Archer Duration)$/i,
-    build: (m, src) => [mkMod(m[2]!.replace(/\s+/g, ''), 'INC', Number(m[1]), src)],
+    build: (m, src) => [
+      mkMod(
+        m[2]!
+          .trim()
+          .split(/\s+/)
+          .map((w) => capFirst(w))
+          .join(''),
+        'INC',
+        Number(m[1]),
+        src,
+      ),
+    ],
   },
   {
     pattern: /^\+?(\d+)% to Item Rarity$/i,

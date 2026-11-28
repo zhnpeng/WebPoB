@@ -680,7 +680,7 @@ function matchPostPeelStructural(state: PeelState, source: string): Mod[] | null
 
   // Dual-element Damage Taken As (e.g. Purity of Fire Watcher's Eye: "15% of Cold and Lightning Damage taken as Fire Damage")
   m = s.match(
-    /^(\d+(?:\.\d+)?)% of (Physical|Fire|Cold|Lightning|Chaos) and (Physical|Fire|Cold|Lightning|Chaos) Damage(?: from Hits)? taken as (Physical|Fire|Cold|Lightning|Chaos) Damage$/i,
+    /^(\d+(?:\.\d+)?)% of (Physical|Fire|Cold|Lightning|Chaos) and (Physical|Fire|Cold|Lightning|Chaos) Damage(?: from Hits)? taken as (Physical|Fire|Cold|Lightning|Chaos)(?: Damage)?$/i,
   );
   if (m) {
     const val = Number(m[1]);
@@ -695,7 +695,7 @@ function matchPostPeelStructural(state: PeelState, source: string): Mod[] | null
 
   // Damage Taken As
   m = s.match(
-    /^(\d+(?:\.\d+)?)% of (Physical|Fire|Cold|Lightning|Elemental) Damage(?: from Hits)? taken as (Physical|Fire|Cold|Lightning|Chaos) Damage$/i,
+    /^(\d+(?:\.\d+)?)% of (Physical|Fire|Cold|Lightning|Elemental) Damage(?: from Hits)? taken as (Physical|Fire|Cold|Lightning|Chaos)(?: Damage)?$/i,
   );
   if (m) {
     const src = capFirst(m[2]!);

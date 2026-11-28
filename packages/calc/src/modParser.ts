@@ -16,6 +16,10 @@ function mkMod(
   return { name, type, value, flags, keywordFlags, source };
 }
 
+function capWord(s: string): string {
+  return s.length > 0 ? s[0]!.toUpperCase() + s.slice(1).toLowerCase() : s;
+}
+
 interface ParserRule {
   pattern: RegExp;
   build: (match: RegExpMatchArray, source: string) => Mod[];
@@ -1076,7 +1080,7 @@ const PARSER_RULES: ParserRule[] = [
   },
   {
     pattern: /^([+-]?\d+)% to maximum (Fire|Cold|Lightning|Chaos) Resistance$/i,
-    build: (m, src) => [mkMod(`${m[2]}ResistMax`, 'BASE', Number(m[1]), src)],
+    build: (m, src) => [mkMod(`${capWord(m[2]!)}ResistMax`, 'BASE', Number(m[1]), src)],
   },
   {
     pattern: /^Your Maximum Resistances are (\d+)%$/i,
@@ -1085,13 +1089,13 @@ const PARSER_RULES: ParserRule[] = [
   {
     pattern: /^\+(\d+)% to (Fire|Cold|Lightning|Chaos) and (Fire|Cold|Lightning|Chaos) Resistances$/i,
     build: (m, src) => [
-      mkMod(`${m[2]}Resist`, 'BASE', Number(m[1]), src),
-      mkMod(`${m[3]}Resist`, 'BASE', Number(m[1]), src),
+      mkMod(`${capWord(m[2]!)}Resist`, 'BASE', Number(m[1]), src),
+      mkMod(`${capWord(m[3]!)}Resist`, 'BASE', Number(m[1]), src),
     ],
   },
   {
     pattern: /^([+-]?\d+)% to (Fire|Cold|Lightning|Chaos) Resistance$/i,
-    build: (m, src) => [mkMod(`${m[2]}Resist`, 'BASE', Number(m[1]), src)],
+    build: (m, src) => [mkMod(`${capWord(m[2]!)}Resist`, 'BASE', Number(m[1]), src)],
   },
   // Block, Suppression, Regen, Move Speed, Accuracy
   {
@@ -1130,32 +1134,32 @@ const PARSER_RULES: ParserRule[] = [
   {
     pattern: /^Adds (\d+) to (\d+) (Physical|Fire|Cold|Lightning|Chaos) Damage to Spells$/i,
     build: (m, src) => [
-      mkMod(`${m[3]}Min`, 'BASE', Number(m[1]), src, ModFlag.Spell),
-      mkMod(`${m[3]}Max`, 'BASE', Number(m[2]), src, ModFlag.Spell),
+      mkMod(`${capWord(m[3]!)}Min`, 'BASE', Number(m[1]), src, ModFlag.Spell),
+      mkMod(`${capWord(m[3]!)}Max`, 'BASE', Number(m[2]), src, ModFlag.Spell),
     ],
   },
   {
     pattern: /^Adds (\d+) to (\d+) (Physical|Fire|Cold|Lightning|Chaos) Damage to Attacks$/i,
     build: (m, src) => [
-      mkMod(`${m[3]}Min`, 'BASE', Number(m[1]), src, ModFlag.Attack),
-      mkMod(`${m[3]}Max`, 'BASE', Number(m[2]), src, ModFlag.Attack),
+      mkMod(`${capWord(m[3]!)}Min`, 'BASE', Number(m[1]), src, ModFlag.Attack),
+      mkMod(`${capWord(m[3]!)}Max`, 'BASE', Number(m[2]), src, ModFlag.Attack),
     ],
   },
   {
     pattern: /^Adds (\d+) to (\d+) (Physical|Fire|Cold|Lightning|Chaos) Damage$/i,
     build: (m, src) => [
-      mkMod(`${m[3]}Min`, 'BASE', Number(m[1]), src),
-      mkMod(`${m[3]}Max`, 'BASE', Number(m[2]), src),
+      mkMod(`${capWord(m[3]!)}Min`, 'BASE', Number(m[1]), src),
+      mkMod(`${capWord(m[3]!)}Max`, 'BASE', Number(m[2]), src),
     ],
   },
   // Damage Conversion & Gained as Extra
   {
     pattern: /^(\d+)% of Physical Damage Converted to (Fire|Cold|Lightning|Chaos) Damage$/i,
-    build: (m, src) => [mkMod(`PhysicalDamageConvertTo${m[2]}`, 'BASE', Number(m[1]), src)],
+    build: (m, src) => [mkMod(`PhysicalDamageConvertTo${capWord(m[2]!)}`, 'BASE', Number(m[1]), src)],
   },
   {
     pattern: /^(\d+)% of (Cold|Lightning) Damage Converted to (Fire|Cold|Lightning|Chaos) Damage$/i,
-    build: (m, src) => [mkMod(`${m[2]}DamageConvertTo${m[3]}`, 'BASE', Number(m[1]), src)],
+    build: (m, src) => [mkMod(`${capWord(m[2]!)}DamageConvertTo${capWord(m[3]!)}`, 'BASE', Number(m[1]), src)],
   },
   {
     pattern: /^(\d+)% of Fire Damage Converted to Chaos Damage$/i,
@@ -1182,7 +1186,7 @@ const PARSER_RULES: ParserRule[] = [
   {
     pattern: /^(\d+)% increased (Spell )?Damage per (Power|Frenzy|Endurance) Charge$/i,
     build: (m, src) => [
-      mkMod(`DamagePer${m[3]}Charge`, 'BASE', Number(m[1]), src, m[2] ? ModFlag.Spell : 0),
+      mkMod(`DamagePer${capWord(m[3]!)}Charge`, 'BASE', Number(m[1]), src, m[2] ? ModFlag.Spell : 0),
     ],
   },
   {
@@ -1193,7 +1197,7 @@ const PARSER_RULES: ParserRule[] = [
     pattern: /^(\d+)% increased (Attack|Cast) Speed per (Frenzy|Power) Charge$/i,
     build: (m, src) => [
       mkMod(
-        `SpeedPer${m[3]}Charge`,
+        `SpeedPer${capWord(m[3]!)}Charge`,
         'BASE',
         Number(m[1]),
         src,
@@ -1209,7 +1213,7 @@ const PARSER_RULES: ParserRule[] = [
         scope === 'spell' ? ModFlag.Spell : scope === 'attack' ? ModFlag.Attack : 0;
       return [
         mkMod(
-          `DamagePerAttr:${m[4]}:${scope}`,
+          `DamagePerAttr:${capWord(m[4]!)}:${scope}`,
           'BASE',
           Number(m[1]) / Number(m[3]),
           src,
@@ -1221,31 +1225,31 @@ const PARSER_RULES: ParserRule[] = [
   {
     pattern: /^Adds (\d+) to (\d+) (Fire|Cold|Lightning|Physical|Chaos) Damage (?:to Attacks )?per (\d+) (Strength|Dexterity|Intelligence)$/i,
     build: (m, src) => [
-      mkMod(`FlatMinPerAttr:${m[3]}:${m[5]}`, 'BASE', Number(m[1]) / Number(m[4]), src),
-      mkMod(`FlatMaxPerAttr:${m[3]}:${m[5]}`, 'BASE', Number(m[2]) / Number(m[4]), src),
+      mkMod(`FlatMinPerAttr:${capWord(m[3]!)}:${capWord(m[5]!)}`, 'BASE', Number(m[1]) / Number(m[4]), src),
+      mkMod(`FlatMaxPerAttr:${capWord(m[3]!)}:${capWord(m[5]!)}`, 'BASE', Number(m[2]) / Number(m[4]), src),
     ],
   },
   {
     pattern: /^(\d+(?:\.\d+)?)% of (?:Physical |Attack |Spell |Elemental |Fire |Cold |Lightning |Chaos )?Damage Leeched as (Life|Energy Shield|Mana)$/i,
     build: (m, src) => [
-      mkMod(`${m[2] === 'Energy Shield' ? 'Es' : m[2]}Leech`, 'BASE', Number(m[1]), src),
+      mkMod(`${m[2]!.toLowerCase() === 'energy shield' ? 'Es' : capWord(m[2]!)}Leech`, 'BASE', Number(m[1]), src),
     ],
   },
   {
     pattern: /^(\d+)% increased Maximum total (Life|Energy Shield) Recovery per second from Leech$/i,
     build: (m, src) => [
-      mkMod(`${m[2] === 'Energy Shield' ? 'Es' : 'Life'}MaxLeechRateInc`, 'INC', Number(m[1]), src),
+      mkMod(`${m[2]!.toLowerCase() === 'energy shield' ? 'Es' : 'Life'}MaxLeechRateInc`, 'INC', Number(m[1]), src),
     ],
   },
   {
     pattern: /^Gain (\d+)% of Damage as Extra (Fire|Cold|Lightning|Chaos) Damage per (\d+) Maximum Mana$/i,
     build: (m, src) => [
-      mkMod(`SpellGainAs${m[2]}PerMana100`, 'BASE', (Number(m[1]) * 100) / Math.max(1, Number(m[3])), src, ModFlag.Spell),
+      mkMod(`SpellGainAs${capWord(m[2]!)}PerMana100`, 'BASE', (Number(m[1]) * 100) / Math.max(1, Number(m[3])), src, ModFlag.Spell),
     ],
   },
   {
     pattern: /^Gain (\d+)% of Damage as Extra (Fire|Cold|Lightning|Chaos) Damage$/i,
-    build: (m, src) => [mkMod(`DamageGainAs${m[2]}`, 'BASE', Number(m[1]), src)],
+    build: (m, src) => [mkMod(`DamageGainAs${capWord(m[2]!)}`, 'BASE', Number(m[1]), src)],
   },
   {
     pattern: /^Gain (\d+)% of Damage as Extra Elemental Damage$/i,
@@ -1257,7 +1261,7 @@ const PARSER_RULES: ParserRule[] = [
   },
   {
     pattern: /^Gain (\d+)% of Physical Damage as Extra (Fire|Cold|Lightning|Chaos) Damage$/i,
-    build: (m, src) => [mkMod(`PhysicalDamageGainAs${m[2]}`, 'BASE', Number(m[1]), src)],
+    build: (m, src) => [mkMod(`PhysicalDamageGainAs${capWord(m[2]!)}`, 'BASE', Number(m[1]), src)],
   },
   {
     pattern: /^Gain (\d+)% of Elemental Damage as Extra Chaos Damage$/i,
@@ -1451,14 +1455,14 @@ const PARSER_RULES: ParserRule[] = [
     pattern: /^Damage Penetrates (\d+)% (Fire|Cold|Lightning|Chaos|Elemental) Resistance$/i,
     build: (m, src) => {
       const v = Number(m[1]);
-      if (m[2] === 'Elemental') {
+      if (m[2]!.toLowerCase() === 'elemental') {
         return [
           mkMod('FirePenetration', 'BASE', v, src),
           mkMod('ColdPenetration', 'BASE', v, src),
           mkMod('LightningPenetration', 'BASE', v, src),
         ];
       }
-      return [mkMod(`${m[2]}Penetration`, 'BASE', v, src)];
+      return [mkMod(`${capWord(m[2]!)}Penetration`, 'BASE', v, src)];
     },
   },
   // Iconic Keystones
@@ -1493,7 +1497,7 @@ const PARSER_RULES: ParserRule[] = [
   // Ailments & Damage over Time (Ignite / Bleed / Poison)
   {
     pattern: /^\+(\d+)% to (Fire|Cold|Chaos|Physical) Damage over Time Multiplier$/i,
-    build: (m, src) => [mkMod(`${m[2]}DotMultiplier`, 'BASE', Number(m[1]), src)],
+    build: (m, src) => [mkMod(`${capWord(m[2]!)}DotMultiplier`, 'BASE', Number(m[1]), src)],
   },
   {
     pattern: /^\+(\d+)% to Damage over Time Multiplier$/i,
@@ -1555,7 +1559,7 @@ const PARSER_RULES: ParserRule[] = [
   // Curses & Marks (Enemy debuffs)
   {
     pattern: /^Cursed enemies have ([+-]?\d+)% to (Fire|Cold|Lightning|Chaos) Resistance$/i,
-    build: (m, src) => [mkMod(`Enemy${m[2]}Resist`, 'BASE', Number(m[1]), src)],
+    build: (m, src) => [mkMod(`Enemy${capWord(m[2]!)}Resist`, 'BASE', Number(m[1]), src)],
   },
   {
     pattern: /^Cursed enemies have ([+-]?\d+)% to Elemental Resistances$/i,
@@ -1817,7 +1821,7 @@ const PARSER_RULES: ParserRule[] = [
   },
   {
     pattern: /^\+(\d+) to Minimum (Power|Frenzy|Endurance) Charges?$/i,
-    build: (m, src) => [mkMod(`Min${m[2]}Charges`, 'BASE', Number(m[1]), src)],
+    build: (m, src) => [mkMod(`Min${capWord(m[2]!)}Charges`, 'BASE', Number(m[1]), src)],
   },
   {
     pattern: /^\+(\d+) to Maximum Power Charges and Maximum Endurance Charges$/i,
@@ -1828,7 +1832,7 @@ const PARSER_RULES: ParserRule[] = [
   },
   {
     pattern: /^Nearby Enemies have ([+-]?\d+)% to (Fire|Cold|Lightning|Chaos) Resistance$/i,
-    build: (m, src) => [mkMod(`Enemy${m[2]}Resist`, 'BASE', Number(m[1]), src)],
+    build: (m, src) => [mkMod(`Enemy${capWord(m[2]!)}Resist`, 'BASE', Number(m[1]), src)],
   },
   {
     pattern: /^Taunt on Hit$/i,
@@ -1969,7 +1973,7 @@ const PARSER_RULES: ParserRule[] = [
   },
   {
     pattern: /^\+(\d+) to Maximum (Power|Frenzy|Endurance) Charges?$/i,
-    build: (m, src) => [mkMod(`Max${m[2]}Charges`, 'BASE', Number(m[1]), src)],
+    build: (m, src) => [mkMod(`Max${capWord(m[2]!)}Charges`, 'BASE', Number(m[1]), src)],
   },
   ...POE1_EXTRA_MOD_RULES,
   ...POE2_EXTRA_MOD_RULES,
