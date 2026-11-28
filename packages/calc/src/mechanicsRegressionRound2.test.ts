@@ -2047,5 +2047,69 @@ Implicits: 1
       expect(mambaDb.more('Damage', ModFlag.Attack | ModFlag.Melee | ModFlag.Ailment, KeywordFlag.Poison)).toBeCloseTo(0.8, 4);
       expect(mambaDb.more('Damage', ModFlag.Attack | ModFlag.Melee | ModFlag.Hit, 0)).toBeCloseTo(0.8, 4);
     });
+
+    it('certifies Wave 6K sdata boolean hydration, Eldritch FlaskEffect implicit parsing, and ModDB.more PowerCharge multiplier', () => {
+      // 1. Boolean/string sdata hydration (dotIsProjectile, dotIsArea, showAverage)
+      const prevPoe1 = getGemsForGame('poe1');
+      try {
+        const hydrated = registerGemsData('poe1', {
+          game: 'poe1',
+          count: 1,
+          gems: [
+            {
+              id: 'poe1_test_dot_proj',
+              en: 'Test Dot Proj',
+              cat: 'active',
+              color: 'green',
+              tags: ['Attack', 'Projectile', 'Chaos', 'Area'],
+              sdata: { dotIsProjectile: true, dotIsArea: true, showAverage: true, duration: 6 },
+            },
+          ],
+        });
+        const gem = hydrated.find((g) => g.id === 'poe1_test_dot_proj')!;
+        expect(gem.skillData?.dotIsProjectile).toBe(true);
+        expect(gem.skillData?.dotIsArea).toBe(true);
+        expect(gem.skillData?.showAverage).toBe(true);
+        expect(gem.skillData?.duration).toBe(6);
+      } finally {
+        setRegisteredGems('poe1', prevPoe1);
+      }
+
+      // 2. Eldritch Body Armour implicit ("Flasks applied to you have 13% increased Effect") preserved by itemParser
+      const wrathJack = parseItemText(
+        [
+          'Rarity: RARE',
+          'Wrath Jack',
+          'Necrotic Armour',
+          'Implicits: 4',
+          '{crafted}12% increased Explicit Defence Modifier magnitudes',
+          '{crafted}50% reduced Explicit Resistance Modifier magnitudes',
+          '1% less Damage Taken per 180 Intelligence',
+          'Flasks applied to you have 13% increased Effect',
+          '{fractured}8% increased Attributes',
+        ].join('\n'),
+        'poe1',
+      );
+      expect(wrathJack?.implicits).toContain('Flasks applied to you have 13% increased Effect');
+      expect(parseModLine('Flasks applied to you have 13% increased Effect', 'Body Armour')).toEqual([
+        expect.objectContaining({ name: 'FlaskEffect', type: 'INC', value: 13 }),
+      ]);
+
+      // 3. ModDB.more with Multiplier: PowerCharge (Inner Conviction: 3% more Spell Damage per Power Charge)
+      const icDb = new ModDB();
+      icDb.addMod({
+        name: 'Damage',
+        type: 'MORE',
+        value: 3,
+        flags: ModFlag.Spell,
+        keywordFlags: 0,
+        tags: [{ type: 'Multiplier', var: 'PowerCharge' }],
+        source: 'Timeless Keystone: Inner Conviction',
+      });
+      icDb.setEvalContext({ conditions: {}, multipliers: { PowerCharge: 10 }, stats: {} });
+      expect(icDb.more('Damage', ModFlag.Spell | ModFlag.Hit, 0)).toBeCloseTo(1.3, 4);
+      expect(icDb.more('Damage', ModFlag.Spell | ModFlag.Dot, 0)).toBeCloseTo(1.3, 4);
+      expect(icDb.more('Damage', ModFlag.Attack | ModFlag.Hit, 0)).toBe(1);
+    });
   });
 });

@@ -133,7 +133,7 @@ export interface CompactGemEntry {
   st?: string[];
   cmods?: CompactCompiledMod[];
   qmods?: CompactCompiledMod[];
-  sdata?: Record<string, number>;
+  sdata?: Record<string, number | boolean | string>;
   mb?: CompactMinionBase;
   qs?: Array<{ t: string; q: number }> | Record<string, never>;
   ls?: Record<string, CompactGemLevelEntry>;
@@ -555,10 +555,12 @@ function hydrateCompiledMods(
   });
 }
 
-function hydrateSkillData(sdata?: Record<string, number>): Record<string, number> | undefined {
+function hydrateSkillData(
+  sdata?: Record<string, number | boolean | string>,
+): Record<string, number> | undefined {
   if (!sdata || typeof sdata !== 'object' || Array.isArray(sdata)) return undefined;
   if (Object.keys(sdata).length === 0) return undefined;
-  return { ...sdata };
+  return { ...sdata } as Record<string, number>;
 }
 
 function hydrateMinionBase(mb?: CompactMinionBase): GemDefinition['minionBase'] | undefined {
