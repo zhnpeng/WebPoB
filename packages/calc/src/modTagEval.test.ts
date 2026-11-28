@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { Mod, ModTag } from '@webpob/core';
+import type { GemDefinition, Mod, ModTag } from '@webpob/core';
 import { ModDB } from './modDb.js';
+import { resolveSupportGemLevelBonus } from './gemBonus.js';
 import {
   applyModTagEval,
   createEmptyEvalContext,
@@ -1361,5 +1362,97 @@ describe('parseConditionalSuffix', () => {
     expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'AtCloseRange' }] }), ctxClose).active).toBe(false);
     ctxClose.stats.EnemyDistance = 10;
     expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'AtCloseRange' }] }), ctxClose).active).toBe(true);
+  });
+
+  it('evaluates Focused Channelling ChannellingTime without flooring and with limitTotal, plus PoE 1 Multiplier/Condition aliases (Wave 6E)', () => {
+    const fcMod = makeMod({
+      type: 'MORE',
+      value: 24,
+      tags: [{ type: 'Multiplier', var: 'ChannellingTime', limit: 60 }],
+    });
+    const ctx = createEmptyEvalContext();
+    ctx.multipliers.ChannellingTime = 2.5;
+    expect(applyModTagEval(24, evaluateModTags(fcMod, ctx))).toBeCloseTo(60, 5);
+    ctx.multipliers.ChannellingTime = 4;
+    expect(applyModTagEval(24, evaluateModTags(fcMod, ctx))).toBeCloseTo(60, 5);
+
+    ctx.multipliers.PowerCharge = 10;
+    ctx.multipliers.Intensity = 4;
+    ctx.multipliers.SustainableTraumaStacks = 18;
+    ctx.multipliers.WitheredStacks = 15;
+    ctx.multipliers.VirulenceStacks = 40;
+    ctx.multipliers.CurseApplied = 2;
+    ctx.multipliers.EnemyChillEffect = 30;
+    ctx.multipliers.Fortification = 25;
+    ctx.multipliers.RemovablePowerCharge = 3;
+    ctx.multipliers.RemovableFrenzyCharge = 4;
+    ctx.multipliers.RemovableEnduranceCharge = 5;
+    ctx.multipliers.ChainRemaining = 3;
+    ctx.conditions.KilledRecently = true;
+    ctx.conditions.HaveMaximumRage = true;
+
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Multiplier', var: 'PowerCharges' }] }), ctx).scale).toBe(10);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Multiplier', var: 'IntensityStacks' }] }), ctx).scale).toBe(4);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Multiplier', var: 'TraumaStack' }] }), ctx).scale).toBe(18);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Multiplier', var: 'WitheredStack' }] }), ctx).scale).toBe(15);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Multiplier', var: 'VirulenceStack' }] }), ctx).scale).toBe(40);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Multiplier', var: 'CurseOnEnemy' }] }), ctx).scale).toBe(2);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Multiplier', var: 'ChillEffect' }] }), ctx).scale).toBe(30);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Multiplier', var: 'RemovableFortification' }] }), ctx).scale).toBe(25);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Multiplier', var: 'RemovableTotalCharges' }] }), ctx).scale).toBe(12);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Multiplier', var: 'Chain' }] }), ctx).scale).toBe(3);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'KillRecently' }] }), ctx).active).toBe(true);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'AtMaxRage' }] }), ctx).active).toBe(true);
+  });
+
+  it('computes PoE 1 Empower/Enhance level-scaled bonuses before static compiledMods in gemBonus (Wave 6E)', () => {
+    const activeGem: GemDefinition = {
+      id: 'bodyswap',
+      game: 'poe1',
+      name: { en: 'Bodyswap', zh: '灵体转换' },
+      category: 'active',
+      color: 'blue',
+      tags: ['Spell', 'Fire'],
+      modFlags: 0,
+      keywordFlags: 0,
+      stats: [],
+    };
+    const supportTarget: GemDefinition = {
+      ...activeGem,
+      id: 'spell_totem',
+      name: { en: 'Spell Totem Support', zh: '法术图腾辅助' },
+      category: 'support',
+    };
+    const empower: GemDefinition = {
+      ...supportTarget,
+      id: 'empower',
+      name: { en: 'Empower Support', zh: '赋予辅助' },
+      compiledMods: [{ name: 'SupportedGemLevel', type: 'BASE', value: 2, flags: 0, keywordFlags: 0 }],
+    };
+    const awkEmpower: GemDefinition = {
+      ...empower,
+      id: 'awk_empower',
+      name: { en: 'Awakened Empower Support', zh: '觉醒赋予辅助' },
+      compiledMods: [{ name: 'SupportedGemLevel', type: 'BASE', value: 19, flags: 0, keywordFlags: 0 }],
+    };
+    const enhance: GemDefinition = {
+      ...supportTarget,
+      id: 'enhance',
+      name: { en: 'Enhance Support', zh: '增幅辅助' },
+      compiledMods: [{ name: 'SupportedGemQuality', type: 'BASE', value: 16, flags: 0, keywordFlags: 0 }],
+    };
+    const awkEnhance: GemDefinition = {
+      ...enhance,
+      id: 'awk_enhance',
+      name: { en: 'Awakened Enhance Support', zh: '觉醒增幅辅助' },
+      compiledMods: [{ name: 'SupportedGemQuality', type: 'BASE', value: 152, flags: 0, keywordFlags: 0 }],
+    };
+
+    expect(resolveSupportGemLevelBonus(empower, activeGem, 4)).toEqual({ levelBonus: 3, qualityBonus: 0 });
+    expect(resolveSupportGemLevelBonus(awkEmpower, activeGem, 5)).toEqual({ levelBonus: 4, qualityBonus: 0 });
+    expect(resolveSupportGemLevelBonus(enhance, activeGem, 4)).toEqual({ levelBonus: 0, qualityBonus: 24 });
+    expect(resolveSupportGemLevelBonus(awkEnhance, activeGem, 5)).toEqual({ levelBonus: 0, qualityBonus: 32 });
+    expect(resolveSupportGemLevelBonus(empower, supportTarget, 4)).toEqual({ levelBonus: 0, qualityBonus: 0 });
+    expect(resolveSupportGemLevelBonus(enhance, supportTarget, 4)).toEqual({ levelBonus: 0, qualityBonus: 0 });
   });
 });
