@@ -1956,6 +1956,101 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
       },
     ],
   },
+  // Wave 5A: Cinderswallow Urn, Doppelganger Guise (Sane/Insane), Per-Aura/Curse Effect, Wilma's Requital, Sandstorm Visage, Coruscating Elixir
+  {
+    pattern: /^Enemies Ignited by you(?: during Effect)? take (\d+)% increased Damage$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('EnemyDamageTaken', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'EnemyIgnited' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% less Physical and Chaos Damage taken while Sane$/i,
+    build: (m, src) => {
+      const val = -Number(m[1]);
+      const tags = [{ type: 'Condition' as const, var: 'Sane' }];
+      return [
+        { ...mkMod('PhysicalDamageTaken', 'MORE', val, src), tags },
+        { ...mkMod('ChaosDamageTaken', 'MORE', val, src), tags },
+      ];
+    },
+  },
+  {
+    pattern: /^(\d+)% increased Attack and Cast Speed while Insane$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Speed', 'INC', Number(m[1]), src, ModFlag.Attack | ModFlag.Spell),
+        tags: [{ type: 'Condition' as const, var: 'Insane' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% more Damage while Insane$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'MORE', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'Insane' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased Damage taken while Insane$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('DamageTaken', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'Insane' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% more Critical Strike Chance while Insane$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritChance', 'MORE', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'Insane' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased ([A-Z][a-zA-Z' ]+?) (Curse|Mark) Effect$/,
+    build: (m, src) => [
+      mkMod(`${m[3] === 'Mark' ? 'MarkEffect' : 'CurseEffect'}:${m[2]!.trim()}`, 'INC', Number(m[1]), src),
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased (Arctic Armour|Tempest Shield|Molten Shell|Steelskin|Immortal Call|Blood Rage|Righteous Fire) Buff Effect$/i,
+    build: (m, src) => [mkMod(`BuffEffect:${m[2]!.trim()}`, 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^(\d+)% more Minion Life$/i,
+    build: (m, src) => [mkMod('MinionLife', 'MORE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Increases and Reductions to Cast Speed apply to Attack Speed$/i,
+    build: (_, src) => [mkMod('CastSpeedAppliesToAttackSpeed', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^(\d+)% increased Armour from Equipped Helmet and Gloves$/i,
+    build: (m, src) => [mkMod('ArmourFromHelmetAndGloves', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Cannot deal Critical Strikes with Attacks$/i,
+    build: (_, src) => [mkMod('NeverCrit', 'FLAG', true, src, ModFlag.Attack)],
+  },
+  {
+    pattern: /^Chaos Damage taken does not bypass Energy Shield(?: during effect)?$/i,
+    build: (_, src) => [mkMod('ChaosDamageDoesNotBypassES', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^(\d+)% of Non-Chaos Damage taken bypasses Energy Shield$/i,
+    build: (m, src) => [mkMod('NonChaosDamageBypassesES', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^You cannot have more than (\d+) Summoned Totems of the same type$/i,
+    build: (m, src) => [mkMod('ActiveTotemLimit', 'MAX', Number(m[1]), src)],
+  },
 ];
 
 /**

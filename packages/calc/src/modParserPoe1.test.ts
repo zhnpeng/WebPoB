@@ -1333,4 +1333,43 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       }),
     ]);
   });
+
+  it('Wave 5A: Cinderswallow Urn, Doppelganger Guise (Sane/Insane), Per-Aura/Curse Effect & High-Freq Uniques', () => {
+    expect(
+      parseModLine('Enemies Ignited by you during Effect take 7% increased Damage', 'Item: Cinderswallow Urn'),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'EnemyDamageTaken',
+        type: 'INC',
+        value: 7,
+        tags: [{ type: 'Condition', var: 'EnemyIgnited' }],
+      }),
+    ]);
+    expect(
+      parseModLine('40% less Physical and Chaos Damage taken while Sane', 'Item: Doppelganger Guise'),
+    ).toEqual([
+      expect.objectContaining({ name: 'PhysicalDamageTaken', type: 'MORE', value: -40 }),
+      expect.objectContaining({ name: 'ChaosDamageTaken', type: 'MORE', value: -40 }),
+    ]);
+    expect(parseModLine('40% more Damage while Insane', 'Item: Doppelganger Guise')).toEqual([
+      expect.objectContaining({
+        name: 'Damage',
+        type: 'MORE',
+        value: 40,
+        tags: [{ type: 'Condition', var: 'Insane' }],
+      }),
+    ]);
+    expect(parseModLine('40% increased Vulnerability Curse Effect', 'Item: Helmet')).toEqual([
+      expect.objectContaining({ name: 'CurseEffect:Vulnerability', type: 'INC', value: 40 }),
+    ]);
+    expect(
+      parseModLine('Increases and Reductions to Cast Speed apply to Attack Speed', "Item: Wilma's Requital"),
+    ).toEqual([expect.objectContaining({ name: 'CastSpeedAppliesToAttackSpeed', type: 'FLAG', value: true })]);
+    expect(parseModLine('Cannot deal Critical Strikes with Attacks', 'Item: Sandstorm Visage')).toEqual([
+      expect.objectContaining({ name: 'NeverCrit', type: 'FLAG', value: true }),
+    ]);
+    expect(
+      parseModLine('Chaos Damage taken does not bypass Energy Shield during effect', 'Item: Coruscating Elixir'),
+    ).toEqual([expect.objectContaining({ name: 'ChaosDamageDoesNotBypassES', type: 'FLAG', value: true })]);
+  });
 });
