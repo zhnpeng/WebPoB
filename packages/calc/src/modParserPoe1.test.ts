@@ -1537,4 +1537,17 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       parseModLine('Maximum Energy Shield is increased by Chaos Resistance', "Item: Foulborn Saffell's Frame"),
     ).toEqual([expect.objectContaining({ name: 'EsIncreasedByChaosRes', type: 'FLAG', value: true })]);
   });
+
+  it('Wave 6B: Svalinn Block Lucky, ES Overleech, Buff Effect & Per-Skill MRE', () => {
+    expect(parseModLine('Chance to Block is Lucky', 'Item: Svalinn')).toEqual([
+      expect.objectContaining({ name: 'BlockChanceIsLucky', type: 'FLAG', value: true }),
+      expect.objectContaining({ name: 'SpellBlockChanceIsLucky', type: 'FLAG', value: true }),
+    ]);
+    expect(parseModLine('Tempest Shield has 20% increased Buff Effect', 'Item: Body Armour')).toEqual([
+      expect.objectContaining({ name: 'BuffEffect:Tempest Shield', type: 'INC', value: 20 }),
+    ]);
+    expect(parseModLine('Malevolence has 31% increased Mana Reservation Efficiency', 'Item: Ring')).toEqual([
+      expect.objectContaining({ name: 'ManaReservationEfficiency:Malevolence', type: 'INC', value: 31 }),
+    ]);
+  });
 });

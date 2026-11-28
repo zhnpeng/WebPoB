@@ -2343,6 +2343,30 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
     pattern: /^Cover Enemies in Ash when they Hit you$/i,
     build: (_, src) => [mkMod('EnemyCoveredInAshOnHitYou', 'FLAG', true, src)],
   },
+  // Wave 6B: Svalinn Block Lucky, ES Overleech, Buff Effect & Per-Skill Mana Reservation Efficiency
+  {
+    pattern: /^Chance to Block is Lucky$/i,
+    build: (_, src) => [
+      mkMod('BlockChanceIsLucky', 'FLAG', true, src),
+      mkMod('SpellBlockChanceIsLucky', 'FLAG', true, src),
+    ],
+  },
+  {
+    pattern: /^Energy Shield Leech Effects from Attacks are not removed at Full Energy Shield$/i,
+    build: (_, src) => [mkMod('EsOverleech', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Maximum Recovery per Energy Shield Leech is Doubled$/i,
+    build: (_, src) => [mkMod('EsLeechMaxRecovery', 'MORE', 100, src)],
+  },
+  {
+    pattern: /^(Arctic Armour|Tempest Shield|Molten Shell|Steelskin|Immortal Call|Blood Rage|Righteous Fire) has (\d+)% increased Buff Effect$/i,
+    build: (m, src) => [mkMod(`BuffEffect:${m[1]!.trim()}`, 'INC', Number(m[2]), src)],
+  },
+  {
+    pattern: /^([A-Z][a-zA-Z' ]+?) has (\d+)% increased Mana Reservation Efficiency$/,
+    build: (m, src) => [mkMod(`ManaReservationEfficiency:${m[1]!.trim()}`, 'INC', Number(m[2]), src)],
+  },
 ];
 
 /**
