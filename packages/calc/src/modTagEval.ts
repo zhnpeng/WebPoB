@@ -327,6 +327,9 @@ function resolveMultiplierValue(varName: string, ctx?: ModEvalContext): number {
   if (varName === 'ActiveTotem' || varName === 'SummonedTotem' || varName === 'TotemsSummoned') {
     return ctx.multipliers.ActiveTotem ?? ctx.multipliers.SummonedTotem ?? ctx.multipliers.TotemsSummoned ?? 0;
   }
+  if (varName === 'NonInstantSpellCastRecently' || varName === 'DifferentSpellsCastRecently') {
+    return ctx.multipliers.NonInstantSpellCastRecently ?? ctx.multipliers.DifferentSpellsCastRecently ?? 0;
+  }
   if (varName === 'PoisonStacks' || varName === 'PoisonStack' || varName === 'PoisonOnEnemy') {
     return ctx.multipliers.PoisonStacks ?? ctx.multipliers.PoisonOnEnemy ?? ctx.multipliers.PoisonStack ?? 0;
   }
@@ -697,6 +700,10 @@ const SUFFIX_RULES: readonly SuffixRule[] = [
     regex: /\s*(?:,\s*)?for\s+every\s+different\s+Grenade\s+fired\s+in\s+the\s+past\s+\d+\s+seconds\s*$/i,
     toTag: () => ({ type: 'Multiplier', var: 'DifferentGrenadeFired' }),
   },
+  {
+    regex: /\s*(?:,\s*)?for\s+each\s+different\s+Spell\s+you(?:'ve|\s+have)\s+Cast\s+in\s+the\s+last\s+(?:\d+|eight)\s+seconds\s*$/i,
+    toTag: () => ({ type: 'Multiplier', var: 'NonInstantSpellCastRecently' }),
+  },
 
   // --- Conditions (negated first, then positive) ---
   {
@@ -991,6 +998,20 @@ const SUFFIX_RULES: readonly SuffixRule[] = [
     toTag: () => ({
       type: 'Condition',
       var: 'Bleeding|Poisoned|Ignited|Chilled|Frozen|Shocked|Electrocuted',
+    }),
+  },
+  {
+    regex: /\s*(?:,\s*)?if\s+you(?:'ve|\s+have)\s+consumed\s+an?\s+(Power|Frenzy|Endurance)\s+Charge\s+Recently\s*$/i,
+    toTag: (m) => ({
+      type: 'Condition',
+      var: `Consumed${m[1]![0]!.toUpperCase()}${m[1]!.slice(1).toLowerCase()}ChargeRecently`,
+    }),
+  },
+  {
+    regex: /\s*(?:,\s*)?if\s+you(?:'ve|\s+have)\s+gained\s+an?\s+(Power|Frenzy|Endurance)\s+Charge\s+Recently\s*$/i,
+    toTag: (m) => ({
+      type: 'Condition',
+      var: `Gained${m[1]![0]!.toUpperCase()}${m[1]!.slice(1).toLowerCase()}ChargeRecently`,
     }),
   },
 ];

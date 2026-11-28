@@ -1555,5 +1555,100 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
       expect(gemMatchesFilterKey(markMock, "sniper's+mark")).toBe(true);
       expect(gemMatchesFilterKey(markMock, 'sniper’s+mark')).toBe(true);
     });
+
+    it('parses Wave 4P PoE 2 mechanics (LifeCost Chaos Gain, Casting Cascade, One with the Storm, Totem AoE, Boon of the Beast, Eldritch Empowerment 0.4, Invigorating Archon, Catalysis)', () => {
+      expect(
+        parseModLine('Skills gain 1% of Damage as Chaos Damage per 3 Life Cost', 'Item'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'DamageGainAsChaos',
+          type: 'BASE',
+          value: 1,
+          tags: [{ type: 'PerStat', stat: 'LifeCost', div: 3 }],
+        }),
+      ]);
+      expect(
+        parseModLine(
+          "6% increased Cast Speed for each different Spell you've Cast in the last eight seconds",
+          'Tree: Casting Cascade',
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'Speed',
+          type: 'INC',
+          value: 6,
+          flags: ModFlag.Cast,
+          tags: [{ type: 'Multiplier', var: 'NonInstantSpellCastRecently' }],
+        }),
+      ]);
+      expect(
+        parseModLine(
+          'Quarterstaff Skills that consume Power Charges count as consuming an additional Power Charge',
+          'Tree: One with the Storm',
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'QuarterstaffSkillsConsumeAdditionalPowerCharge',
+          type: 'FLAG',
+          value: true,
+        }),
+      ]);
+      expect(
+        parseModLine('20% increased Area of Effect for Skills used by Totems', 'Tree: Mighty Trunk'),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'AreaOfEffect',
+          type: 'INC',
+          value: 20,
+          keywordFlags: KeywordFlag.Totem,
+        }),
+      ]);
+      expect(
+        parseModLine(
+          'Spells deal 30% more Damage when Sacrificing Energy Shield',
+          'Tree: Eldritch Empowerment',
+        ),
+      ).toEqual([
+        expect.objectContaining({ name: 'EldritchEmpowerment', type: 'FLAG', value: true }),
+      ]);
+      expect(
+        parseModLine(
+          'When you Shapeshift to Human form, gain 10% increased Spell Damage per second you were Shapeshifted, up to a maximum of 80%, for 8 seconds',
+          'Tree: Boon of the Beast',
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'Damage',
+          type: 'INC',
+          value: 10,
+          flags: ModFlag.Spell,
+        }),
+      ]);
+      expect(
+        parseModLine(
+          'Archon Buffs also grant +20% to all Elemental Resistances',
+          'Tree: Invigorating Archon',
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'ElementalResist',
+          type: 'BASE',
+          value: 20,
+          tags: [{ type: 'Condition', var: 'ArchonBuff' }],
+        }),
+      ]);
+      expect(
+        parseModLine(
+          '5% of Physical Damage from Hits taken as Damage of a Random Element',
+          'Tree: Catalysis',
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'PhysicalDamageTakenAsRandomElement',
+          type: 'BASE',
+          value: 5,
+        }),
+      ]);
+    });
   });
 });

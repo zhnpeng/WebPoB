@@ -1044,4 +1044,46 @@ describe('parseConditionalSuffix', () => {
       ).active,
     ).toBe(true);
   });
+
+  it('parses and evaluates Wave 4P suffixes (different Spells cast recently, consumed/gained Charge recently)', () => {
+    expect(
+      parseConditionalSuffix("6% increased Cast Speed for each different Spell you've Cast in the last eight seconds"),
+    ).toEqual({
+      baseLine: '6% increased Cast Speed',
+      tags: [{ type: 'Multiplier', var: 'NonInstantSpellCastRecently' }],
+    });
+    expect(
+      parseConditionalSuffix("20% increased Energy Shield if you've consumed a Power Charge Recently"),
+    ).toEqual({
+      baseLine: '20% increased Energy Shield',
+      tags: [{ type: 'Condition', var: 'ConsumedPowerChargeRecently' }],
+    });
+    expect(
+      parseConditionalSuffix("15% increased Attack Speed if you've gained a Frenzy Charge Recently"),
+    ).toEqual({
+      baseLine: '15% increased Attack Speed',
+      tags: [{ type: 'Condition', var: 'GainedFrenzyChargeRecently' }],
+    });
+
+    const ctx = createEmptyEvalContext();
+    ctx.multipliers.DifferentSpellsCastRecently = 3;
+    ctx.conditions.ConsumedPowerChargeRecently = true;
+    ctx.conditions.GainedFrenzyChargeRecently = true;
+
+    expect(
+      applyModTagEval(
+        6,
+        evaluateModTags(
+          makeMod({ value: 6, tags: [{ type: 'Multiplier', var: 'NonInstantSpellCastRecently' }] }),
+          ctx,
+        ),
+      ),
+    ).toBe(18);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'ConsumedPowerChargeRecently' }] }), ctx).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'GainedFrenzyChargeRecently' }] }), ctx).active,
+    ).toBe(true);
+  });
 });

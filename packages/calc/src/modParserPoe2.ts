@@ -104,6 +104,7 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     build: (_, src) => [
       mkMod('BloodMagic', 'FLAG', true, src),
       mkMod('ManaCostConvertToLife', 'BASE', 100, src),
+      mkMod('SkillManaCostConvertToLifeCost', 'BASE', 100, src),
     ],
   },
 
@@ -2247,6 +2248,10 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     ],
   },
   {
+    pattern: /^Spells deal (\d+)% more Damage when Sacrificing Energy Shield$/i,
+    build: (_, src) => [mkMod('EldritchEmpowerment', 'FLAG', true, src)],
+  },
+  {
     pattern: /^(\d+)% chance for (?:(Mace) )?(Slam|Strike) Skills you use yourself to cause (?:an additional )?Aftershocks?(?:, dealing.*)?$/i,
     build: (m, src) => [
       {
@@ -2384,6 +2389,87 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
   {
     pattern: /^Gain (\d+)% of maximum Life as Extra maximum Runic Ward$/i,
     build: (m, src) => [mkMod('LifeGainAsRunicWard', 'BASE', Number(m[1]), src)],
+  },
+  // Wave 4P: Blood Mage / Unique Chaos Gain per Life Cost & Additional Life Cost
+  {
+    pattern: /^Skills gain (\d+)% of Damage as (?:Extra )?(Physical|Fire|Cold|Lightning|Chaos) Damage per (\d+) Life Cost$/i,
+    build: (m, src) => [
+      {
+        ...mkMod(`DamageGainAs${m[2]}`, 'BASE', Number(m[1]), src),
+        tags: [{ type: 'PerStat', stat: 'LifeCost', div: Number(m[3]) }],
+      },
+    ],
+  },
+  {
+    pattern: /^Non-Channelling Spells cost an additional (\d+)% of your maximum Life$/i,
+    build: (m, src) => [mkMod('NonChannellingSpellLifeCostPct', 'BASE', Number(m[1]), src)],
+  },
+  // Casting Cascade (PoB 2 ConfigOptions.lua:1439)
+  {
+    pattern: /^(\d+)% (increased|reduced) Cast Speed for each different Spell you(?:'ve| have) Cast in the last (?:\d+|eight) seconds$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      return [
+        {
+          ...mkMod('Speed', type, value, src, ModFlag.Cast),
+          tags: [{ type: 'Multiplier', var: 'NonInstantSpellCastRecently' }],
+        },
+      ];
+    },
+  },
+  // One with the Storm: Quarterstaff Skills consuming Power Charges count as +1
+  {
+    pattern: /^Quarterstaff Skills that consume Power Charges count as consuming an additional Power Charge$/i,
+    build: (_, src) => [mkMod('QuarterstaffSkillsConsumeAdditionalPowerCharge', 'FLAG', true, src)],
+  },
+  // Totem Area of Effect / Mighty Trunk
+  {
+    pattern: /^(\d+)% (increased|reduced) Area of Effect for Skills used by Totems$/i,
+    build: (m, src) => {
+      const { type, value } = signedVal(m[1]!, m[2]!);
+      return [mkMod('AreaOfEffect', type, value, src, 0, KeywordFlag.Totem)];
+    },
+  },
+  // Boon of the Beast (Shapeshift to Human Spell Damage ramp)
+  {
+    pattern: /^When you Shapeshift to Human form, gain (\d+)% increased Spell Damage per second you were Shapeshifted, up to a maximum of (\d+)%, for \d+ seconds$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'INC', Number(m[1]), src, ModFlag.Spell),
+        tags: [
+          { type: 'Condition', var: 'ShapeshiftedToHumanRecently' },
+          {
+            type: 'Multiplier',
+            var: 'SecondsShapeshifted',
+            limit: Number(m[2]),
+            limitTotal: true,
+          } as unknown as ModTag,
+        ],
+      },
+    ],
+  },
+  // Invigorating Archon & Catalysis
+  {
+    pattern: /^Archon Buffs also grant \+(\d+)% to all Elemental Resistances$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('ElementalResist', 'BASE', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: 'ArchonBuff' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Archon Buffs also grant (\d+)% increased Movement Speed$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('MovementSpeed', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: 'ArchonBuff' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% of Physical Damage from Hits taken as Damage of a Random Element$/i,
+    build: (m, src) => [mkMod('PhysicalDamageTakenAsRandomElement', 'BASE', Number(m[1]), src)],
   },
   // Falcon Dive (PoB 2 ModParser.lua:1620): "1% increased Attack Speed per 400 Accuracy Rating, up to 20%"
   {
