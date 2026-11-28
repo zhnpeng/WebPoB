@@ -1488,5 +1488,26 @@ describe('skillActorRuntime — 5. PoB 1 & PoB 2 Ailment, Skill DoT, Routing & M
     });
     // Single-stack Poison = 0.30 * 1000 * 1.22 (average repeat) = 366
     expect(msPoisonRes.poison.singleStackDps).toBeCloseTo(366, 1);
+
+    // 4. Shaper of Flames Chaos Ignite inherits ancestor Lightning/Cold conversion-chain INC/MORE
+    const chaosIgnDb = new ModDB();
+    chaosIgnDb.addMod(mkMod('IgniteChance', 'BASE', 100));
+    chaosIgnDb.addMod(mkMod('ChaosCanIgnite', 'FLAG', true));
+    chaosIgnDb.addMod(mkMod('LightningDamageConvertToCold', 'BASE', 50));
+    chaosIgnDb.addMod(mkMod('LightningDamage', 'INC', 100));
+    chaosIgnDb.addMod(mkMod('ColdDamage', 'INC', 50));
+    chaosIgnDb.addMod(mkMod('ChaosDamage', 'INC', 50));
+    const chaosIgnRes = computeAuthenticAilmentAndSkillDots({
+      game: 'poe1',
+      skillDb: chaosIgnDb,
+      enemyDb: new ModDB(),
+      baseDamageByType: { Chaos: 1000 },
+      flags: ModFlag.Spell | ModFlag.Hit,
+      keywordFlags: KeywordFlag.Spell | KeywordFlag.Lightning | KeywordFlag.Hit,
+      speed: 1,
+      enemyConfig: { enemyFireResist: 0 },
+    });
+    // Total INC = 100 (Lightning) + 50 (Cold) + 50 (Chaos) = +200% (3.0x) -> 0.9 * 1000 * 3.0 = 2700
+    expect(chaosIgnRes.ignite.singleStackDps).toBeCloseTo(2700, 1);
   });
 });

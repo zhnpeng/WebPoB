@@ -3021,6 +3021,11 @@ export function computeAuthenticAilmentAndSkillDots(input: AuthenticDotInput): A
             const names = ['Damage', 'ElementalDamage', 'FireDamage', `${dt}Damage`, 'DotDamage', 'IgniteDamage'];
             if (dt === 'Cold' && !isNativeCold && isNativeLight && l2c > 0) {
               names.push('LightningDamage');
+            } else if (dt === 'Chaos') {
+              // PoB1 CalcOffence.lua:5154-5180 — Elemental-gained Chaos (e.g. Incandescent Heart / Atziri's Promise
+              // with Shaper of Flames) inherits ancestor Lightning/Cold damage modifiers along the conversion chain.
+              if (isNativeLight) names.push('LightningDamage');
+              if (isNativeCold || (isNativeLight && l2c > 0)) names.push('ColdDamage');
             }
             const inc = skillDb.sum('INC', names, ailmentDamageFlags, igniteKw);
             const more = skillDb.more(names, ailmentDamageFlags, igniteKw);
