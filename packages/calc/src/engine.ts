@@ -770,10 +770,14 @@ function calculateBuildSingleWeaponSet(build: Build): CalcOutput {
       },
     };
   });
+  const activeTreeNodesForRadius =
+    anointNodes.length > 0
+      ? new Set<number>([...activeTreeNodes, ...anointNodes.map((n) => n.id)])
+      : activeTreeNodes;
   const radiusJewelEval = evaluateRadiusAndDistanceJewels(
     scaledRadiusJewels,
     tree,
-    activeTreeNodes,
+    activeTreeNodesForRadius,
     classStartIdForRadius,
     clusterAdjacency.size > 0 ? clusterAdjacency : undefined,
     build.tree.nodeOverrides,
@@ -1184,7 +1188,7 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     const m = rawLine
       .trim()
       .match(
-        /^Has \+(\d+) to (Armour|Evasion Rating|maximum Energy Shield|maximum Life|maximum Mana) per player level$/i,
+        /^Has \+(\d+) to (Armour|Evasion Rating|maximum Energy Shield|maximum Life|maximum Mana|maximum Runic Ward|Runic Ward) per player level$/i,
       );
     if (!m) return rawLine;
     return `+${Number(m[1]) * level} to ${m[2]}`;
@@ -1934,7 +1938,7 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
   if (cfg.rawInputs?.bannerPlanted) {
     db.setCondition('BannerPlanted', true);
     if (build.game === 'poe1') {
-      const maxValour = 50 + db.sum('BASE', 'MaximumValour');
+      const maxValour = 50 + db.sum('BASE', ['MaximumValour', 'MaxValour']);
       const rawValour =
         typeof cfg.rawInputs.bannerValour === 'number' ? cfg.rawInputs.bannerValour : maxValour;
       const effValour = Math.max(0, Math.min(maxValour, rawValour));
@@ -2249,11 +2253,13 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
         db.setMultiplier('ScavengedPlatingStack', spStacks);
         db.setMultiplier('ScavengedPlatingStacks', spStacks);
       } else if (gn === 'trinity') {
-        const defaultRes = build.game === 'poe2' ? 10 : 50;
-        const rawRes = Number(cfg.rawInputs?.configResonanceCount ?? (build.game === 'poe2' ? 300 : 50));
+        const defaultRes = build.game === 'poe2' ? 0 : 50;
+        const rawRes = Number(cfg.rawInputs?.configResonanceCount ?? defaultRes);
         const effRes =
           build.game === 'poe2'
-            ? Math.max(0, Math.min(10, Math.floor((Number.isFinite(rawRes) ? rawRes : 300) / 30)))
+            ? cfg.rawInputs?.configResonanceCount === undefined
+              ? 0
+              : Math.max(0, Math.min(10, rawRes > 10 ? Math.floor(rawRes / 30) : Math.floor(rawRes)))
             : Math.max(0, Math.min(50, Number.isFinite(rawRes) ? rawRes : defaultRes));
         db.setMultiplier('ResonanceCount', effRes);
         db.setStat('ResonanceCount', effRes);
@@ -3977,6 +3983,9 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
   db.setStat('FireResistOverCap', fireOvercap);
   db.setStat('ColdResistOverCap', coldOvercap);
   db.setStat('LightningResistOverCap', lightOvercap);
+  db.setStat('FireResistOver75', Math.max(0, Math.min(fireRaw, fireMaxResist) - 75));
+  db.setStat('ColdResistOver75', Math.max(0, Math.min(coldRaw, coldMaxResist) - 75));
+  db.setStat('LightningResistOver75', Math.max(0, Math.min(lightningRaw, lightningMaxResist) - 75));
 
   if (db.flag('ArmourIncPerOvercappedFireRes') && fireRaw > fireMaxResist) {
     db.addMod({
@@ -4338,6 +4347,7 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
   const maxSpellBlock = Math.min(90, Math.max(0, ruleset.maxBlockChance + Math.round(db.sum('BASE', 'SpellBlockChanceMax'))));
   const rawAttackBlock = db.calcStat('BlockChance').total;
   const blockChance = Math.min(maxAttackBlock, Math.max(0, Math.floor(rawAttackBlock + 1e-6)));
+  db.setStat('BlockChance', blockChance);
   let rawSpellBlock = db.calcStat('SpellBlockChance').total;
   if (keystonePoolResult.versatileCombatant) {
     const finalOvercap = Math.max(0, Math.floor(rawAttackBlock + 1e-6) - maxAttackBlock);
@@ -4347,7 +4357,6 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     }
   }
   const spellBlockChance = Math.min(maxSpellBlock, Math.max(0, Math.round(rawSpellBlock)));
-  db.setStat('BlockChance', blockChance);
   db.setStat('SpellBlockChance', spellBlockChance);
   const spellSuppressionChance = ruleset.supportsSpellSuppression
     ? Math.min(100, Math.round(db.sum('BASE', 'SpellSuppressionChance')))
@@ -5371,6 +5380,10 @@ function computeGroupOffence(
     for (const st of poe2MetaResolution?.addedSkillTypes ?? []) {
       skillTypeMap[st] = true;
     }
+    if ((activeDef.modFlags & ModFlag.Attack) !== 0) {
+      skillTypeMap['Attack'] = true;
+      skillTypeMap['attack'] = true;
+    }
 
     // PoE 1 slot-scoped `Socketed Gems / Socketed Skills / Socketed Vaal Skills` modifiers
     // (Elder/Shaper/Essence pseudo-links, Triumvirate Authority, etc.)
@@ -5512,11 +5525,7 @@ function computeGroupOffence(
         spellTotemEffLevel = effSupLevel;
       }
 
-      if (build.game === 'poe2' && lower === "dialla's desire") {
-        awakenedSupActiveLevelBonus += 1;
-        enhanceQualityBonus += 5;
-      }
-      // PoE 2 Support Gem Level grants (Cold/Lightning/Fire/Chaos/Physical Mastery +1, Uhtred's Omen +2, etc.)
+      // PoE 2 Support Gem Level & Quality grants (Cold/Lightning/Fire/Chaos/Physical Mastery +1, Uhtred's Omen +2, Dialla's Desire +1/+5%Q, etc.)
       if (build.game === 'poe2') {
         const supLvCmods = resolveGemLevelEntry(def, effSupLevel)?.compiledMods ?? def.compiledMods ?? [];
         const activeTagsLowerForSup = new Set(chosen.def.tags.map((t) => t.toLowerCase()));
@@ -5524,6 +5533,8 @@ function computeGroupOffence(
           if (cm.type !== 'BASE' || typeof cm.value !== 'number' || cm.value === 0) continue;
           if (cm.name === 'SupportedGemLevel') {
             awakenedSupActiveLevelBonus += cm.value;
+          } else if (cm.name === 'SupportedGemQuality') {
+            enhanceQualityBonus += cm.value;
           } else if (cm.name.startsWith('SupportedGemLevel:')) {
             const reqTag = cm.name.slice('SupportedGemLevel:'.length).toLowerCase();
             if (
@@ -6071,6 +6082,9 @@ function computeGroupOffence(
   skillDb.setStat('EnergyShield', _defence.energyShield);
   skillDb.setStat('BlockChance', _defence.blockChance);
   skillDb.setStat('FireResistOverCap', _defence.fireResistOvercap);
+  skillDb.setStat('FireResistOver75', Math.max(0, _defence.fireResist - 75));
+  skillDb.setStat('ColdResistOver75', Math.max(0, _defence.coldResist - 75));
+  skillDb.setStat('LightningResistOver75', Math.max(0, _defence.lightningResist - 75));
   // Sync skill-flagged Accuracy (includes Attack/weapon-specific Accuracy mods & Precision) for PerStat:Accuracy (Undeniable, etc.)
   const skillAccForPerStat = Math.round(skillDb.calcStat('Accuracy', flags, kwFlags).total);
   if (skillAccForPerStat > 0) {
@@ -6201,6 +6215,44 @@ function computeGroupOffence(
         }
       }
     }
+    // PoE 2 Skill-local Shock Magnitude delta (PoB 2 CalcPerform.lua:3345-3364: max(20 * skillShockEffMult, ShockVal))
+    if (build.config.enemyShocked) {
+      const skillShockEffMult =
+        Math.max(
+          0,
+          1 +
+            skillDb.sum(
+              'INC',
+              ['ShockEffect', 'EnemyShockEffect', 'EnemyShockMagnitude', 'AilmentMagnitude', 'ShockMagnitude'],
+              flags,
+              kwFlags,
+            ) /
+              100,
+        ) *
+        skillDb.more(
+          ['ShockEffect', 'EnemyShockEffect', 'EnemyShockMagnitude', 'AilmentMagnitude', 'ShockMagnitude'],
+          flags,
+          kwFlags,
+        );
+      const shockStacksLocal = Math.max(1, Number(build.config.rawInputs?.ShockStacks ?? 1));
+      const skillShockPct = Math.max(
+        0,
+        Math.min(100, Math.floor(20 * skillShockEffMult + 1e-9) * shockStacksLocal),
+      );
+      const prevShockPct = groupEnemyDb.getEvalContext().multipliers.ShockEffect ?? 0;
+      if (skillShockPct > prevShockPct) {
+        groupEnemyDb.addMod({
+          name: 'DamageTaken',
+          type: 'INC',
+          value: skillShockPct - prevShockPct,
+          flags: 0,
+          keywordFlags: 0,
+          source: 'Shock (Skill Magnitude Delta)',
+        });
+        groupEnemyDb.setMultiplier('ShockEffect', skillShockPct);
+        skillDb.setMultiplier('EnemyShockEffect', skillShockPct);
+      }
+    }
   }
   // PoE 1 Skill-prefixed Custom Modifiers (`"Ice Shot has 35% more projectile damage with hits"`, etc.)
   if (build.config.customMods.trim()) {
@@ -6326,16 +6378,57 @@ function computeGroupOffence(
       });
     }
   }
-  // PoE 1 Shroud of the Lightless Abyss Jewel count multiplier
-  if (build.game === 'poe1' && skillDb.getEvalContext().multipliers.AbyssJewel === undefined) {
+  // PoE 1 Shroud of the Lightless / Gaze Abyss Eye Jewel count multipliers
+  if (build.game === 'poe1') {
+    const equippedItemIds = new Set<string>(Object.values(build.equipped).filter(Boolean) as string[]);
+    for (const sockId of Object.values(build.tree.socketedJewels ?? {})) {
+      if (sockId) equippedItemIds.add(sockId);
+    }
     let abyssCount = 0;
-    for (const item of Object.values(build.items)) {
-      if (/\b(?:murderous|searching|hypnotic|ghastly)\s+eye\s+jewel\b/i.test(item.baseName)) {
+    let murderousCount = 0;
+    let searchingCount = 0;
+    let hypnoticCount = 0;
+    let ghastlyCount = 0;
+    for (const [itemId, item] of Object.entries(build.items)) {
+      if (equippedItemIds.size > 0 && !equippedItemIds.has(itemId)) continue;
+      const bn = item.baseName.toLowerCase();
+      if (/\bmurderous\s+eye\s+jewel\b/.test(bn)) {
         abyssCount++;
+        murderousCount++;
+      } else if (/\bsearching\s+eye\s+jewel\b/.test(bn)) {
+        abyssCount++;
+        searchingCount++;
+      } else if (/\bhypnotic\s+eye\s+jewel\b/.test(bn)) {
+        abyssCount++;
+        hypnoticCount++;
+      } else if (/\bghastly\s+eye\s+jewel\b/.test(bn)) {
+        abyssCount++;
+        ghastlyCount++;
       }
     }
-    if (abyssCount > 0) {
+    const mults = skillDb.getEvalContext().multipliers;
+    if (abyssCount > 0 && mults.AbyssJewel === undefined) {
       skillDb.setMultiplier('AbyssJewel', abyssCount);
+    }
+    if (murderousCount > 0 && mults.MurderousEyeJewel === undefined) {
+      skillDb.setMultiplier('MurderousEyeJewel', murderousCount);
+    }
+    if (searchingCount > 0 && mults.SearchingEyeJewel === undefined) {
+      skillDb.setMultiplier('SearchingEyeJewel', searchingCount);
+    }
+    if (hypnoticCount > 0 && mults.HypnoticEyeJewel === undefined) {
+      skillDb.setMultiplier('HypnoticEyeJewel', hypnoticCount);
+    }
+    if (ghastlyCount > 0 && mults.GhastlyEyeJewel === undefined) {
+      skillDb.setMultiplier('GhastlyEyeJewel', ghastlyCount);
+    }
+    // PoE 1 Champion Master of Metal: populate EnemyImpaleStacks before base hit damage evaluation
+    if (isAttack && mults.EnemyImpaleStacks === undefined) {
+      const earlyImpaleChance = skillDb.sum('BASE', 'ImpaleChance', flags, kwFlags);
+      if (earlyImpaleChance > 0) {
+        const earlyMaxImpale = 5 + skillDb.sum('BASE', 'ImpaleStacksMax', flags, kwFlags);
+        skillDb.setMultiplier('EnemyImpaleStacks', earlyMaxImpale);
+      }
     }
   }
   // PoE 1 Sap of the Seasons `ManaBurn` multiplier
@@ -6769,7 +6862,7 @@ function computeGroupOffence(
       build.config.rawInputs?.configResonanceCount === undefined &&
       skillDb.getEvalContext().multipliers.ResonanceCount === undefined
     ) {
-      const resVal = build.game === 'poe2' ? 10 : 50;
+      const resVal = build.game === 'poe2' ? 0 : 50;
       skillDb.setMultiplier('ResonanceCount', resVal);
       skillDb.setStat('ResonanceCount', resVal);
     }
@@ -6837,7 +6930,8 @@ function computeGroupOffence(
       skillDb.sum('BASE', ['HybridManaAndLifeCost_Life', 'SkillManaCostConvertToLifeCost'], flags, kwFlags),
     ),
   );
-  const estLifeCost = Math.round((baseSkillManaCost * lifeCostConvPct) / 100);
+  const lifeCostMore = skillDb.more('LifeCost', flags, kwFlags);
+  const estLifeCost = Math.round(((baseSkillManaCost * lifeCostConvPct) / 100) * lifeCostMore);
   const estManaCost = Math.max(0, Math.round(baseSkillManaCost - estLifeCost));
   skillDb.setStat('LifeCost', estLifeCost);
   skillDb.setStat('ManaCost', estManaCost);
@@ -7362,10 +7456,8 @@ function computeGroupOffence(
     } else {
       const wMin = weaponStats?.physicalMin ?? 15;
       const wMax = weaponStats?.physicalMax ?? 30;
-      if (!skillDb.flag('DealNoPhysical', flags, kwFlags)) {
-        baseMin.Physical += wMin * atkMult;
-        baseMax.Physical += wMax * atkMult;
-      }
+      baseMin.Physical += wMin * atkMult;
+      baseMax.Physical += wMax * atkMult;
       if (weaponStats?.elementalDamage) {
         for (const [el, range] of Object.entries(weaponStats.elementalDamage)) {
           if (!range) continue;
@@ -7482,6 +7574,13 @@ function computeGroupOffence(
         typeof activeSkillData.ChaosDot === 'number' ||
         activeSkillData.dotDamageByType),
   );
+  const flickExtraPowerCharge =
+    build.game === 'poe2' &&
+    activeNameLower === 'flicker strike' &&
+    weaponStats?.weaponType === 'Quarterstaff' &&
+    skillDb.flag('QuarterstaffSkillsConsumeAdditionalPowerCharge', flags, kwFlags)
+      ? 1
+      : 0;
   const specialSkillDmg = computeSkillSpecialDamage(
     isDetonateDeadHandledByPart ? '__dd_handled_by_part__' : activeDef.name.en,
     build.game,
@@ -7492,7 +7591,7 @@ function computeGroupOffence(
       maxMana: _defence.mana,
       maxEs: _defence.energyShield,
       ephemeralEdge: isAttack && hasEphemeralEdge && !ephemeralAlreadyApplied,
-      powerCharges: activePowerCharges,
+      powerCharges: activePowerCharges > 0 ? activePowerCharges + flickExtraPowerCharge : 0,
       stages:
         xmlExplicitStages ??
         (build.game === 'poe1' && activeNameLower === 'vaal flameblast' ? 15 : undefined),
@@ -8174,7 +8273,12 @@ function computeGroupOffence(
     skillDb.flag('HitsCantBeEvaded', flags, kwFlags) ||
     skillDb.flag('CannotBeEvaded', flags, kwFlags) ||
     Boolean(activeSkillData?.cannotBeEvaded);
-  if (isAttack && !cannotBeEvaded) {
+  const canExceedHitChance =
+    build.game === 'poe2' &&
+    isAttack &&
+    (skillDb.flag('HitChanceCanExceed100', flags, kwFlags) ||
+      skillDb.flag('Condition:HitChanceCanExceed100', flags, kwFlags));
+  if (isAttack && (!cannotBeEvaded || canExceedHitChance)) {
     let accuracy = Math.max(
       1,
       skillDb.calcStat('Accuracy', flags, kwFlags).total * skillDb.more('AccuracyVsEnemy', flags, kwFlags),
@@ -8212,11 +8316,28 @@ function computeGroupOffence(
         groupEnemyDb.more('Evasion') *
         enemyBlindMult,
     );
+    const hitChanceMod =
+      Math.max(0, 1 + skillDb.sum('INC', 'HitChance', flags, kwFlags) / 100) *
+      skillDb.more('HitChance', flags, kwFlags);
     const rawHitChance =
       build.game === 'poe2'
         ? ((accuracy * 1.25) / (accuracy + enemyEva * 0.3)) * 100
         : (accuracy / (accuracy + Math.pow(enemyEva / 5, 0.9))) * 125;
-    hitChance = Math.min(100, Math.max(5, Math.round(rawHitChance)));
+    if (!cannotBeEvaded) {
+      hitChance = Math.min(100, Math.max(5, Math.round(rawHitChance) * hitChanceMod));
+    }
+    if (canExceedHitChance) {
+      const hasAscCriticalStrike = skillDb
+        .calcStat('BaseCritChance', flags, kwFlags)
+        .sources.some((s) => s.source === 'Ascendancy: Critical Strike');
+      const uncappedHitChance = Math.max(
+        hitChance,
+        Math.max(5, Math.round(rawHitChance)) * hitChanceMod,
+      );
+      if (!hasAscCriticalStrike && uncappedHitChance > 100) {
+        skillDb.setMultiplier('ExcessHitChance', Math.round((uncappedHitChance - 100) * 100) / 100);
+      }
+    }
   }
 
   // Precise Technique & Point Blank (PoE 1)

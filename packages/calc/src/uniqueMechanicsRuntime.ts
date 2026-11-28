@@ -2130,17 +2130,26 @@ export function evaluatePostPoolBuildEnablingUniques(
       }
 
       // 12. Nebulis (Elemental Damage per 1% Fire/Cold/Lightning Resistance above 75%, & classic Cold/Lightning variant)
+      const hasPerStatResOver75 =
+        db.getEvalContext().stats.FireResistOver75 !== undefined ||
+        db.getEvalContext().stats.ColdResistOver75 !== undefined ||
+        db.getEvalContext().stats.LightningResistOver75 !== undefined;
       const mNebulisEle = line.match(
         /^(\d+)% increased Elemental Damage per 1% Fire, Cold, or Lightning Resistance above 75%$/i,
       );
       if (mNebulisEle) {
+        const alreadyParsedNebulis =
+          hasPerStatResOver75 &&
+          getRawModsForStat(db, 'ElementalDamage').some((m) =>
+            m.tags?.some((t) => t.type === 'PerStat' && /ResistOver75$/.test(t.stat)),
+          );
         const perPct = Number(mNebulisEle[1]);
         const steps =
           Math.max(0, getCappedPlayerEleResist('Fire') - 75) +
           Math.max(0, getCappedPlayerEleResist('Cold') - 75) +
           Math.max(0, getCappedPlayerEleResist('Lightning') - 75);
         const bonus = steps * perPct;
-        if (bonus > 0 && !hasStatSource(db, 'ElementalDamage', 'INC', src, bonus)) {
+        if (!alreadyParsedNebulis && bonus > 0 && !hasStatSource(db, 'ElementalDamage', 'INC', src, bonus)) {
           db.addMod(mkMod('ElementalDamage', 'INC', bonus, src));
           appliedSources.push(src);
         }
@@ -2156,7 +2165,12 @@ export function evaluatePostPoolBuildEnablingUniques(
         const steps = Math.max(0, getCappedPlayerEleResist(resElem) - 75);
         const bonus = steps * perPct;
         const statName = `${dmgElem}Damage`;
-        if (bonus > 0 && !hasStatSource(db, statName, 'INC', src, bonus)) {
+        const alreadyParsedSingle =
+          hasPerStatResOver75 &&
+          getRawModsForStat(db, statName).some((m) =>
+            m.tags?.some((t) => t.type === 'PerStat' && t.stat === `${resElem}ResistOver75`),
+          );
+        if (!alreadyParsedSingle && bonus > 0 && !hasStatSource(db, statName, 'INC', src, bonus)) {
           db.addMod(mkMod(statName, 'INC', bonus, src));
           appliedSources.push(src);
         }

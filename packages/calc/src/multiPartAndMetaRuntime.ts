@@ -1470,15 +1470,21 @@ export function evaluatePersistentBuffAndStanceSkills(
               : (POE2_TRINITY_PER_30[Math.min(40, Math.max(1, level)) - 1] ?? 6);
 
           const ctx = playerDb.getEvalContext();
+          const hasExplicitResonance =
+            ctx.multipliers.ResonanceCount !== undefined || ctx.stats.ResonanceCount !== undefined;
           const rawResonance = ctx.multipliers.ResonanceCount ?? ctx.stats.ResonanceCount ?? 0;
           // Handle both conventions cleanly:
-          // - `engine.ts` pre-divides PoE 2 `configResonanceCount` (default 300) by 30 into stacks `1..10`
-          // - Direct callers / tests may pass raw Resonance `0..300` (0 defaults to max 300 = 10 stacks)
+          // - Direct callers / unit tests omitting ResonanceCount default to max 300 (10 stacks)
+          // - `engine.ts` passes explicit `0` when PoE 2 `configResonanceCount` is unset (PoB 2 ConfigOptions.lua:689),
+          //   pre-divided stacks `1..10`, or raw resonance `11..300`
           let resonanceStacks: number;
           let effectiveResonance: number;
-          if (rawResonance <= 0) {
+          if (!hasExplicitResonance) {
             resonanceStacks = 10;
             effectiveResonance = 300;
+          } else if (rawResonance <= 0) {
+            resonanceStacks = 0;
+            effectiveResonance = 0;
           } else if (rawResonance <= 10) {
             resonanceStacks = Math.floor(rawResonance);
             effectiveResonance = resonanceStacks * 30;
