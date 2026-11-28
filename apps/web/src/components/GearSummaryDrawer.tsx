@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import type { Build, EquipmentSlotId, Item, ItemRarity, Locale } from '@webpob/core';
 import { getLocalizedUniqueName, getRuleset } from '@webpob/data';
-import { resolveItemEffectiveStats } from '@webpob/calc';
+import { resolveItemEffectiveStats } from '@webpob/calc/lite';
 import { getSlotLabel, normalizeStatLineToEn, toTraditionalZh, uiText } from '@webpob/i18n';
 import { useWebPobStore } from '../store/useWebPobStore';
 

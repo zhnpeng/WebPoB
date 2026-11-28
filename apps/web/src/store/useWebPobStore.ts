@@ -29,7 +29,8 @@ import {
   loadOfficialUniques,
   removeNodeAndPruneDisconnected,
 } from '@webpob/data';
-import { calculateBuild } from '@webpob/calc';
+import { createEmptyCalcOutput } from '@webpob/calc/lite';
+import { calculateBuildInWorker } from '../workers/calcWorkerClient';
 
 export type ActiveTab = 'tree' | 'skills' | 'items' | 'calcs' | 'config' | 'import' | 'notes';
 export type TreePaintMode = 'shared' | 'set1' | 'set2';
@@ -173,6 +174,20 @@ const DEFAULT_CORS_PROXY =
 const secondaryLoaded: Partial<Record<GameId, Promise<void>>> = {};
 
 export const useWebPobStore = create<WebPobState>((set, get) => {
+  let calcSeq = 0;
+  const scheduleCalc = (targetBuild: Build): Promise<void> => {
+    const seq = ++calcSeq;
+    return calculateBuildInWorker(targetBuild)
+      .then((calc) => {
+        if (seq === calcSeq) {
+          set({ calc });
+        }
+      })
+      .catch((err) => {
+        console.warn('[WebPoB] Calc worker calculation failed:', err);
+      });
+  };
+
   const commitBuild = (
     rawNext: Build,
     opts?: { recordHistory?: boolean; clearHistory?: boolean },
@@ -202,17 +217,19 @@ export const useWebPobStore = create<WebPobState>((set, get) => {
       );
       nextBuild = { ...nextBuild, skillSets: syncedSkillSets, activeSkillSetIndex: idx };
     }
-    const calc = calculateBuild(nextBuild);
     persistState(nextBuild, get().locale);
     if (opts?.clearHistory) {
-      set({ build: nextBuild, calc, past: [], future: [], canUndo: false, canRedo: false });
+      set({ build: nextBuild, past: [], future: [], canUndo: false, canRedo: false });
     } else if (opts?.recordHistory !== false) {
       const nextPast = [...get().past, prevBuild].slice(-MAX_HISTORY);
-      set({ build: nextBuild, calc, past: nextPast, future: [], canUndo: nextPast.length > 0, canRedo: false });
+      set({ build: nextBuild, past: nextPast, future: [], canUndo: nextPast.length > 0, canRedo: false });
     } else {
-      set({ build: nextBuild, calc });
+      set({ build: nextBuild });
     }
+    return scheduleCalc(nextBuild);
   };
+
+  void scheduleCalc(initial.build);
 
   return {
     locale: initial.locale,
@@ -222,7 +239,7 @@ export const useWebPobStore = create<WebPobState>((set, get) => {
     dataLoading: false,
     treeRevision: 0,
     build: initial.build,
-    calc: calculateBuild(initial.build),
+    calc: createEmptyCalcOutput(initial.build.game),
     past: [],
     future: [],
     canUndo: false,
@@ -234,16 +251,15 @@ export const useWebPobStore = create<WebPobState>((set, get) => {
       const previous = past[past.length - 1]!;
       const nextPast = past.slice(0, -1);
       const nextFuture = [build, ...future].slice(0, MAX_HISTORY);
-      const calc = calculateBuild(previous);
       persistState(previous, get().locale);
       set({
         build: previous,
-        calc,
         past: nextPast,
         future: nextFuture,
         canUndo: nextPast.length > 0,
         canRedo: nextFuture.length > 0,
       });
+      void scheduleCalc(previous);
     },
 
     redo: () => {
@@ -252,16 +268,15 @@ export const useWebPobStore = create<WebPobState>((set, get) => {
       const next = future[0]!;
       const nextFuture = future.slice(1);
       const nextPast = [...past, build].slice(-MAX_HISTORY);
-      const calc = calculateBuild(next);
       persistState(next, get().locale);
       set({
         build: next,
-        calc,
         past: nextPast,
         future: nextFuture,
         canUndo: nextPast.length > 0,
         canRedo: nextFuture.length > 0,
       });
+      void scheduleCalc(next);
     },
 
     ensureSecondaryDataLoaded: async (gameArg) => {
@@ -272,10 +287,11 @@ export const useWebPobStore = create<WebPobState>((set, get) => {
         loadOfficialUniques(game),
         game === 'poe1' ? loadOfficialClusterNotables() : Promise.resolve(0),
       ])
-        .then(() => {
+        .then(async () => {
           const cur = get().build;
           if (cur.game === game) {
-            set({ treeRevision: get().treeRevision + 1, calc: calculateBuild(cur) });
+            set({ treeRevision: get().treeRevision + 1 });
+            await scheduleCalc(cur);
           }
         })
         .catch((err) => {
@@ -295,7 +311,8 @@ export const useWebPobStore = create<WebPobState>((set, get) => {
       const loaded = await loadLocaleOverlay(game, locale, '/data', manifestFile);
       if (loaded && get().build.game === game) {
         const cur = get().build;
-        set({ treeRevision: get().treeRevision + 1, calc: calculateBuild(cur) });
+        set({ treeRevision: get().treeRevision + 1 });
+        await scheduleCalc(cur);
       }
     },
 
@@ -331,8 +348,8 @@ export const useWebPobStore = create<WebPobState>((set, get) => {
           if (isStarterSample || validCount === 0) {
             if (cur.id === 'sample-poe1-arc' || cur.id === 'sample-poe2-spark') {
               const upgraded = getSampleBuild(game);
+              await commitBuild(upgraded, { clearHistory: true });
               set({ treeRevision: get().treeRevision + 1, dataLoading: false });
-              commitBuild(upgraded, { clearHistory: true });
             } else {
               const startId = tree.classStartNodeIds[cur.classId] ?? Object.values(tree.classStartNodeIds)[0]!;
               const nextBuild: Build = {
@@ -345,12 +362,12 @@ export const useWebPobStore = create<WebPobState>((set, get) => {
                   weaponSet2NodeIds: [],
                 },
               };
+              await commitBuild(nextBuild, { clearHistory: true });
               set({ treeRevision: get().treeRevision + 1, dataLoading: false });
-              commitBuild(nextBuild, { clearHistory: true });
             }
           } else {
+            await commitBuild(cur, { recordHistory: false });
             set({ treeRevision: get().treeRevision + 1, dataLoading: false });
-            commitBuild(cur, { recordHistory: false });
           }
         } else {
           set({ treeRevision: get().treeRevision + 1, dataLoading: false });

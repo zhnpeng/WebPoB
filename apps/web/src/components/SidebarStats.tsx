@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { AlertTriangle, Check, CheckCircle2, ChevronDown, ChevronRight, Copy, Sparkles } from 'lucide-react';
-import { analyzeBuildDiagnostics } from '@webpob/calc';
+import { analyzeBuildDiagnostics } from '@webpob/calc/lite';
 import { getClassesForGame } from '@webpob/data';
 import { localizeText, t, uiText } from '@webpob/i18n';
 import { useWebPobStore } from '../store/useWebPobStore';

@@ -34,7 +34,7 @@ import {
   normalizeAscendancyTreeKey,
 } from '@webpob/data';
 import { isChineseLocale, localizeStatLine, localizeText, t, toSimplifiedZh, toTraditionalZh, uiText } from '@webpob/i18n';
-import { computeNodePower } from '@webpob/calc';
+import { computeNodePowerInWorker } from '../workers/calcWorkerClient';
 import { useWebPobStore } from '../store/useWebPobStore';
 import { computeHeatmapInWorker } from '../workers/calcWorkerClient';
 import type { NodePowerHeatItem } from '../workers/calc.worker';
@@ -1088,12 +1088,29 @@ export function PassiveTreeCanvas() {
     return new Set(findShortestPathToNode(tree, baseAllocated, hoveredNodeId));
   }, [hoveredNodeId, build.game, treePaintMode, sharedSet, set1Set, set2Set, ascStartNodeId, tree]);
 
-  // Live Node Power Delta calculation on hover
-  const hoveredPower: NodePowerDelta | null = useMemo(() => {
-    if (hoveredNodeId === null) return null;
+  // Live Node Power Delta calculation on hover (offloaded to calc.worker)
+  const [hoveredPower, setHoveredPower] = useState<NodePowerDelta | null>(null);
+  useEffect(() => {
+    if (hoveredNodeId === null) {
+      setHoveredPower(null);
+      return;
+    }
     const node = tree.nodes[hoveredNodeId];
-    if (!node || node.kind === 'start' || node.kind === 'mastery') return null;
-    return computeNodePower(build, hoveredNodeId, calc);
+    if (!node || node.kind === 'start' || node.kind === 'mastery') {
+      setHoveredPower(null);
+      return;
+    }
+    let cancelled = false;
+    void computeNodePowerInWorker(build, hoveredNodeId, calc)
+      .then((power) => {
+        if (!cancelled) setHoveredPower(power);
+      })
+      .catch(() => {
+        if (!cancelled) setHoveredPower(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [hoveredNodeId, tree, build, calc]);
 
   const hoverPathNodeCount = previewPathSet.size;

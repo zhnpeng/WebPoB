@@ -66,6 +66,7 @@ export default defineConfig({
       '@webpob/i18n': path.resolve(__dirname, '../../packages/i18n/src/index.ts'),
       '@webpob/data': path.resolve(__dirname, '../../packages/data/src/index.ts'),
       '@webpob/codec': path.resolve(__dirname, '../../packages/codec/src/index.ts'),
+      '@webpob/calc/lite': path.resolve(__dirname, '../../packages/calc/src/lite.ts'),
       '@webpob/calc': path.resolve(__dirname, '../../packages/calc/src/index.ts'),
     },
   },
@@ -81,6 +82,14 @@ export default defineConfig({
           }
           if (id.includes('node_modules/pako') || id.includes('node_modules/zustand')) {
             return 'utils-vendor';
+          }
+          if (
+            id.includes('/packages/calc/src/lite.ts') ||
+            id.includes('/packages/calc/src/diagnostics.ts') ||
+            id.includes('/packages/calc/src/localItem.ts') ||
+            id.includes('/packages/calc/src/offenceUpgrade.ts')
+          ) {
+            return 'webpob-calc-lite';
           }
           if (id.includes('/packages/calc/')) {
             return 'webpob-calc';

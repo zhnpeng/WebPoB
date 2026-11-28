@@ -1,9 +1,10 @@
 /// <reference lib="webworker" />
-import type { Build, GameId } from '@webpob/core';
+import type { Build, CalcOutput, GameId, NodePowerDelta } from '@webpob/core';
 import {
   findShortestPathToNode,
   getTreeForGame,
   loadOfficialBaseItems,
+  loadOfficialClusterNotables,
   loadOfficialGems,
   loadOfficialTree,
 } from '@webpob/data';
@@ -20,6 +21,18 @@ export interface NodePowerHeatItem {
 
 export type CalcWorkerRequest =
   | {
+      type: 'CALCULATE';
+      requestId: number;
+      build: Build;
+    }
+  | {
+      type: 'NODE_POWER';
+      requestId: number;
+      build: Build;
+      nodeId: number;
+      baseline: CalcOutput;
+    }
+  | {
       type: 'HEATMAP';
       requestId: number;
       build: Build;
@@ -27,6 +40,16 @@ export type CalcWorkerRequest =
     };
 
 export type CalcWorkerResponse =
+  | {
+      type: 'CALCULATE_RESULT';
+      requestId: number;
+      calc: CalcOutput;
+    }
+  | {
+      type: 'NODE_POWER_RESULT';
+      requestId: number;
+      power: NodePowerDelta;
+    }
   | {
       type: 'HEATMAP_RESULT';
       requestId: number;
@@ -40,7 +63,6 @@ export type CalcWorkerResponse =
     };
 
 const loadedGames = new Set<GameId>();
-
 const loadedTreeKeys = new Set<string>();
 
 async function ensureWorkerData(game: GameId, treeVersion?: string) {
@@ -50,7 +72,11 @@ async function ensureWorkerData(game: GameId, treeVersion?: string) {
     loadOfficialTree(game, '/data', treeVersion),
     ...(loadedGames.has(game)
       ? []
-      : [loadOfficialGems(game), loadOfficialBaseItems(game)]),
+      : [
+          loadOfficialGems(game),
+          loadOfficialBaseItems(game),
+          ...(game === 'poe1' ? [loadOfficialClusterNotables()] : []),
+        ]),
   ]);
   loadedGames.add(game);
   loadedTreeKeys.add(key);
@@ -58,6 +84,48 @@ async function ensureWorkerData(game: GameId, treeVersion?: string) {
 
 self.onmessage = async (ev: MessageEvent<CalcWorkerRequest>) => {
   const msg = ev.data;
+  if (msg.type === 'CALCULATE') {
+    try {
+      await ensureWorkerData(msg.build.game, msg.build.tree.treeVersion);
+      const calc = calculateBuild(msg.build);
+      const res: CalcWorkerResponse = {
+        type: 'CALCULATE_RESULT',
+        requestId: msg.requestId,
+        calc,
+      };
+      self.postMessage(res);
+    } catch (err) {
+      const res: CalcWorkerResponse = {
+        type: 'ERROR',
+        requestId: msg.requestId,
+        message: err instanceof Error ? err.message : String(err),
+      };
+      self.postMessage(res);
+    }
+    return;
+  }
+
+  if (msg.type === 'NODE_POWER') {
+    try {
+      await ensureWorkerData(msg.build.game, msg.build.tree.treeVersion);
+      const power = computeNodePower(msg.build, msg.nodeId, msg.baseline);
+      const res: CalcWorkerResponse = {
+        type: 'NODE_POWER_RESULT',
+        requestId: msg.requestId,
+        power,
+      };
+      self.postMessage(res);
+    } catch (err) {
+      const res: CalcWorkerResponse = {
+        type: 'ERROR',
+        requestId: msg.requestId,
+        message: err instanceof Error ? err.message : String(err),
+      };
+      self.postMessage(res);
+    }
+    return;
+  }
+
   if (msg.type === 'HEATMAP') {
     const t0 = performance.now();
     try {
