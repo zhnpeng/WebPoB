@@ -939,6 +939,10 @@ export function xmlToBuild(xml: string): Build {
         }
       }
       if (gems.length > 0) {
+        const parsedGroupCount = parsePositiveIntAttr(attrs.groupCount);
+        if (parsedGroupCount !== undefined && parsedGroupCount > 1 && gems.length === 1 && !gems[0]!.count) {
+          gems[0]!.count = parsedGroupCount;
+        }
         const weaponSets = parseSkillWeaponSets(attrs, game);
         const mainActiveRaw = Number(attrs.mainActiveSkill ?? attrs.mainActiveSkillCalcs ?? 1);
         const groupSkillPart =
@@ -949,7 +953,8 @@ export function xmlToBuild(xml: string): Build {
         const groupStageCount =
           parsePositiveIntAttr(attrs.skillStageCount) ??
           (game === 'poe2' ? parsePositiveIntAttr(attrs.skillStageCountCalcs) : undefined);
-        const groupSource = attrs.source?.trim() || undefined;
+        const groupSource =
+          attrs.source?.trim() || (attrs.mercenary === 'true' ? 'Mercenary' : undefined);
         const groupEnabled =
           attrs.enabled !== undefined ? attrs.enabled !== 'false' : attrs.active !== 'false';
         const groupId = `${prefix}_sg_${groupCounter}`;

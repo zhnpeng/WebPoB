@@ -1220,4 +1220,31 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
       }),
     ]);
   });
+
+  it('Wave 4W: Onslaught Effect, Nearby Enemies Intimidated, Onslaught on Kill, Saboteur & Warden Bloodline', () => {
+    expect(parseModLine('100% increased Onslaught Effect', 'Item: Daresso')).toEqual([
+      expect.objectContaining({ name: 'OnslaughtEffect', type: 'INC', value: 100 }),
+    ]);
+    expect(parseModLine('Nearby Enemies are Intimidated', 'Item: Belt')).toEqual([
+      expect.objectContaining({
+        name: 'EnemyDamageTaken',
+        type: 'INC',
+        value: 10,
+        tags: [{ type: 'Condition', var: 'EnemyIntimidated', neg: true }],
+      }),
+    ]);
+    expect(parseModLine('15% chance to gain Onslaught for 4 seconds on Kill', 'Item: Boots')).toEqual([
+      expect.objectContaining({ name: 'Speed', type: 'INC', value: 20, source: 'Item: Boots' }),
+      expect.objectContaining({ name: 'MovementSpeed', type: 'INC', value: 20, source: 'Item: Boots' }),
+    ]);
+    expect(parseModLine('Hits have 30% chance to deal 50% more Area Damage', 'Tree: Bomb Specialist')).toEqual([
+      expect.objectContaining({ name: 'Damage', type: 'MORE', value: 15 }),
+    ]);
+    expect(parseModLine('30% less Damage with Triggered Spells', 'Tree: Perfect Crime')).toEqual([
+      expect.objectContaining({ name: 'Damage', type: 'MORE', value: -30 }),
+    ]);
+    expect(
+      parseModLine('Defences from Equipped Body Armour are doubled if it has no Socketed Gems', 'Tree: Oath of the Maji'),
+    ).toEqual([expect.objectContaining({ name: 'OathOfTheMajiBodyArmour', type: 'FLAG', value: true })]);
+  });
 });

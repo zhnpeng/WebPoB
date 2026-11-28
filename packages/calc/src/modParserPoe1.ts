@@ -1758,6 +1758,79 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
       },
     ],
   },
+  // Wave 4W: High-leverage PoE 1 Onslaught, Intimidate, Saboteur/Occultist/Warden Bloodline notables
+  {
+    pattern: /^(\d+)% increased Onslaught Effect$/i,
+    build: (m, src) => [mkMod('OnslaughtEffect', 'INC', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Nearby Enemies are Intimidated$/i,
+    build: (_, src) => [
+      {
+        ...mkMod('EnemyDamageTaken', 'INC', 10, src, ModFlag.Attack),
+        tags: [{ type: 'Condition' as const, var: 'EnemyIntimidated', neg: true }],
+      },
+    ],
+  },
+  {
+    pattern: /^(?:\d+% chance to )?gain Onslaught for \d+ seconds on Kill$/i,
+    build: (_, src) => {
+      const tags = [
+        { type: 'Condition' as const, var: 'KilledRecently' },
+        { type: 'Condition' as const, var: 'Onslaught', neg: true },
+      ];
+      return [
+        { ...mkMod('Speed', 'INC', 20, src, ModFlag.Attack | ModFlag.Spell), tags },
+        { ...mkMod('MovementSpeed', 'INC', 20, src), tags },
+      ];
+    },
+  },
+  {
+    pattern: /^Hits have (\d+)% chance to deal (\d+)% more Area Damage$/i,
+    build: (m, src) => [
+      mkMod('Damage', 'MORE', (Number(m[1]) * Number(m[2])) / 100, src, ModFlag.Hit | ModFlag.Area),
+    ],
+  },
+  {
+    pattern: /^(\d+)% less Damage with Triggered Spells$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Damage', 'MORE', -Number(m[1]), src, ModFlag.Spell),
+        tags: [{ type: 'SkillType' as const, skillType: 'Triggered' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Nearby Chilled Enemies deal (\d+)% reduced Damage with Hits$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('EnemyDamageDealt', 'INC', -Number(m[1]), src, ModFlag.Hit),
+        tags: [{ type: 'Condition' as const, var: 'EnemyChilled' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% reduced Damage taken from Blinded Enemies$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('DamageTaken', 'INC', -Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'EnemyBlinded' }],
+      },
+    ],
+  },
+  {
+    pattern: /^Defences from Equipped Body Armour are doubled if it has no Socketed Gems$/i,
+    build: (_, src) => [mkMod('OathOfTheMajiBodyArmour', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Tinctures applied to you have (\d+)% increased Effect per empty Flask Slot$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('TinctureEffect', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Multiplier' as const, var: 'EmptyFlaskSlot' }],
+      },
+    ],
+  },
 ];
 
 /**
