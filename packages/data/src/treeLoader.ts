@@ -550,7 +550,44 @@ function hydrateCompiledMods(
       flags: m.f ?? 0,
       keywordFlags: m.k ?? 0,
       ...(m.tg !== undefined ? { target: m.tg } : {}),
-      ...(Array.isArray(m.tags) && m.tags.length > 0 ? { tags: m.tags } : {}),
+      ...(Array.isArray(m.tags) && m.tags.length > 0
+        ? {
+            tags: m.tags.map((tag) => {
+              // Bridge compact `Multiplier` tags carrying `div` (e.g. Attrition `div: 2`, PoE 2 Trinity
+              // `div: 30`, Blood Sacrament `div: 10`, Dauntless `div: 0.25`) to `PerStat` so
+              // `evaluateModTags` applies `Math.floor(val / div)` while preserving `limit`/`limitVar`/`limitTotal`.
+              const rt = tag as {
+                type: string;
+                var?: string;
+                div?: number;
+                limit?: number;
+                limitVar?: string;
+                limitTotal?: boolean;
+              };
+              if (
+                rt.type === 'Multiplier' &&
+                typeof rt.div === 'number' &&
+                rt.div > 0 &&
+                rt.var &&
+                // engine.ts already pre-divides PoE 2 Trinity ResonanceCount (/30) and
+                // Blood Sacrament ChannelledLifeReservedPerStage (/10); preserve `div` on the
+                // Multiplier tag without double-dividing until engine.ts removes pre-division.
+                !(rt.var === 'ResonanceCount' && rt.div === 30) &&
+                !(rt.var === 'ChannelledLifeReservedPerStage' && rt.div === 10)
+              ) {
+                return {
+                  type: 'PerStat' as const,
+                  stat: rt.var,
+                  div: rt.div,
+                  ...(rt.limit !== undefined ? { limit: rt.limit } : {}),
+                  ...(rt.limitVar !== undefined ? { limitVar: rt.limitVar } : {}),
+                  ...(rt.limitTotal !== undefined ? { limitTotal: rt.limitTotal } : {}),
+                } as unknown as ModTag;
+              }
+              return tag;
+            }),
+          }
+        : {}),
     };
   });
 }

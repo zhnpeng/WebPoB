@@ -2174,5 +2174,144 @@ Implicits: 1
         setRegisteredGems('poe2', prevPoe2);
       }
     });
+
+    it('hydrates PoE 2 Punch (MeleeUnarmedPlayer) and bridges Multiplier tags carrying div to PerStat while preserving limitVar/limitTotal (Wave 6O)', () => {
+      const prevPoe2 = getGemsForGame('poe2');
+      try {
+        const hydrated = registerGemsData('poe2', {
+          game: 'poe2',
+          count: 3,
+          gems: [
+            {
+              id: 'poe2_playerdefaultunarmed',
+              en: 'Punch',
+              cat: 'active',
+              color: 'white',
+              tags: ['attack', 'melee', 'area'],
+              altIds: ['MeleeUnarmedPlayer', 'PlayerDefaultUnarmed'],
+              am: 312,
+              ls: { '16': { am: 257 } },
+            },
+            {
+              id: 'poe2_attrition',
+              en: 'Attrition',
+              cat: 'active',
+              color: 'red',
+              tags: ['buff', 'persistent'],
+              cmods: [
+                {
+                  n: 'Damage',
+                  t: 'MORE',
+                  v: 1,
+                  tg: 'player',
+                  tags: [
+                    {
+                      type: 'Multiplier',
+                      var: 'EnemyPresenceSeconds',
+                      div: 2,
+                      limitVar: 'AttritionMaxDamage',
+                      limitTotal: true,
+                    } as unknown as import('@webpob/core').ModTag,
+                    { type: 'Condition', var: 'EnemyRareOrUnique' },
+                  ],
+                },
+              ],
+            },
+            {
+              id: 'poe2_trinity',
+              en: 'Trinity',
+              cat: 'active',
+              color: 'blue',
+              tags: ['buff', 'persistent'],
+              cmods: [
+                {
+                  n: 'ElementalDamage',
+                  t: 'MORE',
+                  v: 4,
+                  tg: 'player',
+                  tags: [
+                    {
+                      type: 'Multiplier',
+                      var: 'ResonanceCount',
+                      div: 30,
+                    } as unknown as import('@webpob/core').ModTag,
+                  ],
+                },
+              ],
+            },
+          ],
+        });
+
+        // 1. MeleeUnarmedPlayer resolves cleanly to Punch with exact level 16 multiplier
+        expect(resolveGemFromPobRef('poe2', { skillId: 'MeleeUnarmedPlayer' })?.id).toBe(
+          'poe2_playerdefaultunarmed',
+        );
+        expect(
+          hydrated.find((g) => g.id === 'poe2_playerdefaultunarmed')?.levelScaling?.[16]
+            ?.attackDamageMultiplierPct,
+        ).toBe(257);
+
+        // 2. Attrition div: 2 bridges to PerStat and halves EnemyPresenceSeconds (10s -> 5% MORE, not 10% MORE)
+        const attrition = hydrated.find((g) => g.id === 'poe2_attrition')!;
+        const attTag = attrition.compiledMods?.[0]?.tags?.[0] as unknown as {
+          type: string;
+          stat?: string;
+          div?: number;
+          limitVar?: string;
+          limitTotal?: boolean;
+        };
+        expect(attTag).toMatchObject({
+          type: 'PerStat',
+          stat: 'EnemyPresenceSeconds',
+          div: 2,
+          limitVar: 'AttritionMaxDamage',
+          limitTotal: true,
+        });
+        const attDb = new ModDB();
+        attDb.setCondition('EnemyRareOrUnique', true);
+        attDb.setMultiplier('EnemyPresenceSeconds', 10);
+        for (const cm of attrition.compiledMods ?? []) {
+          attDb.addMod({
+            name: cm.name,
+            type: cm.type,
+            value: cm.value,
+            flags: cm.flags,
+            keywordFlags: cm.keywordFlags,
+            tags: cm.tags,
+            source: 'Attrition',
+          });
+        }
+        expect(attDb.more('Damage')).toBeCloseTo(1.05, 4);
+
+        // 3. PoE 2 Trinity preserves div: 30 on Multiplier tag without double-dividing engine.ts pre-divided ResonanceCount
+        const trinity = hydrated.find((g) => g.id === 'poe2_trinity')!;
+        const triTag = trinity.compiledMods?.[0]?.tags?.[0] as unknown as {
+          type: string;
+          var?: string;
+          div?: number;
+        };
+        expect(triTag).toMatchObject({
+          type: 'Multiplier',
+          var: 'ResonanceCount',
+          div: 30,
+        });
+        const triDb = new ModDB();
+        triDb.setMultiplier('ResonanceCount', 3); // engine.ts pre-divided 90 / 30 = 3
+        for (const cm of trinity.compiledMods ?? []) {
+          triDb.addMod({
+            name: cm.name,
+            type: cm.type,
+            value: cm.value,
+            flags: cm.flags,
+            keywordFlags: cm.keywordFlags,
+            tags: cm.tags,
+            source: 'Trinity',
+          });
+        }
+        expect(triDb.more('ElementalDamage')).toBeCloseTo(1.12, 4);
+      } finally {
+        setRegisteredGems('poe2', prevPoe2);
+      }
+    });
   });
 });
