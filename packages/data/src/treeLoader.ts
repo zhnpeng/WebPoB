@@ -309,6 +309,51 @@ const POE1_BLIGHTED_ANOINT_NOTABLES: ReadonlyArray<{
   { id: 64217, en: 'Aspect of Stone', stats: ['20% chance to Avoid Physical Damage from Hits'] },
 ];
 
+/**
+ * Official PoE 1 Forbidden Flesh / Forbidden Flame exclusive ascendancy notables from upstream PoB1
+ * `TreeData/3_30/tree.lua` (disconnected nodes omitted by compact `poe1-tree-*.json`).
+ */
+const POE1_FORBIDDEN_ASCENDANCY_NOTABLES: ReadonlyArray<{
+  id: number;
+  en: string;
+  stats: readonly string[];
+}> = [
+  { id: 18054, en: 'Fury of Nature', stats: ['Non-Damaging Elemental Ailments you inflict spread to nearby enemies within 2 metres', 'Non-Damaging Elemental Ailments you inflict have 100% more Effect'] },
+  { id: 19355, en: 'Unleashed Potential', stats: ['400% increased Endurance, Frenzy and Power Charge Duration', '25% chance to gain a Power, Frenzy or Endurance Charge on Kill', '+1 to Maximum Endurance Charges', '+1 to Maximum Frenzy Charges', '+1 to Maximum Power Charges'] },
+  { id: 27602, en: 'Nine Lives', stats: ['25% of Damage taken Recouped as Life, Mana and Energy Shield', 'Recoup Effects instead occur over 3 seconds'] },
+  { id: 42469, en: 'Fatal Flourish', stats: ['Final Repeat of Attack Skills deals 60% more Damage', 'Non-Travel Attack Skills Repeat an additional Time'] },
+  { id: 52435, en: 'Indomitable Resolve', stats: ['Deal 10% less Damage', 'Take 25% less Damage'] },
+  { id: 57331, en: 'Harness the Void', stats: ['27% chance to gain 25% of Non-Chaos Damage with Hits as Extra Chaos Damage', '13% chance to gain 50% of Non-Chaos Damage with Hits as Extra Chaos Damage', '7% chance to gain 100% of Non-Chaos Damage with Hits as Extra Chaos Damage'] },
+  { id: 57568, en: 'Searing Purity', stats: ['45% of Chaos Damage taken as Fire Damage', '45% of Chaos Damage taken as Lightning Damage'] },
+];
+
+/**
+ * Official PoE 2 distilled anoint-only notables from upstream PoB2 `TreeData/0_5/tree.lua`
+ * omitted by compact `poe2-tree-0_5.json`.
+ */
+const POE2_DISTILLED_ANOINT_NOTABLES: ReadonlyArray<{
+  id: number;
+  en: string;
+  stats: readonly string[];
+}> = [
+  { id: 3663, en: "Kaom's Blessing", stats: ['The next Fire Spell you cast yourself after using a Warcry is Ancestrally Boosted'] },
+  { id: 10169, en: 'Unfettered', stats: ['50% increased Armour while Bleeding', '10% increased Movement Speed while Sprinting'] },
+  { id: 13844, en: 'Growing Peril', stats: ['1% increased Chaos Damage over Time per Volatility'] },
+  { id: 17696, en: 'Augmented Flesh', stats: ['Grants 2 additional Skill Slots'] },
+  { id: 20495, en: 'Dark Entropy', stats: ['Withered also causes enemies to deal 1% reduced Damage'] },
+  { id: 20686, en: 'Paragon', stats: ['+5% to Quality of all Skills', '+5 to all Attributes'] },
+  { id: 21251, en: 'Replenishing Horde', stats: ['25% Chance to revive a random Permanent Minion whenever you use a Command Skill'] },
+  { id: 22726, en: "Storm's Rebuke", stats: ['Fully Broken Armour you inflict also increases Cold and Lightning Damage Taken from Hits'] },
+  { id: 26214, en: 'Dominion', stats: ['50% reduced effect of Archon Buffs on you', 'Archon Buffs have no recovery period after you lose one'] },
+  { id: 27704, en: 'Grace of the Ancestors', stats: ['10% increased Attack Speed', 'Every Rage also grants 1% increased Evasion Rating'] },
+  { id: 27779, en: 'Lord of the Squall', stats: ['Grant Elemental Archon to your Minions for 5 seconds when they Revive'] },
+  { id: 35046, en: 'Mystic Avalanche', stats: ['Final Echo of Cascadable Spells also Cascades to either side of the targeted Area along a random axis'] },
+  { id: 37846, en: 'Bastion of Light', stats: ['Blind Enemies 3 metres in front of you every 0.25 seconds while your Shield is raised'] },
+  { id: 37967, en: "Desert's Scorn", stats: ['Enemies standing on Chilled Ground take 25% increased Fire Damage', 'Enemies standing on Ignited Ground take 25% increased Cold Damage'] },
+  { id: 39568, en: 'Magnum Opus', stats: ['Charms applied to you have 100% increased Effect per empty Charm slot'] },
+  { id: 56666, en: 'Thaumaturgic Generator', stats: ['Grants Thaumaturgical Dynamism'] },
+];
+
 export function hydrateCompactTree(payload: CompactTreePayload): PassiveTreeData {
   const nodes: Record<number, PassiveNode> = {};
   for (const cn of payload.nodes) {
@@ -336,7 +381,7 @@ export function hydrateCompactTree(payload: CompactTreePayload): PassiveTreeData
   }
 
   if (payload.game === 'poe1') {
-    for (const bn of POE1_BLIGHTED_ANOINT_NOTABLES) {
+    for (const bn of [...POE1_BLIGHTED_ANOINT_NOTABLES, ...POE1_FORBIDDEN_ASCENDANCY_NOTABLES]) {
       if (!nodes[bn.id]) {
         nodes[bn.id] = {
           id: bn.id,
@@ -345,6 +390,20 @@ export function hydrateCompactTree(payload: CompactTreePayload): PassiveTreeData
           x: -99999,
           y: -99999,
           stats: [...bn.stats],
+          adjacent: [],
+        };
+      }
+    }
+  } else if (payload.game === 'poe2' && payload.version === '0_5') {
+    for (const dn of POE2_DISTILLED_ANOINT_NOTABLES) {
+      if (!nodes[dn.id]) {
+        nodes[dn.id] = {
+          id: dn.id,
+          name: { en: dn.en, zh: dn.en },
+          kind: 'notable',
+          x: -99999,
+          y: -99999,
+          stats: [...dn.stats],
           adjacent: [],
         };
       }

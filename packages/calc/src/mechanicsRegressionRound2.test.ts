@@ -1709,6 +1709,40 @@ describe('Mechanism-Layer Regression Suite — Round 2 (Upstream PoB spec/System
         name: { en: 'Cleansed Thoughts' },
         stats: ['Chaos Resistance is doubled'],
       });
+      // Wave 5B: Forbidden Flesh/Flame exclusive notables
+      expect(tree.nodes[52435]).toMatchObject({
+        id: 52435,
+        kind: 'notable',
+        name: { en: 'Indomitable Resolve' },
+        stats: ['Deal 10% less Damage', 'Take 25% less Damage'],
+      });
+      expect(tree.nodes[19355]).toMatchObject({
+        id: 19355,
+        kind: 'notable',
+        name: { en: 'Unleashed Potential' },
+      });
+
+      // Wave 5B: PoE 2 distilled anoint-only notables
+      const poe2Tree = hydrateCompactTree({
+        game: 'poe2',
+        version: '0_5',
+        bounds: { minX: -1000, maxX: 1000, minY: -1000, maxY: 1000 },
+        groups: {},
+        classStartNodeIds: {},
+        nodes: [],
+      });
+      expect(poe2Tree.nodes[20686]).toMatchObject({
+        id: 20686,
+        kind: 'notable',
+        name: { en: 'Paragon' },
+        stats: ['+5% to Quality of all Skills', '+5 to all Attributes'],
+      });
+      expect(poe2Tree.nodes[27704]).toMatchObject({
+        id: 27704,
+        kind: 'notable',
+        name: { en: 'Grace of the Ancestors' },
+        stats: ['10% increased Attack Speed', 'Every Rage also grants 1% increased Evasion Rating'],
+      });
     });
   });
 });
