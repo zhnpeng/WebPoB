@@ -2014,6 +2014,16 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
           tags: [{ type: 'Condition', var: 'EnemyRareOrUnique' }],
         }),
       ]);
+      expect(
+        parseModLine('15% increased Duration of Elemental Ailments on Enemies', 'Item:Gloves'),
+      ).toEqual([
+        expect.objectContaining({ name: 'ElementalAilmentDuration', type: 'INC', value: 15 }),
+      ]);
+      expect(
+        parseModLine('40% increased Area of Effect of Aftershocks you create yourself', 'Tree:Aftershocks'),
+      ).toEqual([
+        expect.objectContaining({ name: 'AftershockAreaOfEffect', type: 'INC', value: 40 }),
+      ]);
     });
   });
 });

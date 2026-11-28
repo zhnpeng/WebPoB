@@ -1339,10 +1339,14 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     },
   },
   {
-    pattern: /^(\d+)% increased (Ignite|Bleeding|Poison|Shock|Chill|Duration of Damaging Ailments|Pin|Armour Break|Curse|Hazard|Elemental Infusion|Archon Buff|Minion|Parried Debuff)(?: Duration)?(?: on Enemies)?$/i,
+    pattern: /^(\d+)% increased (Ignite|Bleeding|Poison|Shock|Chill|Duration of Damaging Ailments|Duration of Elemental Ailments|Pin|Armour Break|Curse|Hazard|Elemental Infusion|Archon Buff|Minion|Parried Debuff)(?: Duration)?(?: on Enemies)?$/i,
     build: (m, src) => {
-      if (m[2]!.toLowerCase() === 'duration of damaging ailments') {
+      const lower = m[2]!.toLowerCase();
+      if (lower === 'duration of damaging ailments') {
         return [mkMod('DamagingAilmentDuration', 'INC', Number(m[1]), src)];
+      }
+      if (lower === 'duration of elemental ailments') {
+        return [mkMod('ElementalAilmentDuration', 'INC', Number(m[1]), src)];
       }
       const key = m[2]!.replace(/\s+/g, '');
       return [mkMod(`${key}Duration`, 'INC', Number(m[1]), src)];
@@ -2918,6 +2922,10 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
         tags: [{ type: 'Condition', var: 'EnemyRareOrUnique' }],
       },
     ],
+  },
+  {
+    pattern: /^(\d+)% increased Area of Effect of Aftershocks(?: you create yourself)?$/i,
+    build: (m, src) => [mkMod('AftershockAreaOfEffect', 'INC', Number(m[1]), src, ModFlag.Area)],
   },
 
   // =========================================================================
