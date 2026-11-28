@@ -1537,4 +1537,50 @@ describe('PoE 2 The Adorned Sinister Sockets & Undying Hate Conquered Passives',
       '3% increased Energy Shield',
     ]);
   });
+
+  it('resolves PoE 2 off-tree Distilled Emotion anoint notables (Paragon, Grace of the Ancestors, Dominion)', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe2',
+      version: '0_5',
+      nodes: {
+        1: mkNode(1, 'Start', 'start', 0, 0),
+      },
+      groups: {},
+      classStartNodeIds: {},
+      bounds: { minX: -1000, maxX: 1000, minY: -1000, maxY: 1000 },
+    };
+    const amulet = mkItem({
+      id: 'amulet-poe2',
+      name: 'Gemling Amulet',
+      baseName: 'Solar Amulet',
+      slotType: 'Amulet',
+      implicits: ['Allocates Paragon', 'Allocates Grace of the Ancestors'],
+    });
+    const build = mkBuild({
+      game: 'poe2',
+      name: 'Poe2OffTreeAnointTest',
+      classId: 'mercenary',
+      ascendancyId: 'gemling_legionnaire',
+      level: 95,
+      activeWeaponSet: 1,
+      tree: {
+        title: 'Default',
+        treeVersion: '0_5',
+        allocatedNodeIds: [1],
+        weaponSet1NodeIds: [],
+        weaponSet2NodeIds: [],
+        masteryEffects: {},
+      },
+      items: { 'amulet-poe2': amulet },
+      equipped: { Amulet: 'amulet-poe2' },
+    });
+
+    const granted = collectAllocatedAnointNodes(build, tree, new Set([1]));
+    const byName = new Map(granted.map((n) => [n.name.en, n.stats]));
+    expect(byName.get('Paragon')).toEqual(['+5% to Quality of all Skills', '+5 to all Attributes']);
+    expect(byName.get('Grace of the Ancestors')).toEqual([
+      '10% increased Attack Speed',
+      'Every Rage also grants 1% increased Evasion Rating',
+    ]);
+  });
 });

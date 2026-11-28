@@ -552,6 +552,113 @@ const POE1_OFF_TREE_NOTABLES: Readonly<
   },
 };
 
+/**
+ * Official PoE 2 0.5 off-tree (`orbit = 0`) Distilled Emotion anoint-only notables
+ * omitted from `poe2-tree-0_5.json`.
+ * Source: upstream PathOfBuilding-PoE2 `src/TreeData/0_5/tree.lua`.
+ */
+const POE2_OFF_TREE_NOTABLES: Readonly<
+  Record<string, { id: number; name: string; stats: readonly string[] }>
+> = {
+  paragon: {
+    id: 20686,
+    name: 'Paragon',
+    stats: ['+5% to Quality of all Skills', '+5 to all Attributes'],
+  },
+  'grace of the ancestors': {
+    id: 27704,
+    name: 'Grace of the Ancestors',
+    stats: ['10% increased Attack Speed', 'Every Rage also grants 1% increased Evasion Rating'],
+  },
+  dominion: {
+    id: 26214,
+    name: 'Dominion',
+    stats: [
+      '50% reduced effect of Archon Buffs on you',
+      'Archon Buffs have no recovery period after you lose one',
+    ],
+  },
+  "zarokh's gift": {
+    id: 11184,
+    name: "Zarokh's Gift",
+    stats: ['Sinister Jewel Socket'],
+  },
+  unfettered: {
+    id: 10169,
+    name: 'Unfettered',
+    stats: ['50% increased Armour while Bleeding', '10% increased Movement Speed while Sprinting'],
+  },
+  'growing peril': {
+    id: 13844,
+    name: 'Growing Peril',
+    stats: ['1% increased Chaos Damage over Time per Volatility'],
+  },
+  'augmented flesh': {
+    id: 17696,
+    name: 'Augmented Flesh',
+    stats: ['Grants 2 additional Skill Slots'],
+  },
+  'dark entropy': {
+    id: 20495,
+    name: 'Dark Entropy',
+    stats: ['Withered also causes enemies to deal 1% reduced Damage'],
+  },
+  "kaom's blessing": {
+    id: 3663,
+    name: "Kaom's Blessing",
+    stats: ['The next Fire Spell you cast yourself after using a Warcry is Ancestrally Boosted'],
+  },
+  'replenishing horde': {
+    id: 21251,
+    name: 'Replenishing Horde',
+    stats: [
+      '25% Chance to revive a random Permanent Minion whenever you use a Command Skill',
+      '25% Surpassing Chance to gain a Puppet Master stack whenever you use a Command Skill',
+    ],
+  },
+  "storm's rebuke": {
+    id: 22726,
+    name: "Storm's Rebuke",
+    stats: ['Fully Broken Armour you inflict also increases Cold and Lightning Damage Taken from Hits'],
+  },
+  'lord of the squall': {
+    id: 27779,
+    name: 'Lord of the Squall',
+    stats: ['Grant Elemental Archon to your Minions for 5 seconds when they Revive'],
+  },
+  'mystic avalanche': {
+    id: 35046,
+    name: 'Mystic Avalanche',
+    stats: ['Final Echo of Cascadable Spells also Cascades to either side of the targeted Area along a random axis'],
+  },
+  'bastion of light': {
+    id: 37846,
+    name: 'Bastion of Light',
+    stats: [
+      'Blind Enemies 3 metres in front of you every 0.25 seconds while your Shield is raised',
+      'Raise Shield inflicts Parried for 2 seconds on Hit',
+    ],
+  },
+  "desert's scorn": {
+    id: 37967,
+    name: "Desert's Scorn",
+    stats: [
+      'Enemies standing on Chilled Ground take 25% increased Fire Damage',
+      'Enemies standing on Ignited Ground take 25% increased Cold Damage',
+    ],
+  },
+  'magnum opus': {
+    id: 39568,
+    name: 'Magnum Opus',
+    stats: ['Charms applied to you have 100% increased Effect per empty Charm slot'],
+  },
+  'thaumaturgic generator': {
+    id: 56666,
+    name: 'Thaumaturgic Generator',
+    stats: ['Grants Thaumaturgical Dynamism'],
+  },
+};
+
   const lookupNode = (name: string, preferAscendancy: boolean): PassiveNode | undefined => {
     const key = name.trim().toLowerCase();
     if (!key) return undefined;
@@ -573,6 +680,21 @@ const POE1_OFF_TREE_NOTABLES: Readonly<
           stats: [...offTree.stats],
           adjacent: [],
           ...(offTree.isHiddenAscendancy ? { ascendancyId: 'forbidden' } : {}),
+        };
+      }
+    } else if (build.game === 'poe2') {
+      const offTree = POE2_OFF_TREE_NOTABLES[key];
+      if (offTree) {
+        return {
+          id: offTree.id,
+          name: { en: offTree.name, zh: offTree.name },
+          kind: 'notable',
+          x: 0,
+          y: 0,
+          group: 0,
+          orbit: 0,
+          stats: [...offTree.stats],
+          adjacent: [],
         };
       }
     }
