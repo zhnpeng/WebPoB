@@ -527,6 +527,120 @@ function hydrateSkillParts(
   });
 }
 
+interface UpstreamMultiplierTagPatch {
+  varName: string;
+  limitTotal?: boolean;
+  divToPerStat?: number;
+}
+
+/**
+ * Restores upstream PoB1/PoB2 `Multiplier` tag metadata (`limitTotal = true`, `div = N`) that was
+ * omitted when compact `poe1-gems.json` / `poe2-gems.json` payloads were exported.
+ */
+const UPSTREAM_MULTIPLIER_TAG_PATCHES: Readonly<
+  Record<GameId, Readonly<Record<string, readonly UpstreamMultiplierTagPatch[]>>>
+> = {
+  poe1: {
+    poe1_supportfocusedchannelling: [{ varName: 'ChannellingTime', limitTotal: true }],
+    poe1_supportexemplar: [{ varName: 'CritRecently', limitTotal: true }],
+    poe1_supportinvention: [{ varName: 'PlacedDuration', limitTotal: true }],
+    poe1_lightningconduit: [{ varName: 'ShockEffect', divToPerStat: 5 }],
+    poe1_galvanicfield: [{ varName: 'ShockEffect', divToPerStat: 5 }],
+    poe1_frostblinkaltx: [{ varName: 'ChillEffect', divToPerStat: 5 }],
+    poe1_supportbloodsoakedbanner: [{ varName: 'ValourStacks', divToPerStat: 8 }],
+    poe1_chainhook: [{ varName: 'Rage', divToPerStat: 5 }],
+    poe1_chainhookalty: [{ varName: 'Rage', divToPerStat: 5 }],
+    poe1_cleavealtx: [{ varName: 'Rage', divToPerStat: 5 }],
+  },
+  poe2: {
+    poe2_incisionsupport: [{ varName: 'IncisionConsumedRecently', limitTotal: true }],
+    poe2_lightningconduit: [{ varName: 'ShockEffect', divToPerStat: 5 }],
+  },
+};
+
+function patchCompiledModsWithUpstreamTags(
+  mods: CompiledGemMod[] | undefined,
+  patches: readonly UpstreamMultiplierTagPatch[] | undefined,
+): CompiledGemMod[] | undefined {
+  if (!mods || !patches || patches.length === 0) return mods;
+  return mods.map((m) => {
+    if (!m.tags || m.tags.length === 0) return m;
+    let changed = false;
+    const nextTags = m.tags.map((tag) => {
+      if (tag.type !== 'Multiplier') return tag;
+      const patch = patches.find((p) => p.varName === tag.var);
+      if (!patch) return tag;
+      if (patch.divToPerStat !== undefined) {
+        changed = true;
+        return {
+          type: 'PerStat' as const,
+          stat: tag.var,
+          div: patch.divToPerStat,
+          ...(tag.limit !== undefined ? { limit: tag.limit } : {}),
+        };
+      }
+      if (patch.limitTotal && tag.limit !== undefined) {
+        const cur = tag as { limitTotal?: boolean };
+        if (!cur.limitTotal) {
+          changed = true;
+          return { ...tag, limitTotal: true } as ModTag;
+        }
+      }
+      return tag;
+    });
+    return changed ? { ...m, tags: nextTags } : m;
+  });
+}
+
+function applyUpstreamTagPatchesToGem(
+  game: GameId,
+  gemId: string,
+  compiledMods: CompiledGemMod[] | undefined,
+  levelScaling: GemDefinition['levelScaling'] | undefined,
+  parts: SkillPartDefinition[] | undefined,
+): {
+  compiledMods: CompiledGemMod[] | undefined;
+  levelScaling: GemDefinition['levelScaling'] | undefined;
+  parts: SkillPartDefinition[] | undefined;
+} {
+  const patches = UPSTREAM_MULTIPLIER_TAG_PATCHES[game][gemId];
+  if (!patches || patches.length === 0) {
+    return { compiledMods, levelScaling, parts };
+  }
+  const patchedCompiled = patchCompiledModsWithUpstreamTags(compiledMods, patches);
+  let patchedLs = levelScaling;
+  if (levelScaling) {
+    patchedLs = {};
+    for (const [lv, snap] of Object.entries(levelScaling)) {
+      const lvNum = Number(lv);
+      patchedLs[lvNum] = snap.compiledMods
+        ? { ...snap, compiledMods: patchCompiledModsWithUpstreamTags(snap.compiledMods, patches) }
+        : snap;
+    }
+  }
+  let patchedParts = parts;
+  if (parts) {
+    patchedParts = parts.map((p) => {
+      let nextLevels = p.levels;
+      if (p.levels) {
+        nextLevels = {};
+        for (const [lv, snap] of Object.entries(p.levels)) {
+          const lvNum = Number(lv);
+          nextLevels[lvNum] = snap.compiledMods
+            ? { ...snap, compiledMods: patchCompiledModsWithUpstreamTags(snap.compiledMods, patches) }
+            : snap;
+        }
+      }
+      return {
+        ...p,
+        ...(p.compiledMods ? { compiledMods: patchCompiledModsWithUpstreamTags(p.compiledMods, patches) } : {}),
+        ...(nextLevels ? { levels: nextLevels } : {}),
+      };
+    });
+  }
+  return { compiledMods: patchedCompiled, levelScaling: patchedLs, parts: patchedParts };
+}
+
 const UPSTREAM_MISSING_SKILL_COMPILED_MODS: Readonly<
   Record<GameId, Readonly<Record<string, readonly CompiledGemMod[]>>>
 > = {
@@ -599,6 +713,26 @@ const UPSTREAM_MISSING_QUALITY_COMPILED_MODS: Readonly<
         type: 'INC',
         value: 0.5,
         flags: ModFlag.Projectile,
+        keywordFlags: 0,
+      },
+    ],
+    // Upstream PoB1 3.30 Data/Skills/act_int.lua: Bane display_linked_curse_effect_+% = 1/qual
+    poe1_bane: [
+      {
+        name: 'CurseEffect',
+        type: 'INC',
+        value: 1,
+        flags: 0,
+        keywordFlags: 0,
+      },
+    ],
+    // Upstream PoB1 3.30 Data/Skills/sup_str.lua: Maim Support maim_effect_+% = 1/qual
+    poe1_supportmaim: [
+      {
+        name: 'MaimEffect',
+        type: 'INC',
+        value: 1,
+        flags: 0,
         keywordFlags: 0,
       },
     ],
@@ -750,8 +884,13 @@ function synthesizeGemDefinition(
     return Object.keys(merged).length > 0 ? merged : undefined;
   })();
   const minionBase = hydrateMinionBase(entry.mb);
-  const levelScaling = hydrateLevelScaling(entry.ls);
-  const parts = hydrateSkillParts(entry.parts);
+  const rawLevelScaling = hydrateLevelScaling(entry.ls);
+  const rawParts = hydrateSkillParts(entry.parts);
+  const {
+    compiledMods: patchedCompiledMods,
+    levelScaling,
+    parts,
+  } = applyUpstreamTagPatchesToGem(game, entry.id, compiledMods, rawLevelScaling, rawParts);
 
   const structuredFields = {
     ...(altIds ? { altIds } : {}),
@@ -760,7 +899,7 @@ function synthesizeGemDefinition(
     ...(requireSkillTypes ? { requireSkillTypes } : {}),
     ...(addSkillTypes ? { addSkillTypes } : {}),
     ...(excludeSkillTypes ? { excludeSkillTypes } : {}),
-    ...(compiledMods ? { compiledMods } : {}),
+    ...(patchedCompiledMods ? { compiledMods: patchedCompiledMods } : {}),
     ...(qualityCompiledMods ? { qualityCompiledMods } : {}),
     ...(skillData ? { skillData } : {}),
     ...(minionBase ? { minionBase } : {}),

@@ -1576,5 +1576,109 @@ describe('Mechanism-Layer Regression Suite — Round 2 (Upstream PoB spec/System
       expect(es.moreMultiplier).toBe(1.32);
       expect(es.total).toBe(1320);
     });
+
+    it('restores upstream limitTotal and PerStat div on compact gem cmods/levelScaling and missing Bane/Maim quality stats (Wave 4X)', () => {
+      const prevPoe1 = getGemsForGame('poe1');
+      try {
+        const hydrated = registerGemsData('poe1', {
+          game: 'poe1',
+          count: 3,
+          gems: [
+            {
+              id: 'poe1_supportfocusedchannelling',
+              en: 'Focused Channelling',
+              cat: 'support',
+              color: 'blue',
+              tags: ['support'],
+              cmods: [
+                {
+                  n: 'Damage',
+                  t: 'MORE',
+                  v: 24,
+                  tags: [{ type: 'Multiplier', var: 'ChannellingTime', limit: 60 }],
+                },
+              ],
+              ls: {
+                '20': {
+                  cmods: [
+                    {
+                      n: 'Damage',
+                      t: 'MORE',
+                      v: 24,
+                      tags: [{ type: 'Multiplier', var: 'ChannellingTime', limit: 60 }],
+                    },
+                  ],
+                },
+              },
+            },
+            {
+              id: 'poe1_lightningconduit',
+              en: 'Lightning Conduit',
+              cat: 'active',
+              color: 'blue',
+              tags: ['spell', 'lightning'],
+              cmods: [
+                {
+                  n: 'Damage',
+                  t: 'MORE',
+                  v: 20,
+                  tags: [{ type: 'Multiplier', var: 'ShockEffect' }],
+                },
+              ],
+            },
+            {
+              id: 'poe1_bane',
+              en: 'Bane',
+              cat: 'active',
+              color: 'blue',
+              tags: ['spell', 'chaos'],
+              cmods: [],
+            },
+          ],
+        });
+
+        // Focused Channelling caps total MORE damage at 60% (limitTotal: true) even at 5s channelled
+        const fc = hydrated.find((g) => g.id === 'poe1_supportfocusedchannelling')!;
+        const db = new ModDB();
+        db.setMultiplier('ChannellingTime', 5);
+        for (const cm of fc.levelScaling?.[20]?.compiledMods ?? []) {
+          db.addMod({
+            name: cm.name,
+            type: cm.type,
+            value: cm.value,
+            flags: cm.flags,
+            keywordFlags: cm.keywordFlags,
+            tags: cm.tags,
+            source: 'Focused Channelling',
+          });
+        }
+        expect(db.more('Damage')).toBeCloseTo(1.6, 4);
+
+        // Lightning Conduit scales 20% MORE per 5% ShockEffect (50% shock -> 10 * 20 = 200% MORE = 3.0x)
+        const lc = hydrated.find((g) => g.id === 'poe1_lightningconduit')!;
+        const lcDb = new ModDB();
+        lcDb.setStat('ShockEffect', 50);
+        for (const cm of lc.compiledMods ?? []) {
+          lcDb.addMod({
+            name: cm.name,
+            type: cm.type,
+            value: cm.value,
+            flags: cm.flags,
+            keywordFlags: cm.keywordFlags,
+            tags: cm.tags,
+            source: 'Lightning Conduit',
+          });
+        }
+        expect(lcDb.more('Damage')).toBeCloseTo(3.0, 4);
+
+        // Bane gets 1% CurseEffect per quality when qmods is absent
+        const bane = hydrated.find((g) => g.id === 'poe1_bane')!;
+        expect(bane.qualityCompiledMods).toEqual([
+          expect.objectContaining({ name: 'CurseEffect', type: 'INC', value: 1 }),
+        ]);
+      } finally {
+        setRegisteredGems('poe1', prevPoe1);
+      }
+    });
   });
 });
