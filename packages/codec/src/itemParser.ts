@@ -639,19 +639,23 @@ export function parseItemText(
       inlineRanges ?? (rawModIndex !== undefined ? modRanges.get(rawModIndex) : undefined);
     // PoE 2 `{corruptedRange:X}` (upstream PoB2 ItemTools.lua baseValueScalar) and
     // PoE 1/2 Catalyst scaling (upstream PoB Item.lua:1198 `itemLib.applyRange`):
-    // ONLY scale numbers interpolated from `(min-max)` ranges, NEVER fixed constants such as
-    // `per 100 Maximum Mana`, `every 10 Intelligence`, `up to 200%`, or `for 4 seconds`.
+    // - When a line has `(min-max)` ranges, scale ONLY the interpolated range values (never fixed
+    //   divisors like `per 100 Maximum Mana` or `every 10 Intelligence`).
+    // - When a Catalyst-tagged trade-exported line has NO `(min-max)` ranges, scale its numeric
+    //   values while still skipping non-scalable divisors/limits/durations (`per N`, `every N`,
+    //   `up to N`, `for N seconds`, etc.).
+    const isUnscalable = /\{unscalable\}|\bunscalable value\b/i.test(rawLine);
+    const hasExplicitRange = /\(-?\d+(?:\.\d+)?--?\d+(?:\.\d+)?\)/.test(rawLine);
     const corruptedRangeMatch = rawLine.match(/\{corruptedRange:([+-]?\d+(?:\.\d+)?)\}/i);
     const corruptedRangeScalar = corruptedRangeMatch ? Number(corruptedRangeMatch[1]) : 1;
-    const isScalableRangeLine =
-      /\(\d/.test(rawLine) && !/\{unscalable\}|\bunscalable value\b/i.test(rawLine);
     const applyCorruptedScale =
-      isScalableRangeLine &&
+      !isUnscalable &&
+      hasExplicitRange &&
       Number.isFinite(corruptedRangeScalar) &&
       corruptedRangeScalar > 0 &&
       corruptedRangeScalar !== 1;
     let catMult = 1;
-    if (isScalableRangeLine && activeCatalystTags && catalystQuality) {
+    if (!isUnscalable && activeCatalystTags && catalystQuality) {
       const mTags = rawLine.match(/\{tags:([^}]*)\}/i);
       const lineTags = mTags?.[1]
         ? mTags[1]
@@ -666,7 +670,7 @@ export function parseItemText(
       }
     }
     let interpolated: string;
-    if (applyCorruptedScale || catMult !== 1) {
+    if ((applyCorruptedScale || catMult !== 1) && hasExplicitRange) {
       const ranges =
         typeof modRangeOverride === 'number' && Number.isFinite(modRangeOverride)
           ? [modRangeOverride]
@@ -698,6 +702,34 @@ export function parseItemText(
         },
       );
       interpolated = interpolateModRanges(preScaled, modRangeOverride);
+    } else if (catMult !== 1 && !hasExplicitRange) {
+      // Plain trade-exported Catalyst-tagged line without `(min-max)` ranges:
+      // strip leading `{...}` tags before scanning numbers so `{variant:1}` isn't scaled,
+      // and skip non-scalable divisors/limits/durations (`per 100`, `every 10`, `for 4 seconds`, etc.).
+      const tagPrefixMatch = rawLine.match(/^((?:\{[^}]+\}\s*)+)/);
+      const tagPrefix = tagPrefixMatch ? tagPrefixMatch[1]! : '';
+      const body = rawLine.slice(tagPrefix.length);
+      const scaledBody = body.replace(
+        /([+-]?)(\d+(?:\.\d+)?)/g,
+        (full, sign: string, numStr: string, offset: number, src: string) => {
+          const before = src.slice(Math.max(0, offset - 20), offset);
+          const after = src.slice(offset + full.length, offset + full.length + 14);
+          if (
+            /\b(?:per|every|up to|for|within|over|last|past|at least|at most|maximum of)\s+$/i.test(before) ||
+            /^\s*(?:seconds?|metres?|meters?|stacks?|times?|enemies|allies)\b/i.test(after)
+          ) {
+            return full;
+          }
+          const decimals = numStr.includes('.') ? numStr.length - numStr.indexOf('.') - 1 : 0;
+          const factor = Math.pow(10, decimals);
+          let val = Number(numStr);
+          if (sign === '-') val = -val;
+          val = Math.trunc(val * catMult * factor + Math.sign(val) * 1e-9) / factor;
+          const formatted = decimals > 0 ? val.toFixed(decimals).replace(/\.?0+$/, '') : String(val);
+          return sign === '+' && val > 0 ? `+${formatted}` : formatted;
+        },
+      );
+      interpolated = interpolateModRanges(tagPrefix + scaledBody, modRangeOverride);
     } else {
       interpolated = interpolateModRanges(rawLine, modRangeOverride);
     }

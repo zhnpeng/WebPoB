@@ -2111,5 +2111,27 @@ Implicits: 1
       expect(icDb.more('Damage', ModFlag.Spell | ModFlag.Dot, 0)).toBeCloseTo(1.3, 4);
       expect(icDb.more('Damage', ModFlag.Attack | ModFlag.Hit, 0)).toBe(1);
     });
+
+    it('scales plain trade-exported Catalyst lines without (min-max) while still skipping per-N divisors (Wave 6L)', () => {
+      const plainRing = parseItemText(
+        [
+          'Rarity: UNIQUE',
+          'The Taming',
+          'Prismatic Ring',
+          'Catalyst: Turbulent',
+          'CatalystQuality: 20',
+          'Implicits: 1',
+          '{tags:jewellery_elemental,resistance}+10% to all Elemental Resistances',
+          '{tags:jewellery_elemental,attack}30% increased Elemental Damage with Attack Skills',
+          '{tags:jewellery_elemental}10 to 20 Added Fire Damage per 100 Maximum Mana',
+        ].join('\n'),
+        'poe1',
+      );
+      expect(plainRing?.implicits).toEqual(['+12% to all Elemental Resistances']);
+      expect(plainRing?.explicits).toEqual([
+        '36% increased Elemental Damage with Attack Skills',
+        '12 to 24 Added Fire Damage per 100 Maximum Mana',
+      ]);
+    });
   });
 });
