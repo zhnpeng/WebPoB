@@ -1726,4 +1726,42 @@ describe('uniqueMechanicsRuntime — 5. Pool-Conversion Keystones & Faithguard',
     expect(dbParsed.sum('BASE', 'LightningMin', ModFlag.Attack)).toBe(0);
     expect(dbParsed.sum('BASE', 'LightningMax', ModFlag.Attack)).toBe(0);
   });
+
+  it('recognizes Chinese Kalandra’s Touch (卡兰德之触) in evaluateIngenuityAndRingBonuses', () => {
+    const ring1 = makeItem({
+      id: 'r1',
+      name: 'Rare Ring',
+      baseName: 'Gold Ring',
+      slotType: 'Ring 1',
+      explicits: ['+40% to Fire Resistance'],
+    });
+    const ring2 = makeItem({
+      id: 'r2',
+      name: '卡兰德之触',
+      baseName: '戒指',
+      slotType: 'Ring 2',
+      rarity: 'UNIQUE',
+      explicits: ['镜像反映你的另一枚戒指'],
+    });
+    const belt = makeItem({
+      id: 'belt-ing',
+      name: 'Ingenuity',
+      baseName: 'Utility Belt',
+      slotType: 'Belt',
+      rarity: 'UNIQUE',
+      explicits: ['50% increased bonuses gained from Equipped Rings'],
+    });
+    const db = new ModDB();
+    const res = evaluateIngenuityAndRingBonuses(
+      [
+        { slot: 'Ring 1', item: ring1 },
+        { slot: 'Ring 2', item: ring2 },
+        { slot: 'Belt', item: belt },
+      ],
+      db,
+    );
+    // Ring 1 (+40 * 50% = +20) + Ring 2 (卡兰德之触 reflecting Ring 1: +40 * 50% = +20) = +40 bonus Fire Res
+    expect(db.sum('BASE', 'FireResist')).toBe(40);
+    expect(res.rings.length).toBe(2);
+  });
 });

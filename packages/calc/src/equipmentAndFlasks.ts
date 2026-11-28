@@ -788,7 +788,7 @@ export function evaluatePoe2MagebloodLegacies(item: Item): string[] {
     const defs = POE2_MAGEBLOOD_LEGACIES[key];
     if (!defs) continue;
     for (const def of defs) {
-      const scaled = Math.floor(def.baseValue * effectMult);
+      const scaled = Math.floor(def.baseValue * effectMult + 1e-9);
       out.push(def.template(scaled));
     }
   }

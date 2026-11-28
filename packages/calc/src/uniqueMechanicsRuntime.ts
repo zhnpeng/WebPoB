@@ -190,8 +190,10 @@ function extractEquippedEntries(
 
 function isKalandrasTouch(item: Item): boolean {
   const lower = normalizeName(item.name);
-  if (lower === "kalandra's touch") return true;
-  return collectCleanItemLines(item).some((l) => /Reflects (?:your other|opposite) Ring/i.test(l));
+  if (lower === "kalandra's touch" || item.name.includes('卡兰德之触')) return true;
+  return collectCleanItemLines(item).some(
+    (l) => /Reflects (?:your other|opposite) Ring/i.test(l) || /反映.*戒指|反射.*戒指/.test(l),
+  );
 }
 
 function formatNumberTrimmed(val: number, decimals: number): string {

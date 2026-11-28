@@ -1052,4 +1052,24 @@ describe('equipmentAndFlasks — Special Meta Unique Gear Mechanics', () => {
     const extra = collectExtraSocketedEquipment(build);
     expect(extra.map((e) => e.slot)).toEqual(['Gloves Jewel Socket 1']);
   });
+
+  it('avoids IEEE-754 floor truncation drift on PoE 2 Mageblood Legacy of Bismuth (45 * 1.4 = 63)', () => {
+    const mb = makeItem({
+      id: 'belt-mb-40',
+      name: 'Mageblood',
+      baseName: 'Utility Belt',
+      slotType: 'Belt',
+      rarity: 'UNIQUE',
+      explicits: [
+        'Legacy of Silver',
+        'Legacy of Gold',
+        'Legacy of Silver',
+        'Legacy of Bismuth',
+        "All Mage's Legacies have 40% increased effect per duplicate Mage's Legacy you have",
+      ],
+    });
+    const lines = evaluatePoe2MagebloodLegacies(mb);
+    expect(lines).toContain('+63% to all Elemental Resistances');
+    expect(lines).toContain('42% increased Attack and Cast Speed');
+  });
 });
