@@ -5356,7 +5356,7 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
     const alreadyHasArcaneCloakLightning = db
       .calcStat('LightningMax', ModFlag.Hit)
       .sources.some((s) => /arcane cloak/i.test(s.source));
-    const cloakLightning = Math.floor(spentMana * 0.14);
+    const cloakLightning = Math.floor(spentMana * 0.10);
     if (!alreadyHasArcaneCloakLightning && cloakLightning > 0) {
       db.addMod({
         name: 'LightningMin',
@@ -9092,6 +9092,27 @@ function computeGroupOffence(
         }
       }
     }
+    // PoE 1 Blade Blast of Dagger Detonation (`gainPercentBaseDaggerDamageToSpells`, e.g. 675% of main-hand dagger base damage)
+    const daggerPct = activeSkillData.gainPercentBaseDaggerDamageToSpells;
+    if (
+      build.game === 'poe1' &&
+      !isAttack &&
+      typeof daggerPct === 'number' &&
+      daggerPct > 0 &&
+      mainWeaponStats?.weaponType === 'Dagger'
+    ) {
+      const mult = daggerPct / 100;
+      baseMin.Physical += mainWeaponStats.physicalMin * mult;
+      baseMax.Physical += mainWeaponStats.physicalMax * mult;
+      if (mainWeaponStats.elementalDamage) {
+        for (const [el, range] of Object.entries(mainWeaponStats.elementalDamage)) {
+          if (!range) continue;
+          const dt = el as DamageType;
+          baseMin[dt] += range[0] * mult;
+          baseMax[dt] += range[1] * mult;
+        }
+      }
+    }
   }
 
   // Detect active special support / buff gems (Rakiata's Flow, Garukhan's Resolve, Archmage, Ephemeral Edge, Righteous Fire)
@@ -11174,20 +11195,6 @@ function computeGroupOffence(
           ? activeSkillData.boltCount
           : skillDb.sum('BASE', 'CrossbowBoltCount', flags, kwFlags))
       : 0;
-  // PoE 2 Grenade Activate Twice (`CalcOffence.lua:1281-1284`): `GrenadeActivateTwice` BASE -> `DPS MORE`
-  if (build.game === 'poe2' && (effectiveSkillTypeSet.has('grenade') || activeDef.tags.some((t) => t.toLowerCase() === 'grenade'))) {
-    const detonateTwice = Math.min(100, Math.max(0, skillDb.sum('BASE', 'GrenadeActivateTwice', flags, kwFlags)));
-    if (detonateTwice > 0) {
-      skillDb.addMod({
-        name: 'DPS',
-        type: 'MORE',
-        value: detonateTwice,
-        flags: 0,
-        keywordFlags: 0,
-        source: 'Grenade Activate Twice',
-      });
-    }
-  }
   const crossbowBaseReloadTable: Record<string, number> = {
     'makeshift crossbow': 0.8,
     'tense crossbow': 0.85,
@@ -11238,8 +11245,14 @@ function computeGroupOffence(
           : 0
       : 0;
   if (crossbowBaseReload > 0 && crossbowBoltCount > 0 && speedExact > 0) {
-    const noConsumePct = Math.min(100, Math.max(0, skillDb.sum('BASE', 'ChanceToNotConsumeAmmo', flags, kwFlags)));
-    const instantReloadPct = Math.min(100, Math.max(0, skillDb.sum('BASE', 'InstantReloadChance', flags, kwFlags)));
+    const noConsumePct = Math.min(
+      100,
+      Math.max(0, skillDb.sum('BASE', ['ChanceToNotConsumeAmmo', 'CrossbowNoConsumeAmmoChance'], flags, kwFlags)),
+    );
+    const instantReloadPct = Math.min(
+      100,
+      Math.max(0, skillDb.sum('BASE', ['InstantReloadChance', 'CrossbowInstantReloadChance'], flags, kwFlags)),
+    );
     if (noConsumePct < 100) {
       const effBolts = crossbowBoltCount / Math.max(0.01, 1 - noConsumePct / 100);
       const reloadInc = skillDb.sum('INC', ['ReloadSpeed', 'Speed'], flags, kwFlags);

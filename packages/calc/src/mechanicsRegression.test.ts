@@ -2264,4 +2264,91 @@ describe('Mechanism-Layer Regression Suite (PoE 1 & PoE 2)', () => {
       expect(outWithMinionInc.offence.averageHit).toBeGreaterThan(outPlain.offence.averageHit * 2.5);
     });
   });
+
+  describe('Wave 5F: PoE 2 Repeating Explosives Dedup & Crossbow Instant Reload', () => {
+    it('applies Repeating Explosives GrenadeActivateTwice once (1.15x, not 1.3225x) to PoE 2 Grenade DPS', () => {
+      const base = createSamplePoe2Build();
+      const xbow = makeWeapon({
+        id: 'grenade_xbow',
+        name: 'Test Crossbow',
+        baseName: 'Bombard Crossbow',
+        slotType: 'Weapon 1',
+        weaponStats: {
+          weaponType: 'Crossbow',
+          twoHanded: true,
+          physicalMin: 100,
+          physicalMax: 200,
+          attacksPerSecond: 1.6,
+          critChance: 5,
+        },
+      });
+      const plain: Build = {
+        ...base,
+        items: { ...base.items, [xbow.id]: xbow },
+        equipped: { ...base.equipped, 'Weapon 1': xbow.id, 'Weapon 2': undefined },
+        skills: [
+          {
+            id: 'sg_gren',
+            label: 'Explosive Grenade',
+            enabled: true,
+            gems: [{ instanceId: 'g_eg', gemId: 'poe2_explosivegrenade', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_gren',
+      };
+      const withRepeating: Build = {
+        ...plain,
+        config: {
+          ...plain.config,
+          customMods: 'Grenades have 15% chance to activate a second time',
+        },
+      };
+      const outPlain = calculateBuild(plain);
+      const outRep = calculateBuild(withRepeating);
+      expect(outPlain.offence.hitDps).toBeGreaterThan(0);
+      expect(outRep.offence.hitDps / outPlain.offence.hitDps).toBeCloseTo(1.15, 2);
+    });
+
+    it('consumes CrossbowInstantReloadChance to reduce PoE 2 crossbow effective reload time', () => {
+      const base = createSamplePoe2Build();
+      const xbow = makeWeapon({
+        id: 'reload_xbow',
+        name: 'Test Crossbow',
+        baseName: 'Dyad Crossbow',
+        slotType: 'Weapon 1',
+        weaponStats: {
+          weaponType: 'Crossbow',
+          twoHanded: true,
+          physicalMin: 100,
+          physicalMax: 200,
+          attacksPerSecond: 1.6,
+          critChance: 5,
+        },
+      });
+      const plain: Build = {
+        ...base,
+        items: { ...base.items, [xbow.id]: xbow },
+        equipped: { ...base.equipped, 'Weapon 1': xbow.id, 'Weapon 2': undefined },
+        skills: [
+          {
+            id: 'sg_pb',
+            label: 'Permafrost Bolts',
+            enabled: true,
+            gems: [{ instanceId: 'g_pb', gemId: 'poe2_permafrostbolts', level: 20, quality: 0, enabled: true }],
+          },
+        ],
+        mainSkillGroupId: 'sg_pb',
+      };
+      const withInstantReload: Build = {
+        ...plain,
+        config: {
+          ...plain.config,
+          customMods: '30% chance when you Reload a Crossbow to be immediate',
+        },
+      };
+      const outPlain = calculateBuild(plain);
+      const outInst = calculateBuild(withInstantReload);
+      expect(outInst.offence.speed).toBeGreaterThan(outPlain.offence.speed * 1.05);
+    });
+  });
 });
