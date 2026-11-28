@@ -4367,6 +4367,23 @@ export function evaluateAurasAndWatchersEye(
     evaluateCandidate(cand);
   }
 
+  // Propagate canonical aura names from imported Party / Mercenary auras (`<Party><ImportedBuffs name="Aura">`)
+  // so Watcher's Eye `while affected by <Aura>` mods activate for party-granted auras (note: Sublime Vision only
+  // restricts "Auras from your Skills", so party-granted auras still affect the player).
+  if (build.config.importedPartyMods && build.config.importedPartyMods.length > 0) {
+    for (const pm of build.config.importedPartyMods) {
+      if (pm.target === 'enemy') continue;
+      const mPartyAura = pm.source.match(/^Party\s*\(Aura\):\s*(.+)$/i);
+      if (!mPartyAura) continue;
+      const canonical = WATCHERS_EYE_AURA_BY_LOWER.get(mPartyAura[1]!.trim().toLowerCase());
+      if (!canonical || canonical === 'Pride') continue;
+      activeAurasAll.add(canonical);
+      activeAurasAffectingPlayer.add(canonical);
+      const noSpace = canonical.replace(/\s+/g, '');
+      playerDb.setCondition(`AffectedBy${noSpace}`, true);
+    }
+  }
+
   // PASS 2: Watcher's Eye & Sublime Vision conditional jewel lines BEFORE CurseLimit resolution
   const watchersEyeLines: WatchersEyeEvaluatedLine[] = [];
   const watchersEyeMods: Mod[] = [];

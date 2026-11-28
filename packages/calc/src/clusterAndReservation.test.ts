@@ -3105,4 +3105,57 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     expect(db.sum('BASE', 'LightningMin')).toBeCloseTo(432, 2);
     expect(db.sum('BASE', 'LightningMax')).toBeCloseTo(432, 2);
   });
+
+  it('activates Watcher Eye mods for imported Party/Mercenary auras (e.g. Party (Aura): Wrath) even with Sublime Vision equipped', () => {
+    const watchersEye: Item = {
+      id: 'we-party',
+      name: "Watcher's Eye",
+      baseName: 'Prismatic Jewel',
+      rarity: 'UNIQUE',
+      slotType: 'Any',
+      quality: 0,
+      implicits: [],
+      explicits: [
+        '91% increased Critical Strike Chance while affected by Wrath',
+        '53% increased Lightning Damage while affected by Wrath',
+        '10% chance to deal Double Damage while using Pride',
+      ],
+      rawText: '',
+    };
+    const db = new ModDB();
+    const build = mkBuild({
+      game: 'poe1',
+      skills: [],
+    });
+    build.config.importedPartyMods = [
+      {
+        name: 'LightningDamage',
+        type: 'MORE',
+        value: 23,
+        flags: ModFlag.Spell,
+        keywordFlags: 0,
+        source: 'Party (Aura): Wrath',
+      },
+      {
+        name: 'PhysicalDamageTaken',
+        type: 'MORE',
+        value: 19,
+        flags: 0,
+        keywordFlags: 0,
+        target: 'enemy',
+        source: 'Party (Aura): Pride',
+      },
+    ];
+    const res = evaluateAurasAndWatchersEye({
+      build,
+      playerDb: db,
+      socketedJewels: [watchersEye],
+      maxMana: 1000,
+    });
+    expect(db.getEvalContext().conditions.AffectedByWrath).toBe(true);
+    expect(db.sum('INC', 'CritChance')).toBe(91);
+    expect(db.sum('INC', 'LightningDamage')).toBe(53);
+    // Pride from party should NOT activate player-only "while using Pride"
+    expect(res.watchersEyeLines.find((l) => l.requiredAura === 'Pride')?.active).toBe(false);
+  });
 });
