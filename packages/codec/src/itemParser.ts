@@ -903,6 +903,21 @@ export function formatItemToPobText(item: Item): string {
   if (item.levelReq) {
     lines.push(`LevelReq: ${item.levelReq}`);
   }
+  // Emit PoB2 jewel Radius header so From Nothing, Controlled Metamorphosis, Against the Darkness,
+  // Heroic Tragedy, and Time-Lost Jewels retain full radius & connectivity in Desktop PoB2 / LuaJIT.
+  const allItemLines = [...item.implicits, ...item.explicits];
+  if (/^From Nothing$/i.test(item.name)) {
+    lines.push('Radius: Small');
+  } else if (/^Controlled Metamorphosis$/i.test(item.name) || allItemLines.some((l) => /Only affects Passives in .* Ring/i.test(l))) {
+    lines.push('Radius: Variable');
+  } else if (/^Heroic Tragedy$/i.test(item.name)) {
+    lines.push('Radius: Very Large');
+  } else if (/^Against the Darkness$/i.test(item.name)) {
+    lines.push('Radius: Large');
+  } else if (/^Time-Lost /i.test(item.baseName) || allItemLines.some((l) => /Passive Skills in Radius/i.test(l))) {
+    const mUp = allItemLines.map((l) => l.match(/^Upgrades radius to (Medium|Large|Very Large)$/i)).find(Boolean);
+    lines.push(`Radius: ${mUp ? mUp[1] : 'Medium'}`);
+  }
   if (item.armourStats?.armour) {
     lines.push(`Armour: ${item.armourStats.armour}`);
   }
@@ -911,6 +926,9 @@ export function formatItemToPobText(item: Item): string {
   }
   if (item.armourStats?.energyShield) {
     lines.push(`Energy Shield: ${item.armourStats.energyShield}`);
+  }
+  if (item.armourStats?.ward) {
+    lines.push(`Ward: ${item.armourStats.ward}`);
   }
   if (item.armourStats?.blockChance) {
     lines.push(`Chance to Block: ${item.armourStats.blockChance}%`);

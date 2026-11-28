@@ -10,6 +10,7 @@ import {
   parseWeGamePoe2Build,
   type WeGamePoe2Bundle,
 } from './wegameImporter.js';
+import { buildToPobXml } from './pobCode.js';
 
 beforeAll(() => {
   const treePath = path.resolve(process.cwd(), 'apps/web/public/data/poe2-tree-0_5.json');
@@ -481,5 +482,122 @@ describe('parseWeGamePoe2Build', () => {
     expect(normalizeStatLineToEn('获得等同生命上限 28% 的额外能量护盾')).toBe(
       'Gain 28% of Maximum Life as Extra Maximum Energy Shield',
     );
+    expect(normalizeStatLineToEn('可以从暗影的起点配置天赋技能')).toBe(
+      "Can Allocate Passive Skills from the Shadow's starting point",
+    );
+    expect(normalizeStatLineToEn('未连结至天赋树的技能，仍然可以在范围内配置')).toBe(
+      'Passives in Radius can be Allocated without being connected to your tree',
+    );
+    expect(normalizeStatLineToEn('配置 2 个[SinisterJewelSockets|恶劣之][Jewel|珠宝]插槽')).toBe(
+      'Allocates 2 Sinister Jewel sockets',
+    );
+  });
+
+  it('exports valid PoB2 XML classId/ascendClassId, canonical CN rare/Runeforged bases, Ward, and Jewel Radius headers', () => {
+    const bundle: WeGamePoe2Bundle = {
+      roleInfo: {
+        role: { role_id: '40001', name: 'Pob2ExportTester', level: 98, class_name: 'Gemling Legionnaire' },
+      },
+      talentTree: {
+        talent_tree: {
+          hashes: [26196, 61834, 32763],
+        },
+      },
+      equipments: {
+        equipments: [
+          {
+            id: 'helm_kamasa',
+            inventoryId: 'Helm',
+            frameType: 2,
+            rarity: 'Rare',
+            name: '测试头冠',
+            baseType: '卡马萨冠冕',
+            properties: [{ name: '[EnergyShield|能量护盾]', values: [['520', 1]] }],
+          },
+          {
+            id: 'focus_tasalian',
+            inventoryId: 'Offhand',
+            frameType: 2,
+            rarity: 'Rare',
+            name: '测试法器',
+            baseType: '塔萨里奥法器',
+            properties: [{ name: '[EnergyShield|能量护盾]', values: [['356', 1]] }],
+          },
+          {
+            id: 'gloves_runic',
+            inventoryId: 'Gloves',
+            frameType: 2,
+            rarity: 'Rare',
+            name: '符文手套',
+            baseType: '符文海妖之鳞手套',
+            properties: [{ name: '[Ward|符文结界]', type: 54, values: [['420', 1]] }],
+          },
+        ],
+      },
+      jewels: {
+        jewel_data: JSON.stringify([
+          {
+            socket_id: 'PassiveJewel_18',
+            jewel: {
+              id: 'fn_ci',
+              display_name: '无根之源',
+              name: '宝钻',
+              rarity: 3,
+              mod_descriptions: [
+                {
+                  type: 0,
+                  values: ['[passive_keystone_chaos_inoculation|异灵之体]范围内的天赋可以在\n未连结至天赋树的情况下配置'],
+                },
+              ],
+            },
+          },
+          {
+            socket_id: 'PassiveJewel_5',
+            jewel: {
+              id: 'cm_ring',
+              display_name: '可控变形',
+              name: '宝钻',
+              rarity: 3,
+              mod_descriptions: [
+                {
+                  type: 0,
+                  values: [
+                    '只影响巨大环形范围内的天赋',
+                    '未连结至天赋树的技能，仍然可以在范围内配置',
+                  ],
+                },
+              ],
+            },
+          },
+          {
+            socket_id: 'PassiveJewel_17',
+            jewel: {
+              id: 'sp_shadow',
+              display_name: '人格分裂',
+              name: '红玉',
+              rarity: 3,
+              mod_descriptions: [{ type: 0, values: ['可以从暗影的起点配置天赋技能'] }],
+            },
+          },
+        ]),
+      },
+    };
+
+    const build = parseWeGamePoe2Build(bundle);
+    expect(build.items[build.equipped.Helmet!]!.baseName).toBe('Kamasan Tiara');
+    expect(build.items[build.equipped['Weapon 2']!]!.baseName).toBe('Tasalian Focus');
+    expect(build.items[build.equipped.Gloves!]!.baseName).toBe('Sirenscale Gloves');
+    expect(build.items[build.tree.socketedJewels![26196]!]!.explicits).toContain(
+      'Passives in radius of Chaos Inoculation can be Allocated without being connected to your tree',
+    );
+    expect(build.items[build.tree.socketedJewels![32763]!]!.explicits).toContain(
+      "Can Allocate Passive Skills from the Shadow's starting point",
+    );
+
+    const xml = buildToPobXml(build);
+    expect(xml).toContain('classId="4" ascendClassId="3" classInternalId="9" ascendancyInternalId="Mercenary3"');
+    expect(xml).toContain('Ward: 420');
+    expect(xml).toContain('Radius: Small');
+    expect(xml).toContain('Radius: Variable');
   });
 });

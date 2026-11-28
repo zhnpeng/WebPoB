@@ -15,10 +15,11 @@ import {
   getBaseItemStats,
   getClassesForGame,
   getGemsForGame,
+  getLocaleOverlay,
   getTreeForGame,
   getUniquesForGame,
 } from '@webpob/data';
-import { normalizeStatLineToEn } from '@webpob/i18n';
+import { normalizeStatLineToEn, toSimplifiedZh } from '@webpob/i18n';
 
 const WEGAME_POE2_API_BASE = 'https://www.wegame.com.cn/api/v1/wegame.pallas.poe2.Profile';
 const WEGAME_SHARE_REGEX =
@@ -186,6 +187,17 @@ function extractModLines(
     // Resolve PoE 2 anoints first using the passive tree's exact Chinese notable map
     // (handles both "配置 [life_recoup17|坚韧血肉]", "配置 [DeliriumAnoint_Paragon|典范]", and plain "配置 诡计面纱").
     if (notableEnByZh) {
+      // PoE 2 From Nothing ("无根之源"): "[passive_keystone_...|异灵之体]范围内的天赋可以在\n未连结至天赋树的情况下配置"
+      const mFromNothing = trimmed.match(
+        /^\[[^|\]]+\|([^\]]+)\]范围内的天赋可以在[\s\r\n]*未连结至天赋树的情况下配置$/,
+      );
+      if (mFromNothing) {
+        const ksEn = notableEnByZh.get(mFromNothing[1]!.trim());
+        if (ksEn) {
+          out.push(`Passives in radius of ${ksEn} can be Allocated without being connected to your tree`);
+          continue;
+        }
+      }
       const mBracketAnoint = trimmed.match(/^配置\s*\[[^|\]]+\|([^\]]+)\]$/);
       if (mBracketAnoint) {
         const zhTarget = mBracketAnoint[1]!.trim();
@@ -610,6 +622,15 @@ export function parseWeGamePoe2Build(bundle: WeGamePoe2Bundle): Build {
   };
   const uniqueZhBySlot = new Map<string, { nameEn: string; baseEn: string }>();
   const baseZhLookup = new Map<string, string>();
+  const twOverlay = getLocaleOverlay(game, 'zh-TW');
+  if (twOverlay?.bases) {
+    for (const [enBase, twBase] of Object.entries(twOverlay.bases)) {
+      const twTrim = twBase.trim();
+      const simTrim = toSimplifiedZh(twTrim).trim();
+      if (twTrim && !baseZhLookup.has(twTrim)) baseZhLookup.set(twTrim, enBase);
+      if (simTrim && !baseZhLookup.has(simTrim)) baseZhLookup.set(simTrim, enBase);
+    }
+  }
   for (const u of getUniquesForGame(game)) {
     if (u.zh && u.s) {
       const key = `${u.zh.trim()}::${slotToUniqueBucket(u.s)}`;
@@ -619,8 +640,146 @@ export function parseWeGamePoe2Build(bundle: WeGamePoe2Bundle): Build {
     }
     if (u.bz && u.b) {
       baseZhLookup.set(u.bz.trim(), u.b);
+      baseZhLookup.set(toSimplifiedZh(u.bz).trim(), u.b);
     }
   }
+  // Simplified CN PoE 2 base names whose official CN translation differs from TW overlay
+  const poe2CnBaseAliases: Record<string, string> = {
+    // Helmets
+    卡马萨冠冕: 'Kamasan Tiara',
+    先祖冠冕: 'Ancestral Tiara',
+    法术冠冕: 'Sorcerous Tiara',
+    细枝头冠: 'Wicker Tiara',
+    帝国巨盔: 'Imperial Greathelm',
+    精锐巨盔: 'Elite Greathelm',
+    毒蝰帽: 'Viper Cap',
+    部族之面: 'Tribal Mask',
+    覆甲帽: 'Armoured Cap',
+    烁金头冠: 'Gold Circlet',
+    // Body Armour
+    恢弘盛装: 'Grand Regalia',
+    启迪长袍: 'Enlightened Robe',
+    祭坛长袍: 'Altar Robe',
+    灵鸦斗篷: 'Corvus Mantle',
+    冠军胸甲: 'Champion Cuirass',
+    督军胸甲: 'Warlord Cuirass',
+    士兵胸甲: 'Soldier Cuirass',
+    滑击背心: 'Slipstrike Vest',
+    滑布外衣: 'Serpentscale Coat',
+    英武护甲: 'Heroic Armour',
+    华饰环甲: 'Ornate Ringmail',
+    华服装束: 'Gilded Vestments',
+    // Gloves
+    海妖之鳞手套: 'Sirenscale Gloves',
+    丰裕手套: 'Opulent Gloves',
+    黄金手套: 'Gold Gloves',
+    狂热者手套: 'Zealot Gauntlets',
+    黑钢手甲: 'Blacksteel Gauntlets',
+    钢甲手甲: 'Steelmail Gauntlets',
+    巨型护手: 'Massive Mitts',
+    铸锻护手: 'Moulded Mitts',
+    瓦尔护手: 'Vaal Gloves',
+    华饰裹手: 'Adorned Wraps',
+    雅致裹手: 'Elegant Wraps',
+    坚固裹手: 'Secured Wraps',
+    精工护腕: 'Fine Bracers',
+    宏伟护腕: 'Refined Bracers',
+    信徒袖带: 'Adherent Cuffs',
+    强袭之臂: 'Combat Arm',
+    偏转之臂: 'Deflective Arm',
+    // Boots
+    沙丘行者鞋履: 'Dunerunner Sandals',
+    沙誓鞋履: 'Sandsworn Sandals',
+    丝克玛便鞋: 'Sekhema Sandals',
+    捷足便鞋: 'Daggerfoot Shoes',
+    魅力便鞋: 'Charmed Shoes',
+    龙皮长靴: 'Dragonscale Boots',
+    龙鳞长靴: 'Dragonscale Boots',
+    蛇鳞长靴: 'Serpentscale Boots',
+    黑钢战靴: 'Blacksteel Sabatons',
+    掩护战靴: 'Soldiering Sabatons',
+    瓦尔胫甲: 'Vaal Greaves',
+    塔萨里奥胫甲: 'Tasalian Greaves',
+    华丽胫甲: 'Ornate Greaves',
+    使徒护腿: 'Apostle Leggings',
+    稳步之腿: 'Surefooted Leg',
+    闪避之腿: 'Evasive Leg',
+    // Focus & Shields
+    塔萨里奥法器: 'Tasalian Focus',
+    圣洁法器: 'Hallowed Focus',
+    熔铸塔盾: 'Crucible Tower Shield',
+    黑钢塔盾: 'Blacksteel Tower Shield',
+    塔赫亚塔盾: 'Tawhoan Tower Shield',
+    // Weapons & Quivers
+    翱翔战矛: 'Soaring Spear',
+    宏伟战矛: 'Massive Spear',
+    阿科扬战矛: 'Akoyan Spear',
+    摧城弩: 'Siege Crossbow',
+    苍凉战弩: 'Desolate Crossbow',
+    邪恶节杖: 'Sinister Quarterstaff',
+    决斗法杖: 'Dueling Wand',
+    扭曲法杖: 'Twisted Wand',
+    虹吸法杖: 'Siphoning Wand',
+    符文之叉: 'Runic Fork',
+    反射长杖: 'Reflecting Staff',
+    圣地权杖: 'Shrine Sceptre',
+    克己权杖: 'Stoic Sceptre',
+    罪孽权杖: 'Omen Sceptre',
+    粗制弓: 'Crude Bow',
+    穿射箭袋: 'Penetrating Quiver',
+    灌铅大锤: 'Leaden Greathammer',
+    秽咒之锤: 'Execratus Hammer',
+    灰烬树皮魔符: 'Cinderbark Talisman',
+    血亲魔符: 'Familial Talisman',
+    荒林魔符: 'Wildwood Talisman',
+    易形魔符: 'Changeling Talisman',
+    // Jewellery & Belts
+    失神项链: 'Absent Amulet',
+    哀悼项链: 'Lament Amulet',
+    预兆项链: 'Portent Amulet',
+    日曜项链: 'Solar Amulet',
+    星辉项链: 'Stellar Amulet',
+    帝金项链: 'Gold Amulet',
+    翠玉项链: 'Jade Amulet',
+    琥珀项链: 'Amber Amulet',
+    三相戒指: 'Prismatic Ring',
+    裂隙戒指: 'Breach Ring',
+    深渊印戒: 'Abyssal Signet',
+    金光戒指: 'Gold Ring',
+    潜能之戒: 'Unset Ring',
+    紫晶戒指: 'Amethyst Ring',
+    红玉戒指: 'Ruby Ring',
+    蓝玉戒指: 'Sapphire Ring',
+    黄玉戒指: 'Topaz Ring',
+    万用腰带: 'Utility Belt',
+    精致腰带: 'Fine Belt',
+    重革腰带: 'Heavy Belt',
+  };
+  for (const [zh, en] of Object.entries(poe2CnBaseAliases)) {
+    baseZhLookup.set(zh, en);
+  }
+  const resolveCanonicalBaseZh = (rawBaseZh: string): string | undefined => {
+    const direct = baseZhLookup.get(rawBaseZh) ?? baseZhLookup.get(toSimplifiedZh(rawBaseZh));
+    if (direct) return direct;
+    // PoE 2 0.5 Runemastered ("符文师匠...") & Runeforged ("符文...") Ward base prefixes
+    const mRunemaster = rawBaseZh.match(/^符文师匠(.+)$/);
+    if (mRunemaster) {
+      const innerEn = baseZhLookup.get(mRunemaster[1]!) ?? baseZhLookup.get(toSimplifiedZh(mRunemaster[1]!));
+      if (innerEn) {
+        const candidate = `Runemastered ${innerEn}`;
+        return getBaseItemStats(candidate, 0, game) ? candidate : innerEn;
+      }
+    }
+    const mRunic = rawBaseZh.match(/^符文(.+)$/);
+    if (mRunic) {
+      const innerEn = baseZhLookup.get(mRunic[1]!) ?? baseZhLookup.get(toSimplifiedZh(mRunic[1]!));
+      if (innerEn) {
+        const candidate = `Runeforged ${innerEn}`;
+        return getBaseItemStats(candidate, 0, game) ? candidate : innerEn;
+      }
+    }
+    return undefined;
+  };
   // Common CN PoE 2 unique aliases (slot-scoped to prevent cross-slot collisions like Belt "夜临" vs Shield "Nightfall")
   const extraUniqueAliases: Array<{ zh: string; bucket: string; nameEn: string; baseEn: string }> = [
     { zh: '无生之辱', bucket: 'Body Armour', nameEn: 'Morior Invictus', baseEn: 'Grand Regalia' },
@@ -707,7 +866,7 @@ export function parseWeGamePoe2Build(bundle: WeGamePoe2Bundle): Build {
       rarity === 'UNIQUE' ? uniqueZhBySlot.get(`${rawNameZh}::${slotToUniqueBucket(slot)}`) : undefined;
     const canonicalBase =
       matchedUnique?.baseEn ??
-      baseZhLookup.get(rawBaseZh) ??
+      resolveCanonicalBaseZh(rawBaseZh) ??
       (/^[\x00-\x7F]+$/.test(rawBaseZh) ? rawBaseZh : resolveCanonicalBaseFallback(rawBaseZh, rawEq.properties));
     const canonicalName = matchedUnique?.nameEn ?? rawNameZh;
     const baseName = canonicalBase;

@@ -1031,6 +1031,33 @@ export function normalizeStatLineToEn(rawLine: string): string {
     };
     return wrapBonded(`Only affects Passives in ${rMap[mRingRadius[1]!] ?? mRingRadius[1]} Ring`);
   }
+  if (/^未连结至天赋树的技能[，,]?\s*仍然可以在范围内配置$/.test(normalized)) {
+    return wrapBonded('Passives in Radius can be Allocated without being connected to your tree');
+  }
+  const mSplitStart = normalized.match(
+    /^可以从(暗影|武僧|魔巫|女巫|游侠|女猎手|战士|野蛮人|佣兵|决斗者|圣堂武僧|德鲁伊)的起点配置天赋技能$/,
+  );
+  if (mSplitStart) {
+    const cMap: Record<string, string> = {
+      暗影: 'Shadow',
+      武僧: 'Shadow',
+      魔巫: 'Sorceress',
+      女巫: 'Sorceress',
+      游侠: 'Ranger',
+      女猎手: 'Ranger',
+      战士: 'Warrior',
+      野蛮人: 'Warrior',
+      佣兵: 'Mercenary',
+      决斗者: 'Mercenary',
+      圣堂武僧: 'Templar',
+      德鲁伊: 'Templar',
+    };
+    return wrapBonded(`Can Allocate Passive Skills from the ${cMap[mSplitStart[1]!] ?? mSplitStart[1]}'s starting point`);
+  }
+  const mSinister = normalized.match(/^配置\s*(\d+)\s*个恶劣之珠宝插槽$/);
+  if (mSinister) {
+    return wrapBonded(`Allocates ${mSinister[1]} Sinister Jewel sockets`);
+  }
   // Strip local-item prefixes like "该装备的护甲提高 85%" / "该武器附加 12 - 24 点物理伤害"
   const withoutLocalPrefix = normalized.replace(/^(?:该|此)(?:装备|物品|武器)的?\s*/, '').trim();
   const baseCandidates =
