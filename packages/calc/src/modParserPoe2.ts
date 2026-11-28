@@ -3211,6 +3211,30 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
       },
     ],
   },
+  // Wave 6J: Unparsed PoE 2 5.2%-9.5% build item lines
+  {
+    pattern: /^Hits Break (\d+) Armour$/i,
+    build: (m, src) => [mkMod('ArmourBreakOnHit', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Inflicts (Fire|Cold|Lightning) Exposure when this Weapon Fully Breaks Armour$/i,
+    build: (m, src) => {
+      const elem = m[1]!.charAt(0).toUpperCase() + m[1]!.slice(1).toLowerCase();
+      return [mkMod(`Inflicts${elem}ExposureOnFullArmourBreak`, 'FLAG', true, src)];
+    },
+  },
+  {
+    pattern: /^Recover (\d+)% of your maximum (Life|Mana) when an Enemy dies in your Presence$/i,
+    build: (m, src) => [mkMod(`${m[2]!.charAt(0).toUpperCase()}${m[2]!.slice(1).toLowerCase()}OnKillPercent`, 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Spells fire Projectiles in a circle$/i,
+    build: (_, src) => [mkMod('SpellProjectilesInCircle', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Mana Recovery from Regeneration is also applied to Runic Ward$/i,
+    build: (_, src) => [mkMod('ManaRegenAppliesToRunicWard', 'FLAG', true, src)],
+  },
 
   // =========================================================================
   // 5. PoE 2 Skill-Specific & Tag Gem Level Scaling (+X to Level of all <SkillName|Nova|...> Skills)

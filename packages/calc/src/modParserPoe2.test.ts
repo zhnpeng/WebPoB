@@ -2194,6 +2194,22 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
           tags: [{ type: 'Condition', var: 'EnemyRareOrUnique' }],
         }),
       ]);
+      // Wave 6J: Unparsed PoE 2 5.2%-9.5% build item lines
+      expect(parseModLine('Hits Break 37 Armour', 'Item:Weapon 1')).toEqual([
+        expect.objectContaining({ name: 'ArmourBreakOnHit', type: 'BASE', value: 37 }),
+      ]);
+      expect(
+        parseModLine('Inflicts Fire Exposure when this Weapon Fully Breaks Armour', 'Item:Weapon 1'),
+      ).toEqual([expect.objectContaining({ name: 'InflictsFireExposureOnFullArmourBreak', type: 'FLAG', value: true })]);
+      expect(
+        parseModLine('Recover 3% of your maximum Life when an Enemy dies in your Presence', 'Item:Ring 2'),
+      ).toEqual([expect.objectContaining({ name: 'LifeOnKillPercent', type: 'BASE', value: 3 })]);
+      expect(parseModLine('Spells fire Projectiles in a circle', 'Item:Weapon 1')).toEqual([
+        expect.objectContaining({ name: 'SpellProjectilesInCircle', type: 'FLAG', value: true }),
+      ]);
+      expect(
+        parseModLine('Mana Recovery from Regeneration is also applied to Runic Ward', 'Item:Weapon 1'),
+      ).toEqual([expect.objectContaining({ name: 'ManaRegenAppliesToRunicWard', type: 'FLAG', value: true })]);
     });
   });
 });
