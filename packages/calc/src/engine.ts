@@ -829,7 +829,7 @@ function calculateBuildSingleWeaponSet(build: Build): CalcOutput {
     const tattooOverride = nodeOverrides[nodeId];
     const rawNodeStats = tattooOverride ? tattooOverride.stats : node.stats;
     const chosenAttr = attrOverrides[nodeId];
-    const effectiveStats = chosenAttr
+    const rawEffectiveStats = chosenAttr
       ? rawNodeStats.map((line) => {
           const m = line.match(/^\+(\d+) to any Attribute$/i);
           if (!m) return line;
@@ -838,6 +838,13 @@ function calculateBuildSingleWeaponSet(build: Build): CalcOutput {
           return `+${m[1]} to ${attrName}`;
         })
       : rawNodeStats;
+    const effectiveStats = rawEffectiveStats.flatMap((line) =>
+      line
+        .replace(/\r?\n(?=[a-z])/g, ' ')
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean),
+    );
     const parsedNodeMods = parseModLines(
       effectiveStats,
       `Tree: ${tattooOverride?.name ?? node.name.en}`,
@@ -895,8 +902,8 @@ function calculateBuildSingleWeaponSet(build: Build): CalcOutput {
           db.addMod({ name: 'FortAboveThreshold', type: 'MAX', value: Number(mFortAs[2]), flags: 0, keywordFlags: 0, source: nodeSrc });
           continue;
         }
-        // Assassin: Ambush and Assassinate (`Critical Strikes have Culling Strike`)
-        if (/^Critical Strikes have Culling Strike$/i.test(cleanSt) && !parsedNodeMods.some((m) => m.name === 'CritCullingStrike')) {
+        // Assassin: Ambush and Assassinate / Knife in the Back (`Critical Strikes have Culling Strike`)
+        if (/^Critical Strikes have Culling Strike$/i.test(cleanSt) && !parsedNodeMods.some((m) => m.name === 'CritCullingStrike' || m.name === 'CritCanCull')) {
           db.addMod({ name: 'CritCullingStrike', type: 'FLAG', value: true, flags: 0, keywordFlags: 0, source: nodeSrc });
           continue;
         }
@@ -963,6 +970,15 @@ function calculateBuildSingleWeaponSet(build: Build): CalcOutput {
         const mSpellCritDmg = cleanSt.match(/^(\d+)% increased Critical Spell Damage Bonus$/i);
         if (mSpellCritDmg && !parsedNodeMods.some((m) => m.name === 'CritDamageBonusInc' || m.name === 'CritMultiplier')) {
           db.addMod({ name: 'CritDamageBonusInc', type: 'INC', value: Number(mSpellCritDmg[1]), flags: ModFlag.Spell, keywordFlags: 0, source: nodeSrc });
+          continue;
+        }
+        // PoE 2 Guardian of the Wilds / Random Element extra damage (`Gain 5% of Damage as Extra Damage of a random Element`)
+        const mRandEle = cleanSt.match(/^Gain (\d+)% of Damage as Extra Damage of a random Element$/i);
+        if (mRandEle && !parsedNodeMods.some((m) => m.name === 'DamageGainAsFire' || m.name === 'DamageGainAsCold' || m.name === 'DamageGainAsLightning')) {
+          const third = Number(mRandEle[1]) / 3;
+          for (const el of ['Fire', 'Cold', 'Lightning'] as const) {
+            db.addMod({ name: `DamageGainAs${el}`, type: 'BASE', value: third, flags: 0, keywordFlags: 0, source: nodeSrc });
+          }
           continue;
         }
         // PoE 2 Inspiring Ally: "Increases and Reductions to Companion Damage also apply to you"
@@ -1175,9 +1191,35 @@ function calculateBuildSingleWeaponSet(build: Build): CalcOutput {
       }
     }
     const scaled = scaleJewelModLines(jewel, allJewelItems, build.game, socketEffectPct);
-    db.addMods(parseModLines(scaled.implicits, `${src} [Implicit]`));
-    if (!evaluatedClusterSocketIds.has(nodeId)) {
-      db.addMods(parseModLines(scaled.explicits, src));
+    const parsedJewelImps = parseModLines(scaled.implicits, `${src} [Implicit]`);
+    const parsedJewelExps = !evaluatedClusterSocketIds.has(nodeId) ? parseModLines(scaled.explicits, src) : [];
+    db.addMods(parsedJewelImps);
+    if (parsedJewelExps.length > 0) {
+      db.addMods(parsedJewelExps);
+    }
+    if (build.game === 'poe1' && !evaluatedClusterSocketIds.has(nodeId)) {
+      const parsedJewelAll = [...parsedJewelImps, ...parsedJewelExps];
+      for (const rawLine of [...jewel.implicits, ...jewel.explicits]) {
+        const cleanLine = rawLine.replace(/\{[^}]*\}/g, '').trim();
+        const mLuckyJewel = cleanLine.match(
+          /^(Lightning|Fire|Cold|Physical|Chaos)?\s*Damage with Hits is Lucky(?:\s+if\s+(.+))?$/i,
+        );
+        if (mLuckyJewel && !parsedJewelAll.some((m) => /LuckyHits/i.test(m.name))) {
+          const condText = mLuckyJewel[2]?.trim() ?? '';
+          const condActive =
+            !condText ||
+            /\{mutated\}/i.test(rawLine) ||
+            (/blocked.*recently/i.test(condText) && Boolean(cfg.rawInputs?.conditionBlockedSpellRecently || cfg.rawInputs?.conditionBlockedRecently));
+          if (condActive) {
+            if (mLuckyJewel[1]) {
+              const elCap = mLuckyJewel[1].charAt(0).toUpperCase() + mLuckyJewel[1].slice(1).toLowerCase();
+              db.addMod({ name: `${elCap}LuckyHitsChance`, type: 'BASE', value: 100, flags: 0, keywordFlags: 0, source: src });
+            } else {
+              db.addMod({ name: 'LuckyHits', type: 'FLAG', value: true, flags: 0, keywordFlags: 0, source: src });
+            }
+          }
+        }
+      }
     }
   }
 
@@ -1705,7 +1747,7 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
           continue;
         }
         const mCursedTaken = cleanLine.match(/^Enemies you Curse take (\d+)% increased Damage$/i);
-        if (mCursedTaken) {
+        if (mCursedTaken && !parsedItemModsAll.some((m) => m.name === 'EnemyDamageTaken' || m.name === 'DamageTaken')) {
           db.addMod({
             name: 'EnemyCursedDamageTaken',
             type: 'BASE',
@@ -1721,14 +1763,20 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
         );
         if (mCursedRes) {
           const elCap = mCursedRes[2]!.charAt(0).toUpperCase() + mCursedRes[2]!.slice(1).toLowerCase();
-          db.addMod({
-            name: `EnemyCursed${elCap}Resist`,
-            type: 'BASE',
-            value: -Number(mCursedRes[1]),
-            flags: 0,
-            keywordFlags: 0,
-            source: src,
-          });
+          const alreadyParsedRes =
+            elCap === 'Elemental'
+              ? parsedItemModsAll.some((m) => m.name === 'EnemyElementalResist' || m.name === 'EnemyFireResist')
+              : parsedItemModsAll.some((m) => m.name === `Enemy${elCap}Resist`);
+          if (!alreadyParsedRes) {
+            db.addMod({
+              name: `EnemyCursed${elCap}Resist`,
+              type: 'BASE',
+              value: -Number(mCursedRes[1]),
+              flags: 0,
+              keywordFlags: 0,
+              source: src,
+            });
+          }
           continue;
         }
         const mItemWither = cleanLine.match(/^(\d+)% increased (?:Withered Magnitudes?|Magnitude of Withered you inflict)$/i);
@@ -2868,20 +2916,59 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
         });
       }
     }
-    // PoE 2 Pounce (Predator's Mark): PoB2 defaults MinionsInPresence to 8 (not 15) when unset in config.
+    // PoE 2 Pounce (Predator's Mark):
+    // 1. Neutralize when Pounce shares its skill group with another ACTIVE Mark skill (e.g. Freezing Mark, NOT Mark of Siphoning II support!).
+    // 2. Otherwise default MinionsInPresence to 8 (wolves) when unset and no true multi-minion summon (Raging Spirits/Skeletons/etc.) is active.
     const pounceGroups = build.skills.filter(
       (grp) =>
         grp.enabled &&
         (!grp.weaponSets || grp.weaponSets.length === 0 || grp.weaponSets.includes(build.activeWeaponSet)) &&
         grp.gems.some((gm) => gm.enabled && getGemById('poe2', gm.gemId)?.name.en.trim().toLowerCase() === 'pounce'),
     );
-    if (pounceGroups.length > 0 && typeof cfg.rawInputs?.multiplierMinionsInPresence !== 'number') {
+    if (pounceGroups.length > 0) {
+      const pounceHasActiveOverrideMark = pounceGroups.every((grp) =>
+        grp.gems.some((gm) => {
+          if (!gm.enabled) return false;
+          const gd = getGemById('poe2', gm.gemId);
+          if (!gd || gd.category !== 'active') return false;
+          const gn = gd.name.en.trim().toLowerCase();
+          return gn !== 'pounce' && /\bmark\b/i.test(gn);
+        }),
+      );
+      const hasMultiMinionSkill = build.skills.some(
+        (grp) =>
+          grp.enabled &&
+          (!grp.weaponSets || grp.weaponSets.length === 0 || grp.weaponSets.includes(build.activeWeaponSet)) &&
+          grp.gems.some((gm) => {
+            if (!gm.enabled) return false;
+            const gd = getGemById('poe2', gm.gemId);
+            if (!gd || gd.category !== 'active') return false;
+            const gn = gd.name.en.trim().toLowerCase();
+            if (gn === 'pounce') return false;
+            return /\b(?:raging spirits|skeletal|skeleton|zombie|spectre|unearthed|arsonist|sniper|reaver|brute|cleric|frost mage|storm mage)\b/i.test(
+              gn,
+            );
+          }),
+      );
       const predSources = auraEnemyDb
         .calcStat('DamageTaken')
         .sources.filter((s) => s.type === 'INC' && typeof s.value === 'number' && s.source.startsWith("Predator's Mark (Pounce"));
       for (const s of predSources) {
         const applied = s.value as number;
-        if (applied > 0) {
+        if (pounceHasActiveOverrideMark) {
+          auraEnemyDb.addMod({
+            name: 'DamageTaken',
+            type: 'INC',
+            value: -applied,
+            flags: 0,
+            keywordFlags: 0,
+            source: 'Pounce Active Mark Override Adjustment',
+          });
+        } else if (
+          typeof cfg.rawInputs?.multiplierMinionsInPresence !== 'number' &&
+          !hasMultiMinionSkill &&
+          applied > 0
+        ) {
           const mQ = s.source.match(/Q(\d+)/);
           const q = mQ ? Number(mQ[1]) : 0;
           const baseDesired = Math.floor(8 * (3 + q * 0.05) + 1e-9);
@@ -3092,9 +3179,58 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
         type: 'INC',
         value: 25,
         flags: 0,
-        keywordFlags: KeywordFlag.Trap | KeywordFlag.Mine,
+        keywordFlags: KeywordFlag.Trap,
         source: 'Debuff: Bear Trap',
       });
+      auraEnemyDb.addMod({
+        name: 'DamageTaken',
+        type: 'INC',
+        value: 25,
+        flags: 0,
+        keywordFlags: KeywordFlag.Mine,
+        source: 'Debuff: Bear Trap',
+      });
+    }
+    // PoE 1 Aspect of the Spider: 5% increased Damage Taken per Spider's Web stack (default 3, cap 4 with Fenumus' Weave)
+    const hasAspectSpider = build.skills.some(
+      (grp) =>
+        grp.enabled &&
+        grp.gems.some((gm) => gm.enabled && getGemById('poe1', gm.gemId)?.name.en.trim().toLowerCase() === 'aspect of the spider'),
+    );
+    const rawSpiderWebs = Number(cfg.rawInputs?.aspectOfTheSpiderWebStacks ?? 0);
+    if (
+      (hasAspectSpider || rawSpiderWebs > 0) &&
+      !auraEnemyDb.calcStat('DamageTaken').sources.some((s) => /spider/i.test(s.source))
+    ) {
+      const stacks = Math.min(4, Math.max(1, Number.isFinite(rawSpiderWebs) && rawSpiderWebs > 0 ? Math.floor(rawSpiderWebs) : 3));
+      auraEnemyDb.addMod({
+        name: 'DamageTaken',
+        type: 'INC',
+        value: stacks * 5,
+        flags: 0,
+        keywordFlags: 0,
+        source: `Debuff: Aspect of the Spider (${stacks} Webs)`,
+      });
+    }
+    // PoE 1 Summon Skitterbots: 10% more Trap and Mine Damage (at Lv20: 10%, scales +0.5%/lv above 20)
+    let bestSkitterLv = 0;
+    for (const grp of build.skills) {
+      if (!grp.enabled) continue;
+      for (const gm of grp.gems) {
+        if (!gm.enabled) continue;
+        const gd = getGemById('poe1', gm.gemId);
+        if (gd && gd.name.en.trim().toLowerCase() === 'summon skitterbots') {
+          if (gm.level > bestSkitterLv) bestSkitterLv = gm.level;
+        }
+      }
+    }
+    if (
+      bestSkitterLv > 0 &&
+      !db.calcStat('Damage', 0, KeywordFlag.Mine).sources.some((s) => s.type === 'MORE' && /skitterbots/i.test(s.source))
+    ) {
+      const skitterMore = Math.min(19, Math.max(1, bestSkitterLv <= 20 ? Math.floor(bestSkitterLv * 0.5) : 10 + Math.floor((bestSkitterLv - 20) * 0.5)));
+      db.addMod({ name: 'Damage', type: 'MORE', value: skitterMore, flags: 0, keywordFlags: KeywordFlag.Trap, source: 'Summon Skitterbots' });
+      db.addMod({ name: 'Damage', type: 'MORE', value: skitterMore, flags: 0, keywordFlags: KeywordFlag.Mine, source: 'Summon Skitterbots' });
     }
     // PoE 1 Mark the Prey: Marked Enemy takes X% increased Damage
     const markPreyTaken = db.sum('BASE', 'MarkedEnemyDamageTaken');
@@ -3445,6 +3581,11 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
         grp.enabled &&
         grp.gems.some((gm) => gm.enabled && getGemById('poe1', gm.gemId)?.name.en.trim().toLowerCase() === 'wave of conviction'),
     );
+    const hasEnabledFrostBomb = build.skills.some(
+      (grp) =>
+        grp.enabled &&
+        grp.gems.some((gm) => gm.enabled && getGemById('poe1', gm.gemId)?.name.en.trim().toLowerCase() === 'frost bomb'),
+    );
     const wocExposureEl =
       hasEnabledWoc && (rawWocType === 'Fire' || rawWocType === 'Cold' || rawWocType === 'Lightning')
         ? rawWocType
@@ -3475,11 +3616,12 @@ function expandPerPlayerLevelMods(lines: readonly string[], level: number): stri
         )
         .reduce((acc, s) => acc + (s.value as number), 0);
       const isWocEl = wocExposureEl === el;
-      const hasAnyExposure = cfgEnabled || isWocEl || existingExpVal < 0 || auraExpVal < 0;
+      const isFrostBombCold = el === 'Cold' && hasEnabledFrostBomb;
+      const hasAnyExposure = cfgEnabled || isWocEl || isFrostBombCold || existingExpVal < 0 || auraExpVal < 0;
       if (!hasAnyExposure) return;
       // PoB 1 never stacks two Exposures of the same element; auraExpVal from clusterAndReservation
       // already includes ExtraExposure & ExposureEffect, so compute dbTarget separately and take the strongest.
-      const baseDbExpMag = Math.max(cfgEnabled ? 10 : 0, isWocEl ? 15 : 0, Math.abs(existingExpVal));
+      const baseDbExpMag = Math.max(cfgEnabled ? 10 : 0, isWocEl ? 15 : 0, isFrostBombCold ? 15 : 0, Math.abs(existingExpVal));
       let effBaseExp = baseDbExpMag;
       if (effBaseExp > 0 && exposureMinFloor !== null && exposureMinFloor < 0) {
         effBaseExp = Math.max(effBaseExp, Math.abs(exposureMinFloor));
@@ -6166,7 +6308,7 @@ function computeGroupOffence(
         effectiveSkillTypeSet.has('vaal');
       const slotModSrc = `Item (${mainGroup.slot ?? 'Socketed'}): ${slotItem.name}`;
       for (const rawLine of [...slotItem.implicits, ...slotItem.explicits]) {
-        const line = rawLine.replace(/^\{[^}]*\}/g, '').trim();
+        const line = rawLine.replace(/\{[^}]*\}/g, '').trim();
         let m = line.match(
           /^Socketed (?:(Vaal) )?(?:Gems|Skills) deal (\d+)% (more|less) (Attack |Spell |Elemental |Physical |Chaos |Fire |Cold |Lightning |Area |Projectile )?Damage( over Time)?$/i,
         );
@@ -8365,8 +8507,10 @@ function computeGroupOffence(
     } else {
       const wMin = weaponStats?.physicalMin ?? 15;
       const wMax = weaponStats?.physicalMax ?? 30;
-      baseMin.Physical += wMin * atkMult;
-      baseMax.Physical += wMax * atkMult;
+      if (!skillDb.flag('DealNoPhysical', flags, kwFlags)) {
+        baseMin.Physical += wMin * atkMult;
+        baseMax.Physical += wMax * atkMult;
+      }
       // PoE 2 Amazon Penetrate: "Gain Added Physical Damage equal to 25% of the Accuracy Rating on the Weapon"
       // Guard against double-counting when ascendancyMods.ts already emitted AmazonPenetrateWeaponAccPct.
       if (
@@ -8880,7 +9024,7 @@ function computeGroupOffence(
       const ancExplicitMore = skillDb.sum('BASE', 'AncestralBoostMoreDamage', flags, kwFlags);
       const ancMoreBase =
         ancExplicitMore > 0
-          ? ancExplicitMore * Math.max(1, 1 + ancBoostEffExtra)
+          ? ancExplicitMore
           : ancBoostEffExtra > 0 && !activeSkillData?.showAverage
             ? 30 * (1 + ancBoostEffExtra)
             : 0;

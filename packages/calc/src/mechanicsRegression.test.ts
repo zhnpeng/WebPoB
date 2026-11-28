@@ -1,5 +1,13 @@
-import { describe, expect, it } from 'vitest';
-import { createSamplePoe1Build, createSamplePoe2Build } from '@webpob/data';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { beforeAll, describe, expect, it } from 'vitest';
+import {
+  createSamplePoe1Build,
+  createSamplePoe2Build,
+  registerGemsData,
+  type CompactGemsPayload,
+} from '@webpob/data';
 import {
   calculateBuild,
   canWieldTwoHandedMartialInOneHand,
@@ -506,6 +514,658 @@ describe('Mechanism-Layer Regression Suite (PoE 1 & PoE 2)', () => {
       expect(outZh.defence.fireResist).toBe(outEn.defence.fireResist);
       expect(outZh.offence.speed).toBe(outEn.offence.speed);
       expect(outZh.offence.totalDps).toBe(outEn.offence.totalDps);
+    });
+  });
+
+  describe('5. Wave 4O Offence & Mechanics Parity Regressions (PoE 1 & PoE 2)', () => {
+    beforeAll(() => {
+      const dataDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../apps/web/public/data');
+      const poe1Gems = JSON.parse(fs.readFileSync(path.join(dataDir, 'poe1-gems.json'), 'utf-8')) as CompactGemsPayload;
+      const poe2Gems = JSON.parse(fs.readFileSync(path.join(dataDir, 'poe2-gems.json'), 'utf-8')) as CompactGemsPayload;
+      registerGemsData('poe1', poe1Gems);
+      registerGemsData('poe2', poe2Gems);
+    });
+
+    it('PoE 1 Hexblast: Chaos damage uses lowest Elemental Resistance (after Eldritch Exposure) + Elemental Penetration + Bear Trap Mine debuff', () => {
+      const base = createSamplePoe1Build();
+      const hexGroup = {
+        id: 'sg_hexblast',
+        label: 'Hexblast Mine',
+        enabled: true,
+        gems: [
+          { instanceId: 'hb1', gemId: 'poe1_hexblast', level: 20, quality: 0, enabled: true },
+          { instanceId: 'hb2', gemId: 'poe1_supporthighimpactmine', level: 20, quality: 0, enabled: true },
+        ],
+      };
+      const bearTrapGroup = {
+        id: 'sg_beartrap',
+        label: 'Bear Trap',
+        enabled: true,
+        gems: [{ instanceId: 'bt1', gemId: 'poe1_beartrap', level: 20, quality: 0, enabled: true }],
+      };
+      const plainGloves: Item = {
+        id: 'item_gloves_plain',
+        name: 'Plain Gloves',
+        baseName: 'Silk Gloves',
+        rarity: 'RARE',
+        slotType: 'Gloves',
+        quality: 0,
+        implicits: [],
+        explicits: [],
+      };
+      const glovesExp: Item = {
+        id: 'item_gloves_exp',
+        name: 'Exposure Gloves',
+        baseName: 'Silk Gloves',
+        rarity: 'RARE',
+        slotType: 'Gloves',
+        quality: 0,
+        implicits: ['Inflict Fire Exposure on Hit, applying -25% to Fire Resistance'],
+        explicits: [],
+      };
+      const baseHex: Build = {
+        ...base,
+        items: { ...base.items, [plainGloves.id]: plainGloves },
+        equipped: { ...base.equipped, Gloves: plainGloves.id },
+        skills: [hexGroup],
+        mainSkillGroupId: hexGroup.id,
+        config: {
+          ...base.config,
+          enemyShocked: false,
+          shockValue: 0,
+          enemyFireResist: 50,
+          enemyColdResist: 50,
+          enemyLightningResist: 50,
+          enemyChaosResist: 30,
+          customMods: 'Damage Penetrates 10% Elemental Resistances',
+        },
+      };
+      const withFireExposure: Build = {
+        ...baseHex,
+        items: { ...baseHex.items, [glovesExp.id]: glovesExp },
+        equipped: { ...baseHex.equipped, Gloves: glovesExp.id },
+      };
+      const withBearTrap: Build = {
+        ...withFireExposure,
+        skills: [hexGroup, bearTrapGroup],
+      };
+
+      const outChaosLowest = calculateBuild(baseHex);
+      const outFireLowestWithPen = calculateBuild(withFireExposure);
+      const outWithBearTrap = calculateBuild(withBearTrap);
+
+      // Fire res drops 50 -> 25 (< Chaos 30) and Elemental Penetration drops it to 15 (0.85 / 0.70 = +21.4% MORE)
+      expect(outFireLowestWithPen.offence.averageHit).toBeGreaterThan(outChaosLowest.offence.averageHit * 1.18);
+      // Bear Trap adds +25% increased Damage Taken from Mine Hits independently of Trap flag
+      expect(outWithBearTrap.offence.averageHit / outFireLowestWithPen.offence.averageHit).toBeCloseTo(1.25, 2);
+    });
+
+    it('PoE 1 Eye of Winter: applies official DistanceRamp (0% at dist 0, ~133.33% at default 40, 200% at 60)', () => {
+      const base = createSamplePoe1Build();
+      const eowGroup = {
+        id: 'sg_eow',
+        label: 'Eye of Winter',
+        enabled: true,
+        gems: [{ instanceId: 'eow1', gemId: 'poe1_eyeofwinter', level: 20, quality: 0, enabled: true }],
+      };
+      const mkEow = (dist?: number): Build => ({
+        ...base,
+        skills: [eowGroup],
+        mainSkillGroupId: eowGroup.id,
+        config: {
+          ...base.config,
+          enemyShocked: false,
+          shockValue: 0,
+          rawInputs: dist === undefined ? {} : { projectileDistance: dist },
+        },
+      });
+
+      const out0 = calculateBuild(mkEow(0));
+      const outDefault = calculateBuild(mkEow(undefined));
+      const out60 = calculateBuild(mkEow(60));
+
+      expect(outDefault.offence.averageHit / out0.offence.averageHit).toBeCloseTo(2.3333, 1);
+      expect(out60.offence.averageHit / out0.offence.averageHit).toBeCloseTo(3.0, 1);
+    });
+
+    it('PoE 1 Wave of Conviction Exposure scales enemy Fire Resist accurately', () => {
+      const base = createSamplePoe1Build();
+      const wocGroup = {
+        id: 'sg_woc',
+        label: 'Wave of Conviction',
+        enabled: true,
+        gems: [{ instanceId: 'woc1', gemId: 'poe1_waveofconviction', level: 20, quality: 0, enabled: true }],
+      };
+      const fireBase: Build = {
+        ...base,
+        config: {
+          ...base.config,
+          enemyShocked: false,
+          shockValue: 0,
+          enemyFireResist: 50,
+          customMods: 'Adds 200 to 200 Fire Damage to Spells',
+          rawInputs: {},
+        },
+      };
+      const withWocFire: Build = {
+        ...fireBase,
+        skills: [...fireBase.skills, wocGroup],
+        config: {
+          ...fireBase.config,
+          rawInputs: { waveOfConvictionExposureType: 'Fire' },
+        },
+      };
+
+      const outBase = calculateBuild(fireBase);
+      const outWoc = calculateBuild(withWocFire);
+      // -15% Fire Exposure moves enemy res 50% -> 35% (0.65 / 0.50 = 1.30x Fire damage)
+      expect(outWoc.offence.damageByType.Fire.average / outBase.offence.damageByType.Fire.average).toBeCloseTo(1.3, 2);
+    });
+
+    it('PoE 1 ShockStacks multi-stack cap (100%) and socketed Jewel {mutated} Lucky Lightning Damage', () => {
+      const base = createSamplePoe1Build();
+      const shockSingle: Build = {
+        ...base,
+        config: {
+          ...base.config,
+          enemyShocked: true,
+          shockValue: 2,
+          rawInputs: { ShockStacks: 1 },
+        },
+      };
+      const shockMulti: Build = {
+        ...shockSingle,
+        config: {
+          ...shockSingle.config,
+          rawInputs: { ShockStacks: 50 },
+        },
+      };
+      const outSingle = calculateBuild(shockSingle);
+      const outMulti = calculateBuild(shockMulti);
+      // 1 stack = 2% taken (1.02x); 50 stacks = 100% taken (2.00x) instead of capping at 50%
+      expect(outMulti.offence.averageHit / outSingle.offence.averageHit).toBeCloseTo(2.0 / 1.02, 2);
+
+      // Socketed Jewel with {mutated} Lucky Lightning line skews wide min..max toward (min + 2*max)/3
+      const wideLit: Build = {
+        ...base,
+        config: {
+          ...base.config,
+          enemyShocked: false,
+          shockValue: 0,
+          customMods: 'Adds 1 to 1000 Lightning Damage to Spells',
+        },
+      };
+      const luckyJewel: Item = {
+        id: 'reg_lucky_jewel',
+        name: 'Foulborn Nightmare',
+        baseName: 'Cobalt Jewel',
+        rarity: 'UNIQUE',
+        slotType: 'Any',
+        quality: 0,
+        implicits: [],
+        explicits: ["{mutated}Lightning Damage with Hits is Lucky if you've Blocked Spell Damage Recently"],
+      };
+      const existingSocketId = Object.keys(base.tree.socketedJewels ?? {})[0];
+      const targetSocketId = existingSocketId ? Number(existingSocketId) : (wideLit.tree.allocatedNodeIds[0] ?? 1100);
+      const withLuckyJewel: Build = {
+        ...wideLit,
+        items: { ...wideLit.items, [luckyJewel.id]: luckyJewel },
+        tree: {
+          ...wideLit.tree,
+          allocatedNodeIds: wideLit.tree.allocatedNodeIds.includes(targetSocketId)
+            ? wideLit.tree.allocatedNodeIds
+            : [...wideLit.tree.allocatedNodeIds, targetSocketId],
+          socketedJewels: { ...(wideLit.tree.socketedJewels ?? {}), [targetSocketId]: luckyJewel.id },
+        },
+      };
+      const outNormalLit = calculateBuild(wideLit);
+      const outLuckyLit = calculateBuild(withLuckyJewel);
+      expect(outLuckyLit.offence.damageByType.Lightning.average).toBeGreaterThan(
+        outNormalLit.offence.damageByType.Lightning.average * 1.18,
+      );
+    });
+
+    it('PoE 1 Aspect of the Spider web stacks, Bonechill Chilled/ChillingArea gate, and multi-tag {tags:...}{crafted} Socketed Skills MORE damage', () => {
+      const rawBase = createSamplePoe1Build();
+      const base: Build = {
+        ...rawBase,
+        config: {
+          ...rawBase.config,
+          enemyShocked: false,
+          shockValue: 0,
+          enemyChilled: false,
+          rawInputs: {},
+        },
+      };
+      const spiderGroup = {
+        id: 'sg_spider',
+        label: 'Spider',
+        enabled: true,
+        gems: [{ instanceId: 'sp1', gemId: 'poe1_aspectofthespider', level: 20, quality: 0, enabled: true }],
+      };
+      const outNoSpider = calculateBuild(base);
+      const outSpider4 = calculateBuild({
+        ...base,
+        skills: [...base.skills, spiderGroup],
+        config: { ...base.config, rawInputs: { aspectOfTheSpiderWebStacks: 4 } },
+      });
+      // 4 Spider Webs = +20% increased Damage Taken
+      expect(outSpider4.offence.averageHit / outNoSpider.offence.averageHit).toBeCloseTo(1.2, 2);
+
+      // Bonechill on Frostblink does NOT apply when enemyChilled is false, but DOES apply on Vortex (Chilling Area)
+      const coldBase: Build = {
+        ...base,
+        config: {
+          ...base.config,
+          enemyChilled: false,
+          customMods: 'Adds 200 to 200 Cold Damage to Spells',
+        },
+      };
+      const frostblinkBonechill = {
+        id: 'sg_fb_bc',
+        label: 'Frostblink Bonechill',
+        enabled: true,
+        gems: [
+          { instanceId: 'fb1', gemId: 'poe1_frostblink', level: 20, quality: 0, enabled: true },
+          { instanceId: 'bc1', gemId: 'poe1_supportbonechill', level: 20, quality: 0, enabled: true },
+        ],
+      };
+      const vortexBonechill = {
+        id: 'sg_vx_bc',
+        label: 'Vortex Bonechill',
+        enabled: true,
+        gems: [
+          { instanceId: 'vx1', gemId: 'poe1_vortex', level: 20, quality: 0, enabled: true },
+          { instanceId: 'bc2', gemId: 'poe1_supportbonechill', level: 20, quality: 0, enabled: true },
+        ],
+      };
+      const outColdPlain = calculateBuild(coldBase);
+      const outFbUnchilled = calculateBuild({ ...coldBase, skills: [...coldBase.skills, frostblinkBonechill] });
+      const outVxChillingArea = calculateBuild({ ...coldBase, skills: [...coldBase.skills, vortexBonechill] });
+      expect(outFbUnchilled.offence.damageByType.Cold.average).toBeCloseTo(
+        outColdPlain.offence.damageByType.Cold.average,
+        2,
+      );
+      expect(outVxChillingArea.offence.damageByType.Cold.average).toBeGreaterThan(
+        outColdPlain.offence.damageByType.Cold.average * 1.1,
+      );
+
+      // Multi-tag `{tags:caster,damage}{crafted}Socketed Skills deal 40% more Spell Damage` on Weapon 1 applies cleanly
+      const plainDagger = makeWeapon({
+        id: 'reg_plain_dagger',
+        name: 'Plain Dagger',
+        baseName: 'Imperial Skean',
+        weaponStats: { weaponType: 'Dagger', twoHanded: false, physicalMin: 20, physicalMax: 40, attacksPerSecond: 1.5, critChance: 6.5 },
+        explicits: [],
+      });
+      const multiTagWeapon = makeWeapon({
+        id: 'reg_elder_dagger',
+        name: 'Elder Dagger',
+        baseName: 'Imperial Skean',
+        weaponStats: { weaponType: 'Dagger', twoHanded: false, physicalMin: 20, physicalMax: 40, attacksPerSecond: 1.5, critChance: 6.5 },
+        explicits: ['{tags:caster,damage}{crafted}Socketed Skills deal 40% more Spell Damage'],
+      });
+      const mainGrp = base.skills.find((s) => s.id === base.mainSkillGroupId) ?? base.skills[0]!;
+      const slottedGroup = { ...mainGrp, slot: 'Weapon 1' as const };
+      const plainSlotted: Build = {
+        ...base,
+        skills: [slottedGroup],
+        mainSkillGroupId: slottedGroup.id,
+        items: { ...base.items, [plainDagger.id]: plainDagger },
+        equipped: { ...base.equipped, 'Weapon 1': plainDagger.id },
+      };
+      const elderSlotted: Build = {
+        ...plainSlotted,
+        items: { ...plainSlotted.items, [multiTagWeapon.id]: multiTagWeapon },
+        equipped: { ...plainSlotted.equipped, 'Weapon 1': multiTagWeapon.id },
+      };
+      const outPlainSlot = calculateBuild(plainSlotted);
+      const outElderSlot = calculateBuild(elderSlotted);
+      expect(outElderSlot.offence.averageHit / outPlainSlot.offence.averageHit).toBeCloseTo(1.4, 2);
+
+      // Righteous Fire of Arcane Devotion grants MORE Cast Speed when Life Unreserved > 1 and Mana > 0
+      const rfArcGroup = {
+        id: 'sg_rf_arc',
+        label: 'RF Arcane',
+        enabled: true,
+        gems: [{ instanceId: 'rfa1', gemId: 'poe1_righteousfirealtx', level: 20, quality: 0, enabled: true }],
+      };
+      const outWithRfArc = calculateBuild({ ...base, skills: [...base.skills, rfArcGroup] });
+      expect(outWithRfArc.offence.speed).toBeGreaterThan(outNoSpider.offence.speed * 1.18);
+    });
+
+    it('PoE 1 Impale uses pre-mitigation physical hit with combined-stack armour PDR and DoT caps at 35,791,394', () => {
+      const base = createSamplePoe1Build();
+      const bigAxe = makeWeapon({
+        id: 'reg_imp_axe',
+        name: 'Impale Chopper',
+        baseName: 'Vaal Axe',
+        weaponStats: { weaponType: 'Axe', twoHanded: true, physicalMin: 800, physicalMax: 1200, attacksPerSecond: 1.5, critChance: 5 },
+      });
+      const cycGroup = {
+        id: 'sg_imp_cyc',
+        label: 'Cyclone Impale',
+        enabled: true,
+        gems: [
+          { instanceId: 'c1', gemId: 'poe1_cyclone', level: 20, quality: 0, enabled: true },
+          { instanceId: 'c2', gemId: 'poe1_supportimpale', level: 20, quality: 0, enabled: true },
+        ],
+      };
+      const mkCyc = (enemyArmour: number, extraMod = ''): Build => ({
+        ...base,
+        items: { ...base.items, [bigAxe.id]: bigAxe },
+        equipped: { ...base.equipped, 'Weapon 1': bigAxe.id },
+        skills: [cycGroup],
+        mainSkillGroupId: cycGroup.id,
+        config: {
+          ...base.config,
+          enemyShocked: false,
+          shockValue: 0,
+          enemyArmour,
+          customMods: `100% chance to Impale Enemies on Hit with Attacks\nYour Hits can't be Evaded${extraMod ? `\n${extraMod}` : ''}`,
+        },
+      });
+      const outNoArmour = calculateBuild(mkCyc(0));
+      const outArmour5 = calculateBuild(mkCyc(20000));
+      const outArmour6 = calculateBuild(mkCyc(20000, 'Impales you inflict last 1 additional Hit'));
+      expect(outNoArmour.offence.impaleDps ?? 0).toBeGreaterThan(0);
+      // With 0 armour and Lv20 Impale Support (28% increased Impale Effect), 5 stacks = exact 5 * 0.10 * 1.28 = 0.64x hitDps
+      expect((outNoArmour.offence.impaleDps ?? 0) / outNoArmour.offence.hitDps).toBeCloseTo(0.64, 2);
+      // Under 20k enemy armour, 6 stacks beats 5 stacks by > 6/5 (1.20x) due to combined-stack armour PDR
+      expect((outArmour6.offence.impaleDps ?? 0) / Math.max(1, outArmour5.offence.impaleDps ?? 0)).toBeGreaterThan(1.2);
+
+      // PoE 1 DoT engine cap: 35,791,394 DPS
+      const cappedPoison = calculateBuild(
+        withCustomMods(
+          base,
+          'Adds 5000000 to 5000000 Chaos Damage to Spells\n100% chance to Poison on Hit\n500% increased Chaos Damage',
+        ),
+      );
+      expect(cappedPoison.offence.poisonDps).toBeLessThanOrEqual(35_791_394);
+      expect(cappedPoison.offence.poisonDps).toBeGreaterThan(35_000_000);
+    });
+
+    it('PoE 2 Pounce (Predator\'s Mark): defaults to 8 wolves without multi-minions, stays 15 with Raging Spirits, ignores Mark support, and yields to active Mark', () => {
+      const rawBase = createSamplePoe2Build();
+      const base: Build = {
+        ...rawBase,
+        config: { ...rawBase.config, enemyShocked: false, shockValue: 0, rawInputs: {} },
+      };
+      const pounceOnly = {
+        id: 'sg_pounce',
+        label: 'Pounce',
+        enabled: true,
+        weaponSets: [1, 2] as Array<1 | 2>,
+        gems: [{ instanceId: 'p1', gemId: 'poe2_wolfpounce', level: 20, quality: 0, enabled: true }],
+      };
+      const pounceWithSupportMark = {
+        ...pounceOnly,
+        gems: [
+          ...pounceOnly.gems,
+          { instanceId: 'ms1', gemId: 'poe2_markofsiphoningsupporttwo', level: 1, quality: 0, enabled: true },
+        ],
+      };
+      const pounceWithActiveMark = {
+        ...pounceOnly,
+        gems: [
+          ...pounceOnly.gems,
+          { instanceId: 'fm1', gemId: 'poe2_freezingmark', level: 20, quality: 0, enabled: true },
+        ],
+      };
+      const srsGroup = {
+        id: 'sg_srs',
+        label: 'SRS',
+        enabled: true,
+        weaponSets: [1, 2] as Array<1 | 2>,
+        gems: [{ instanceId: 'srs1', gemId: 'poe2_ragingspirits', level: 20, quality: 0, enabled: true }],
+      };
+
+      const outBase = calculateBuild(base);
+      const outPounce8 = calculateBuild({ ...base, skills: [...base.skills, pounceOnly] });
+      const outPounceSupMark = calculateBuild({ ...base, skills: [...base.skills, pounceWithSupportMark] });
+      const outPounceSrs15 = calculateBuild({ ...base, skills: [...base.skills, pounceOnly, srsGroup] });
+      const outPounceOverridden = calculateBuild({ ...base, skills: [...base.skills, pounceWithActiveMark] });
+
+      // 8 wolves * 3% = +24% increased Damage Taken
+      expect(outPounce8.offence.averageHit / outBase.offence.averageHit).toBeCloseTo(1.24, 2);
+      // Mark of Siphoning II support does NOT neutralize Pounce's Predator's Mark
+      expect(outPounceSupMark.offence.averageHit).toBeCloseTo(outPounce8.offence.averageHit, 1);
+      // Raging Spirits multi-minion skill keeps full 15 minions * 3% = +45% increased Damage Taken
+      expect(outPounceSrs15.offence.averageHit / outBase.offence.averageHit).toBeCloseTo(1.45, 2);
+      // Active Freezing Mark in same skill group overrides Predator's Mark
+      expect(outPounceOverridden.offence.averageHit).toBeLessThan(outPounce8.offence.averageHit);
+    });
+
+    it('PoE 2 Quiver offensive mods exclude Unarmed Concoctions (while keeping +Projectile Level) without breaking Bow Poison', () => {
+      const base = createSamplePoe2Build();
+      const bow = makeWeapon({
+        id: 'reg_bow',
+        name: 'Test Bow',
+        baseName: 'Dualstring Bow',
+        weaponStats: { weaponType: 'Bow', twoHanded: true, physicalMin: 120, physicalMax: 200, attacksPerSecond: 1.4, critChance: 5 },
+      });
+      const bigQuiver: Item = {
+        id: 'reg_quiver',
+        name: 'Crit Quiver',
+        baseName: 'Visceral Quiver',
+        rarity: 'RARE',
+        slotType: 'Weapon 2',
+        quality: 0,
+        implicits: ['25% increased Critical Hit Chance for Attacks'],
+        explicits: [
+          'Adds 50 to 100 Physical Damage to Attacks',
+          '40% increased Damage with Bow Skills',
+          '30% increased Attack Speed',
+          '+2 to Level of all Projectile Skills',
+        ],
+      };
+
+      const concGroup = {
+        id: 'sg_conc',
+        label: 'Shattering Concoction',
+        enabled: true,
+        weaponSets: [1, 2] as Array<1 | 2>,
+        gems: [{ instanceId: 'sc1', gemId: 'poe2_ascendancyshatteringconcoction', level: 20, quality: 0, enabled: true }],
+      };
+      const concNoQuiver: Build = {
+        ...base,
+        skills: [concGroup],
+        mainSkillGroupId: concGroup.id,
+        items: { ...base.items, [bow.id]: bow },
+        equipped: { ...base.equipped, 'Weapon 1': bow.id },
+      };
+      delete concNoQuiver.equipped['Weapon 2'];
+      const concWithQuiver: Build = {
+        ...concNoQuiver,
+        items: { ...concNoQuiver.items, [bigQuiver.id]: bigQuiver },
+        equipped: { ...concNoQuiver.equipped, 'Weapon 2': bigQuiver.id },
+      };
+      const outConcNoQ = calculateBuild(concNoQuiver);
+      const outConcWithQ = calculateBuild(concWithQuiver);
+      // Quiver Attack Speed & Crit Chance must NOT inflate Unarmed Concoction, while +2 Projectile Level still applies!
+      expect(outConcWithQ.offence.speed).toBeCloseTo(outConcNoQ.offence.speed, 2);
+      expect(outConcWithQ.offence.critChance).toBeCloseTo(outConcNoQ.offence.critChance, 2);
+      expect(outConcWithQ.offence.mainSkillLevel).toBe((outConcNoQ.offence.mainSkillLevel ?? 20) + 2);
+
+      // Bow Poison skill MUST still benefit from Quiver flat Physical Damage
+      const bowPsnGroup = {
+        id: 'sg_bow_psn',
+        label: 'Poisonburst',
+        enabled: true,
+        weaponSets: [1, 2] as Array<1 | 2>,
+        gems: [{ instanceId: 'bp1', gemId: 'poe2_poisonburstarrow', level: 20, quality: 0, enabled: true }],
+      };
+      const bowNoQuiver: Build = {
+        ...concNoQuiver,
+        skills: [bowPsnGroup],
+        mainSkillGroupId: bowPsnGroup.id,
+        config: { ...base.config, customMods: '100% chance to Poison on Hit' },
+      };
+      const bowWithQuiver: Build = {
+        ...bowNoQuiver,
+        items: { ...bowNoQuiver.items, [bigQuiver.id]: bigQuiver },
+        equipped: { ...bowNoQuiver.equipped, 'Weapon 2': bigQuiver.id },
+      };
+      const outBowNoQ = calculateBuild(bowNoQuiver);
+      const outBowWithQ = calculateBuild(bowWithQuiver);
+      expect(outBowWithQ.offence.poisonDps).toBeGreaterThan(outBowNoQ.offence.poisonDps * 1.3);
+    });
+
+    it('PoE 2 Spell Totem unlocks Urgent Totems III (+20% Cast Speed) and Rageforged II gates 35% MORE on Rage >= 10', () => {
+      const base = createSamplePoe2Build();
+      const grimPlain = {
+        id: 'sg_grim',
+        label: 'Grim Totem',
+        enabled: true,
+        weaponSets: [1, 2] as Array<1 | 2>,
+        gems: [
+          { instanceId: 'st1', gemId: 'poe2_metaspelltotem', level: 20, quality: 0, enabled: true },
+          { instanceId: 'gp1', gemId: 'poe2_grimpillars', level: 20, quality: 0, enabled: true },
+        ],
+      };
+      const grimUrgent = {
+        ...grimPlain,
+        gems: [
+          ...grimPlain.gems,
+          { instanceId: 'ut1', gemId: 'poe2_urgenttotemssupportthree', level: 1, quality: 0, enabled: true },
+        ],
+      };
+      const outGrimPlain = calculateBuild({ ...base, skills: [grimPlain], mainSkillGroupId: grimPlain.id });
+      const outGrimUrgent = calculateBuild({ ...base, skills: [grimUrgent], mainSkillGroupId: grimUrgent.id });
+      expect(outGrimUrgent.offence.speed).toBeGreaterThan(outGrimPlain.offence.speed * 1.1);
+
+      // Rageforged II: 0 Rage => no 35% MORE; 15 Rage => +35% MORE
+      const rfGroup = {
+        id: 'sg_rf2',
+        label: 'Rageforged Test',
+        enabled: true,
+        weaponSets: [1, 2] as Array<1 | 2>,
+        gems: [
+          { instanceId: 'es1', gemId: 'poe2_earthshatter', level: 20, quality: 0, enabled: true },
+          { instanceId: 'rf2', gemId: 'poe2_rageforgedsupporttwo', level: 1, quality: 0, enabled: true },
+        ],
+      };
+      const mace = makeWeapon({
+        id: 'reg_rf_mace',
+        name: 'Test Maul',
+        baseName: 'Sacred Maul',
+        weaponStats: { weaponType: 'Mace', twoHanded: true, physicalMin: 200, physicalMax: 300, attacksPerSecond: 1.2, critChance: 5 },
+      });
+      const mkRf = (rage: number): Build => ({
+        ...base,
+        items: { ...base.items, [mace.id]: mace },
+        equipped: { ...base.equipped, 'Weapon 1': mace.id },
+        skills: [rfGroup],
+        mainSkillGroupId: rfGroup.id,
+        config: { ...base.config, rage, rawInputs: { multiplierRage: rage } },
+      });
+      const outRage0 = calculateBuild(mkRf(0));
+      const outRage15 = calculateBuild(mkRf(15));
+      // 15 Rage gives 15% MORE Rage + 35% MORE Rageforged II = 1.15 * 1.35 = 1.5525x
+      expect(outRage15.offence.averageHit / outRage0.offence.averageHit).toBeGreaterThan(1.45);
+    });
+
+    it('PoE 2 Item Elemental Exposure, Enemies you Curse, Sigil of Power +Spell Level scaling, and Fulminating Concoction Skill Shock Magnitude', () => {
+      const rawBase = createSamplePoe2Build();
+      const base: Build = {
+        ...rawBase,
+        config: { ...rawBase.config, enemyShocked: false, shockValue: 0, rawInputs: {} },
+      };
+      const plainStaff = makeWeapon({
+        id: 'reg_plain_staff',
+        name: 'Plain Staff',
+        baseName: 'Permafrost Staff',
+        weaponStats: { weaponType: 'Staff', twoHanded: true, physicalMin: 10, physicalMax: 20, attacksPerSecond: 1.2, critChance: 5 },
+        explicits: [],
+      });
+      const whisperStaff = makeWeapon({
+        id: 'reg_whisper',
+        name: 'The Whispering Ice',
+        baseName: 'Permafrost Staff',
+        weaponStats: { weaponType: 'Staff', twoHanded: true, physicalMin: 10, physicalMax: 20, attacksPerSecond: 1.2, critChance: 5 },
+        explicits: [
+          '+4 to Level of all Spell Skills',
+          'Inflict Elemental Exposure on Hit, lowering Total Elemental Resistances by 60%',
+        ],
+      });
+      const sigilGroup = {
+        id: 'sg_sigil',
+        label: 'Sigil',
+        enabled: true,
+        weaponSets: [1, 2] as Array<1 | 2>,
+        gems: [{ instanceId: 'sig1', gemId: 'poe2_sigilofpower', level: 16, quality: 0, enabled: true }],
+      };
+      const bossBase: Build = {
+        ...base,
+        items: { ...base.items, [plainStaff.id]: plainStaff },
+        equipped: { ...base.equipped, 'Weapon 1': plainStaff.id },
+        config: { ...base.config, enemyIsBoss: 'Pinnacle', enemyColdResist: 50, enemyLightningResist: 50, enemyFireResist: 50 },
+      };
+      delete bossBase.equipped['Weapon 2'];
+      const withWhisperAndSigil: Build = {
+        ...bossBase,
+        items: { ...bossBase.items, [whisperStaff.id]: whisperStaff },
+        equipped: { ...bossBase.equipped, 'Weapon 1': whisperStaff.id },
+        skills: [...bossBase.skills, sigilGroup],
+      };
+      const outPlainBoss = calculateBuild(bossBase);
+      const outWhisper = calculateBuild(withWhisperAndSigil);
+      // 60% Exposure * 0.5 Boss = -30% res (0.80/0.50 = 1.6x) + Sigil + +4 Spell Level
+      expect(outWhisper.offence.averageHit).toBeGreaterThan(outPlainBoss.offence.averageHit * 2.0);
+
+      // Atziri's Disdain: "Enemies you Curse take 10% increased Damage" applies ONLY when a Curse is active
+      const cursedHelm: Item = {
+        id: 'reg_cursed_helm',
+        name: "Atziri's Disdain",
+        baseName: 'Gold Circlet',
+        rarity: 'UNIQUE',
+        slotType: 'Helmet',
+        quality: 0,
+        implicits: [],
+        explicits: ['Enemies you Curse take 10% increased Damage'],
+      };
+      const despairGroup = {
+        id: 'sg_desp',
+        label: 'Despair',
+        enabled: true,
+        weaponSets: [1, 2] as Array<1 | 2>,
+        gems: [{ instanceId: 'dsp1', gemId: 'poe2_despair', level: 20, quality: 0, enabled: true }],
+      };
+      const withHelmNoCurse: Build = {
+        ...base,
+        items: { ...base.items, [cursedHelm.id]: cursedHelm },
+        equipped: { ...base.equipped, Helmet: cursedHelm.id },
+      };
+      const withHelmAndCurse: Build = {
+        ...withHelmNoCurse,
+        skills: [...withHelmNoCurse.skills, despairGroup],
+      };
+      const outNoCurse = calculateBuild(withHelmNoCurse);
+      const outWithCurse = calculateBuild(withHelmAndCurse);
+      expect(outWithCurse.offence.averageHit / outNoCurse.offence.averageHit).toBeCloseTo(1.1, 2);
+
+      // Fulminating Concoction has 50% more Magnitude of Shock in cmods: Shock 20% -> 30% when enemyShocked
+      const fulmGroup = {
+        id: 'sg_fulm',
+        label: 'Fulminating Concoction',
+        enabled: true,
+        weaponSets: [1, 2] as Array<1 | 2>,
+        gems: [{ instanceId: 'fc1', gemId: 'poe2_ascendancyfulminatingconcoction', level: 20, quality: 0, enabled: true }],
+      };
+      const fulmUnshocked: Build = {
+        ...base,
+        skills: [fulmGroup],
+        mainSkillGroupId: fulmGroup.id,
+        config: { ...base.config, enemyShocked: false, shockValue: 0 },
+      };
+      const fulmShocked: Build = {
+        ...fulmUnshocked,
+        config: { ...fulmUnshocked.config, enemyShocked: true, shockValue: 0 },
+      };
+      const outFulmNoShock = calculateBuild(fulmUnshocked);
+      const outFulmShocked = calculateBuild(fulmShocked);
+      // 20% * 1.50 = 30% Shock (1.30x vs 1.20x without skill magnitude)
+      expect(outFulmShocked.offence.averageHit / outFulmNoShock.offence.averageHit).toBeCloseTo(1.3, 2);
     });
   });
 });

@@ -2727,7 +2727,6 @@ export function evaluateAurasAndWatchersEye(
               n.includes('cold snap') ||
               n.includes('vortex') ||
               n.includes('creeping frost') ||
-              n.includes('frostblink') ||
               n.includes('arctic armour') ||
               n.includes('wintertide')
             );
