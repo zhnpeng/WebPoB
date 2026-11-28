@@ -1002,22 +1002,22 @@ export function computeJewelEffectScale(
   const ownLines = joinWrappedJewelLines([...jewel.implicits, ...jewel.explicits]);
   if (applyLocalAffixMagnitude) {
     for (const line of ownLines) {
-      let m = line.match(/^(\d+)% increased Effect of Prefixes$/i);
+      let m = line.match(/^(\d+)% increased Effect of Prefix(?:es| Modifiers)$/i);
       if (m) {
         prefixPct += Number(m[1]);
         continue;
       }
-      m = line.match(/^(\d+)% reduced Effect of Prefixes$/i);
+      m = line.match(/^(\d+)% reduced Effect of Prefix(?:es| Modifiers)$/i);
       if (m) {
         prefixPct -= Number(m[1]);
         continue;
       }
-      m = line.match(/^(\d+)% increased Effect of Suffixes$/i);
+      m = line.match(/^(\d+)% increased Effect of Suffix(?:es| Modifiers)$/i);
       if (m) {
         suffixPct += Number(m[1]);
         continue;
       }
-      m = line.match(/^(\d+)% reduced Effect of Suffixes$/i);
+      m = line.match(/^(\d+)% reduced Effect of Suffix(?:es| Modifiers)$/i);
       if (m) {
         suffixPct -= Number(m[1]);
         continue;
@@ -1771,26 +1771,26 @@ export function evaluateRadiusAndDistanceJewels(
         /^(?:Conquered\s+)?Notable Passive Skills(?:\s+in Radius)? also grant\s+(.+)$/i,
       );
       if (m) {
-        notableAlsoGrants.push(m[1]!.trim());
+        notableAlsoGrants.push(normalizeStatLineToEn(m[1]!.trim()));
         continue;
       }
       m = line.match(
         /^(?:Conquered\s+)?Small Passive Skills(?:\s+in Radius)? also grant\s+(.+)$/i,
       );
       if (m) {
-        smallAlsoGrants.push(m[1]!.trim());
+        smallAlsoGrants.push(normalizeStatLineToEn(m[1]!.trim()));
         continue;
       }
       m = line.match(
         /^(?:Conquered\s+)?Attribute Passive Skills(?:\s+in Radius)? also grant\s+(.+)$/i,
       );
       if (m) {
-        attrAlsoGrants.push(m[1]!.trim());
+        attrAlsoGrants.push(normalizeStatLineToEn(m[1]!.trim()));
         continue;
       }
       m = line.match(/^Passive Skills in Radius also grant\s+(.+)$/i);
       if (m) {
-        allAlsoGrants.push(m[1]!.trim());
+        allAlsoGrants.push(normalizeStatLineToEn(m[1]!.trim()));
         continue;
       }
       m =

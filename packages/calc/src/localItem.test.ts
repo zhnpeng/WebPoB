@@ -489,4 +489,56 @@ describe('localItem — resolveItemEffectiveStats', () => {
     expect(resTrade.weaponStats?.physicalMin).toBe(360);
     expect(resTrade.weaponStats?.physicalMax).toBe(720);
   });
+
+  it('injects PoE 2 Sceptre 100 base Spirit fallback when unbaked without double-counting headers or implicits, and classifies +X% to Critical Hit Chance as local on PoE 2 weapons', () => {
+    const bareSceptre: Item = {
+      id: 'poe2-sceptre-bare',
+      name: 'Omen Sceptre',
+      baseName: 'Omen Sceptre',
+      rarity: 'RARE',
+      slotType: 'Weapon 2',
+      quality: 20,
+      localStatsPrecomputed: false,
+      implicits: [],
+      explicits: ['50% increased Spirit', '+20 to Intelligence'],
+    };
+    const bareRes = resolveItemEffectiveStats(bareSceptre, 'poe2');
+    // 100 * 1.5 * 1.2 = 180 Spirit; local "50% increased Spirit" stripped from globalExplicits
+    expect(bareRes.globalImplicits).toContain('+180 to Spirit');
+    expect(bareRes.globalExplicits).toEqual(['+20 to Intelligence']);
+
+    // WeGame / pre-baked Sceptre with explicit "+115 to Spirit" implicit must NOT double-add 100
+    const wegameSceptre: Item = {
+      id: 'poe2-sceptre-wegame',
+      name: 'Sacred Flame',
+      baseName: 'Shrine Sceptre',
+      rarity: 'UNIQUE',
+      slotType: 'Weapon 2',
+      quality: 6,
+      localStatsPrecomputed: false,
+      implicits: ['+115 to Spirit'],
+      explicits: ['Gain 56% of Damage as Extra Fire Damage'],
+    };
+    const wgRes = resolveItemEffectiveStats(wegameSceptre, 'poe2');
+    expect(wgRes.globalImplicits).toEqual(['+115 to Spirit']);
+
+    // PoE 2 precomputed weapon with "+7.82% to Critical Hit Chance" must consume it locally (not leak to global)
+    const preWeapon = mkWeapon({
+      name: 'The Ordained',
+      baseName: 'Grand Spear',
+      quality: 20,
+      localStatsPrecomputed: true,
+      weaponStats: {
+        weaponType: 'Sword',
+        twoHanded: false,
+        physicalMin: 205,
+        physicalMax: 307,
+        critChance: 12.82,
+        attacksPerSecond: 1.4,
+      },
+      explicits: ['205% increased Physical Damage', '+7.82% to Critical Hit Chance', '暴击几率 +7.82%'],
+    });
+    const preRes = resolveItemEffectiveStats(preWeapon, 'poe2');
+    expect(preRes.globalExplicits).toEqual([]);
+  });
 });

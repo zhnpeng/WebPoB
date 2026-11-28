@@ -719,8 +719,14 @@ export function resolveItemEffectiveStats(
   const hasPrecomputedSpiritHeader = Boolean(
     item.rawText && /^(?:Spirit|精魂)\s*[:：]\s*\+?\d+/im.test(item.rawText),
   );
+  const isPoe2Sceptre = game === 'poe2' && /\bsceptre\b/i.test(item.baseName);
+  const hasImplicitFlatSpirit = effectiveImplicits.some((l) =>
+    /^\+\d+\s+to\s+Spirit$/i.test(normalizeStatLineToEn(l.replace(/\{[^}]*\}/g, '').trim())),
+  );
+  const injectSceptreBaseSpirit =
+    isPoe2Sceptre && !hasPrecomputedSpiritHeader && !hasImplicitFlatSpirit;
   const stripLocalSpirit = (lines: readonly string[]): string[] =>
-    hasPrecomputedSpiritHeader
+    hasPrecomputedSpiritHeader || injectSceptreBaseSpirit
       ? lines.filter((l) => !/^\d+%\s+increased\s+Spirit$/i.test(normalizeStatLineToEn(l)))
       : [...lines];
 
@@ -735,10 +741,23 @@ export function resolveItemEffectiveStats(
       ARMOUR_BASE_NAME_RE.test(item.baseName));
 
   if (!isWeapon && !isArmour) {
+    const extraSceptreImplicits: string[] = [];
+    if (injectSceptreBaseSpirit) {
+      let localSpiritInc = 0;
+      for (const l of [...effectiveImplicits, ...effectiveExplicits]) {
+        const mSp = normalizeStatLineToEn(l.replace(/\{[^}]*\}/g, '').trim()).match(
+          /^(\d+)%\s+increased\s+Spirit$/i,
+        );
+        if (mSp) localSpiritInc += Number(mSp[1]);
+      }
+      const qMult = 1 + Math.max(0, item.quality) / 100;
+      const totalSceptreSpirit = Math.round(100 * (1 + localSpiritInc / 100) * qMult);
+      extraSceptreImplicits.push(`+${totalSceptreSpirit} to Spirit`);
+    }
     return {
       armourStats: item.armourStats,
       weaponStats: item.weaponStats,
-      globalImplicits: stripLocalSpirit(effectiveImplicits),
+      globalImplicits: [...extraSceptreImplicits, ...stripLocalSpirit(effectiveImplicits)],
       globalExplicits: stripLocalSpirit(effectiveExplicits),
     };
   }

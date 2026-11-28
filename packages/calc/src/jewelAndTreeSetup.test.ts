@@ -1583,4 +1583,52 @@ describe('PoE 2 The Adorned Sinister Sockets & Undying Hate Conquered Passives',
       'Every Rage also grants 1% increased Evasion Rating',
     ]);
   });
+
+  it('handles PoE 2 "effect of Suffix/Prefix Modifiers" wording and normalizes Chinese inner clauses on Time-Lost radius jewels', () => {
+    const jewel = mkItem({
+      id: 'j-suffix-mod',
+      name: 'WeGame Jewel',
+      baseName: 'Emerald',
+      rarity: 'RARE',
+      explicits: ['50% increased effect of Suffix Modifiers', '10% increased Attack Speed'],
+    });
+    const scale = computeJewelEffectScale(jewel, [jewel], 'poe2');
+    expect(scale.suffixScale).toBeCloseTo(1.5, 4);
+
+    const tree: PassiveTreeData = {
+      game: 'poe2',
+      version: '0_5',
+      bounds: { minX: -1000, maxX: 1000, minY: -1000, maxY: 1000 },
+      nodes: {
+        1: mkNode(1, 'Jewel Socket', 'jewel', 0, 0, []),
+        2: mkNode(2, 'Notable A', 'notable', 300, 0, ['10% increased Damage']),
+        3: mkNode(3, 'Small A', 'small', 400, 0, ['5% increased Damage']),
+      },
+      groups: {},
+      classStartNodeIds: {},
+    };
+    const tlJewel = mkItem({
+      id: 'j-timelost-cn',
+      name: 'Time-Lost Emerald',
+      baseName: 'Time-Lost Emerald',
+      rarity: 'RARE',
+      explicits: [
+        'Notable Passive Skills in Radius also grant 投射物速度提高 3%',
+        'Small Passive Skills in Radius also grant 能量护盾上限提高 3%',
+      ],
+    });
+    const res = evaluateRadiusAndDistanceJewels(
+      [{ nodeId: 1, jewel: tlJewel }],
+      tree,
+      new Set([1, 2, 3]),
+      1,
+    );
+    const lines = res.addedStatLines.flatMap((e) => e.lines);
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/increased Projectile Speed/i),
+        expect.stringMatching(/increased maximum Energy Shield/i),
+      ]),
+    );
+  });
 });
