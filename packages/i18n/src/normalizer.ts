@@ -89,7 +89,11 @@ const ZH_TO_EN_RULES: StatRewriteRule[] = [
     toEn: (_, v) => `${v}% increased Ward`,
   },
   {
-    zhPattern: /^护甲值?、闪避值?[和与]能量护盾(?:提高|增加)\s*(\d+)%$/,
+    zhPattern: /^全局护甲值?[，,、]\s*闪避值?[和与]\s*能量护盾(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Global Defences`,
+  },
+  {
+    zhPattern: /^护甲值?[，,、]\s*闪避值?[和与]\s*能量护盾(?:提高|增加)\s*(\d+)%$/,
     toEn: (_, v) => `${v}% increased Armour, Evasion and Energy Shield`,
   },
   {
@@ -152,8 +156,168 @@ const ZH_TO_EN_RULES: StatRewriteRule[] = [
     toEn: (_, v) => `${v.startsWith('-') ? v : `+${v.replace(/^\+/, '')}`}% to all Elemental Resistances`,
   },
   {
-    zhPattern: /^(?:(?:所有|全)?元素抗性上限\s*\+?(\d+)%|\+(\d+)%\s*(?:所有|全)?元素抗性上限)$/,
-    toEn: (_, a, b) => `+${a || b}% to all maximum Elemental Resistances`,
+    zhPattern: /^(?:(?:所有|全)?元素抗性上限\s*([+-]?\d+)%|([+-]?\d+)%\s*(?:所有|全)?元素抗性上限)$/,
+    toEn: (_, a, b) => {
+      const raw = (a || b)!;
+      const signed = raw.startsWith('-') ? raw : `+${raw.replace(/^\+/, '')}`;
+      return `${signed}% to all maximum Elemental Resistances`;
+    },
+  },
+  // PoE 2 Mageblood Legacies, Kalandra's Touch, Morior Invictus (per Socket filled), Atziri's Disdain & 0.5 CN mods
+  {
+    zhPattern: /^(紫晶|玄武岩|灰岩|钻石|黄金|坚岩|青玉|水银|红玉|蓝玉|白银|辉锑|硫磺|黄玉)\s*继承$/,
+    toEn: (_, k) => {
+      const legacyMap: Record<string, string> = {
+        紫晶: 'Amethyst',
+        玄武岩: 'Basalt',
+        灰岩: 'Bismuth',
+        钻石: 'Diamond',
+        黄金: 'Gold',
+        坚岩: 'Granite',
+        青玉: 'Jade',
+        水银: 'Quicksilver',
+        红玉: 'Ruby',
+        蓝玉: 'Sapphire',
+        白银: 'Silver',
+        辉锑: 'Stibnite',
+        硫磺: 'Sulphur',
+        黄玉: 'Topaz',
+      };
+      return `Legacy of ${legacyMap[k] ?? k}`;
+    },
+  },
+  {
+    zhPattern: /^你每拥有一个重复的法师遗产[，,]\s*所有法师遗产效果提高\s*(\d+)%$/,
+    toEn: (_, v) => `All Mage's Legacies have ${v}% increased effect per duplicate Mage's Legacy you have`,
+  },
+  {
+    zhPattern: /^映射另一枚戒指$/,
+    toEn: () => 'Reflects your other Ring',
+  },
+  {
+    zhPattern: /^每个镶嵌的插槽使所有元素抗性\s*\+?(\d+)%$/,
+    toEn: (_, v) => `+${v}% to all Elemental Resistances per Socket filled`,
+  },
+  {
+    zhPattern: /^每个镶嵌的插槽使(火焰|冰霜|冰冷|闪电|混沌)抗性\s*\+?(\d+)%$/,
+    toEn: (_, el, v) => `+${v}% to ${ZH_DAMAGE_TYPE_TO_EN[el] ?? el} Resistance per Socket filled`,
+  },
+  {
+    zhPattern: /^每个镶嵌的插槽使所有属性\s*\+?(\d+)$/,
+    toEn: (_, v) => `+${v} to all Attributes per Socket filled`,
+  },
+  {
+    zhPattern: /^每个镶嵌的插槽使(力量|敏捷|智慧)\s*\+?(\d+)$/,
+    toEn: (_, attr, v) => `+${v} to ${ZH_ATTR_TO_EN[attr] ?? attr} per Socket filled`,
+  },
+  {
+    zhPattern: /^每个镶嵌的插槽使精魂\s*\+?(\d+)$/,
+    toEn: (_, v) => `+${v} to Spirit per Socket filled`,
+  },
+  {
+    zhPattern: /^每个镶嵌的插槽使(?:最大生命|生命上限)\s*\+?(\d+)$/,
+    toEn: (_, v) => `+${v} to maximum Life per Socket filled`,
+  },
+  {
+    zhPattern: /^每个镶嵌的插槽使(?:最大魔力|魔力上限)\s*\+?(\d+)$/,
+    toEn: (_, v) => `+${v} to maximum Mana per Socket filled`,
+  },
+  {
+    zhPattern: /^每个镶嵌的插槽使(?:最大能量护盾|能量护盾上限)\s*\+?(\d+)$/,
+    toEn: (_, v) => `+${v} to maximum Energy Shield per Socket filled`,
+  },
+  {
+    zhPattern: /^每个镶嵌的插槽使?(?:最大生命|生命上限)(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased maximum Life per Socket filled`,
+  },
+  {
+    zhPattern: /^每个镶嵌的插槽使?(?:最大魔力|魔力上限)(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased maximum Mana per Socket filled`,
+  },
+  {
+    zhPattern: /^每个镶嵌的插槽使?全局护甲值?[，,、]\s*闪避值?[和与]\s*能量护盾(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Global Defences per Socket filled`,
+  },
+  {
+    zhPattern: /^(?:最大生命|生命上限)总降\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% less maximum Life`,
+  },
+  {
+    zhPattern: /^(?:最大生命|生命上限)总增\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% more maximum Life`,
+  },
+  {
+    zhPattern: /^(?:最大能量护盾|能量护盾上限)总降\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% less maximum Energy Shield`,
+  },
+  {
+    zhPattern: /^(?:最大能量护盾|能量护盾上限)总增\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% more maximum Energy Shield`,
+  },
+  {
+    zhPattern: /^你的抗性上限为\s*(\d+)%$/,
+    toEn: (_, v) => `Your Maximum Resistances are ${v}%`,
+  },
+  {
+    zhPattern: /^每个暴击球使所有元素抗性\s*([+-]?\d+)%$/,
+    toEn: (_, v) => `${v}% to all Elemental Resistances per Power Charge`,
+  },
+  {
+    zhPattern: /^每件有(火焰|冰霜|冰冷|闪电|混沌)抗性词缀的装备物品[，,]\s*使(火焰|冰霜|冰冷|闪电|混沌)[与和](火焰|冰霜|冰冷|闪电|混沌)抗性\s*\+(\d+)%$/,
+    toEn: (_, condEl, e1, e2, v) =>
+      `+${v}% to ${ZH_DAMAGE_TYPE_TO_EN[e1] ?? e1} and ${ZH_DAMAGE_TYPE_TO_EN[e2] ?? e2} Resistances per Equipped Item with a ${ZH_DAMAGE_TYPE_TO_EN[condEl] ?? condEl} Resistance Modifier`,
+  },
+  {
+    zhPattern: /^(前缀|后缀)效果(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, affix, v) => `${v}% increased effect of ${affix === '前缀' ? 'Prefix' : 'Suffix'} Modifiers`,
+  },
+  {
+    zhPattern: /^(力量|敏捷|智慧)(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, attr, v) => `${v}% increased ${ZH_ATTR_TO_EN[attr] ?? attr}`,
+  },
+  {
+    zhPattern: /^(?:所有|全)属性(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Attributes`,
+  },
+  {
+    zhPattern: /^获得等同(?:于)?(?:最大生命|生命上限)\s*(\d+)%\s*的额外(?:最大)?能量护盾$/,
+    toEn: (_, v) => `Gain ${v}% of Maximum Life as Extra Maximum Energy Shield`,
+  },
+  {
+    zhPattern: /^\+?(\d+)%\s*的护甲同样作用于元素伤害$/,
+    toEn: (_, v) => `${v}% of Armour also applies to Elemental Damage`,
+  },
+  {
+    zhPattern: /^镶嵌的增幅器物品效果(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased effect of Socketed Items`,
+  },
+  {
+    zhPattern: /^镶嵌在该物品上的雕像获得其自身的绑定词缀的强化效果$/,
+    toEn: () => 'Idols socketed in this item gain the benefits of their Bonded modifiers',
+  },
+  {
+    zhPattern: /^已装备的头盔每有\s*(\d+)\s*点护甲[，,]\s*(?:最大生命|生命上限)\s*\+(\d+)$/,
+    toEn: (_, per, val) => `+${val} to maximum Life per ${per} Armour on Equipped Helmet`,
+  },
+  {
+    zhPattern: /^装备法器的能量护盾(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Energy Shield from Equipped Focus`,
+  },
+  {
+    zhPattern: /^同时获得\s*(\d+)\s*防卫$/,
+    toEn: (_, v) => `+${v} to Ward`,
+  },
+  {
+    zhPattern: /^冷却回复速度(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Cooldown Recovery Rate`,
+  },
+  {
+    zhPattern: /^召唤生物的暴击伤害加成(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `Minions have ${v}% increased Critical Damage Bonus`,
+  },
+  {
+    zhPattern: /^具有\s*(\d+)\s*个咒符位$/,
+    toEn: (_, v) => `Has ${v} Charm Slots`,
   },
   {
     zhPattern: /^(?:(火焰|冰霜|冰冷|闪电|混沌)[和与](火焰|冰霜|冰冷|闪电|混沌)抗性\s*\+?(\d+)%|\+(\d+)%\s*(火焰|冰霜|冰冷|闪电|混沌)[和与](火焰|冰霜|冰冷|闪电|混沌)抗性)$/,
@@ -165,8 +329,12 @@ const ZH_TO_EN_RULES: StatRewriteRule[] = [
     },
   },
   {
-    zhPattern: /^(火焰|冰霜|冰冷|闪电|混沌)抗性上限\s*\+?(\d+)%$/,
-    toEn: (_, el, v) => `+${v}% to maximum ${ZH_DAMAGE_TYPE_TO_EN[el] ?? el} Resistance`,
+    zhPattern: /^(火焰|冰霜|冰冷|闪电|混沌)抗性上限\s*([+-]?\d+)%$/,
+    toEn: (_, el, v) => `${v.startsWith('-') ? v : `+${v.replace(/^\+/, '')}`}% to maximum ${ZH_DAMAGE_TYPE_TO_EN[el] ?? el} Resistance`,
+  },
+  {
+    zhPattern: /^([+-]?\d+)%\s*(?:最大)?(火焰|冰霜|冰冷|闪电|混沌)抗性上限$/,
+    toEn: (_, v, el) => `${v.startsWith('-') ? v : `+${v.replace(/^\+/, '')}`}% to maximum ${ZH_DAMAGE_TYPE_TO_EN[el] ?? el} Resistance`,
   },
   {
     zhPattern: /^\+(\d+)%\s*最大(火焰|冰霜|冰冷|闪电|混沌)抗性$/,
@@ -780,8 +948,25 @@ const EN_TO_ZH_RULES: EnToZhRule[] = [
  * so `@webpob/calc`'s ModParser produces identical results regardless of input language.
  */
 export function normalizeStatLineToEn(rawLine: string): string {
-  const preCleaned = rawLine
-    .trim()
+  // Preserve English keys embedded in PoE 2 / WeGame inline markup before stripping brackets:
+  // e.g. "配置 [DeliriumAnoint_Paragon|典范]" -> "Allocates Paragon"
+  // e.g. "[LegacyOfBismuth|灰岩] 继承" -> "Legacy of Bismuth"
+  const rawTrimmed = rawLine.trim();
+  const legacyMarkup = rawTrimmed.match(/^\[LegacyOf([A-Za-z]+)\|[^\]]+\]\s*继承$/i);
+  if (legacyMarkup) {
+    return `Legacy of ${legacyMarkup[1]}`;
+  }
+  const anointMarkup = rawTrimmed.match(/^配置\s*\[DeliriumAnoint_([A-Za-z0-9_]+)\|[^\]]+\]$/i);
+  if (anointMarkup) {
+    const spaced = anointMarkup[1]!
+      .replace(/_/g, ' ')
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return `Allocates ${spaced}`;
+  }
+
+  const preCleaned = rawTrimmed
     .replace(/\[(?:[^|\]]+\|)?([^\]]+)\]/g, '$1')
     .replace(/^\{[^}]+\}\s*/g, '')
     .replace(/\{[^}]+\}/g, '')
@@ -812,6 +997,40 @@ export function normalizeStatLineToEn(rawLine: string): string {
   // Normalize Traditional Chinese (International TW) modifiers to Simplified Chinese
   // so both CN and TW client lines reuse the full rule table seamlessly.
   const normalized = toSimplifiedZh(cleaned);
+
+  // PoE 2 Time-Lost / Against the Darkness / Controlled Metamorphosis radius jewel modifiers
+  const mNotableGrant = normalized.match(/^范围内的核心天赋同时提供\s+(.+)$/);
+  if (mNotableGrant) {
+    return wrapBonded(`Notable Passive Skills in Radius also grant ${normalizeStatLineToEn(mNotableGrant[1]!)}`);
+  }
+  const mSmallGrant = normalized.match(/^范围内的小型?天赋同时提供\s+(.+)$/);
+  if (mSmallGrant) {
+    return wrapBonded(`Small Passive Skills in Radius also grant ${normalizeStatLineToEn(mSmallGrant[1]!)}`);
+  }
+  const mNotableEff = normalized.match(/^范围内的核心天赋效果(?:提高|增加)\s*(\d+)%$/);
+  if (mNotableEff) {
+    return wrapBonded(`Notable Passive Skills in Radius have ${mNotableEff[1]}% increased Effect`);
+  }
+  const mSmallEff = normalized.match(/^范围内的小型?天赋效果(?:提高|增加)\s*(\d+)%$/);
+  if (mSmallEff) {
+    return wrapBonded(`Small Passive Skills in Radius have ${mSmallEff[1]}% increased Effect`);
+  }
+  const mUpgradeRadius = normalized.match(/^将范围升级为(中型|大型|极大型)$/);
+  if (mUpgradeRadius) {
+    const rMap: Record<string, string> = { 中型: 'Medium', 大型: 'Large', 极大型: 'Very Large' };
+    return wrapBonded(`Upgrades radius to ${rMap[mUpgradeRadius[1]!] ?? mUpgradeRadius[1]}`);
+  }
+  const mRingRadius = normalized.match(/^只影响(小型|中型|大型|非常大型|巨大)环形范围内的天赋$/);
+  if (mRingRadius) {
+    const rMap: Record<string, string> = {
+      小型: 'Small',
+      中型: 'Medium',
+      大型: 'Large',
+      非常大型: 'Very Large',
+      巨大: 'Massive',
+    };
+    return wrapBonded(`Only affects Passives in ${rMap[mRingRadius[1]!] ?? mRingRadius[1]} Ring`);
+  }
   // Strip local-item prefixes like "该装备的护甲提高 85%" / "该武器附加 12 - 24 点物理伤害"
   const withoutLocalPrefix = normalized.replace(/^(?:该|此)(?:装备|物品|武器)的?\s*/, '').trim();
   const baseCandidates =

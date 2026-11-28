@@ -16,7 +16,9 @@ import {
   getClassesForGame,
   getGemsForGame,
   getTreeForGame,
+  getUniquesForGame,
 } from '@webpob/data';
+import { normalizeStatLineToEn } from '@webpob/i18n';
 
 const WEGAME_POE2_API_BASE = 'https://www.wegame.com.cn/api/v1/wegame.pallas.poe2.Profile';
 const WEGAME_SHARE_REGEX =
@@ -42,6 +44,18 @@ export interface WeGameRawGem {
   socketedItems?: WeGameRawGem[];
 }
 
+export interface WeGameRawSocketedItem {
+  id?: string;
+  name?: string;
+  baseType?: string;
+  typeLine?: string;
+  rarity?: string;
+  frameType?: number;
+  properties?: WeGameProperty[];
+  implicitMods?: Array<string | WeGameModEntry>;
+  explicitMods?: Array<string | WeGameModEntry>;
+}
+
 export interface WeGameRawEquipment {
   id?: string;
   name?: string;
@@ -52,12 +66,23 @@ export interface WeGameRawEquipment {
   rarity?: string;
   ilvl?: number;
   properties?: WeGameProperty[];
+  sockets?: Array<{ group?: number; type?: string }>;
+  socketedItems?: WeGameRawSocketedItem[];
   implicitMods?: Array<string | WeGameModEntry>;
   explicitMods?: Array<string | WeGameModEntry>;
   enchantMods?: Array<string | WeGameModEntry>;
   runeMods?: Array<string | WeGameModEntry>;
   craftedMods?: Array<string | WeGameModEntry>;
   fracturedMods?: Array<string | WeGameModEntry>;
+}
+
+export interface WeGameSkillOverride {
+  id?: string;
+  name?: string;
+  grantedStrength?: number;
+  grantedDexterity?: number;
+  grantedIntelligence?: number;
+  stats?: string[];
 }
 
 export interface WeGameRawJewelSlot {
@@ -95,6 +120,7 @@ export interface WeGamePoe2Bundle {
         set1?: number[];
         set2?: number[];
       };
+      skill_overrides?: Record<string, WeGameSkillOverride>;
       quest_stats?: string[];
     };
   };
@@ -146,15 +172,91 @@ export function cleanWeGameMarkup(raw?: string | null): string {
     .trim();
 }
 
-function extractModLines(list?: Array<string | WeGameModEntry>): string[] {
+function extractModLines(
+  list?: Array<string | WeGameModEntry>,
+  notableEnByNorm?: Map<string, string>,
+  notableEnByZh?: Map<string, string>,
+): string[] {
   if (!Array.isArray(list)) return [];
   const out: string[] = [];
   for (const entry of list) {
     const raw = typeof entry === 'string' ? entry : entry?.description;
-    const cleaned = cleanWeGameMarkup(raw);
-    if (cleaned) out.push(cleaned);
+    if (!raw || !raw.trim()) continue;
+    const trimmed = raw.trim();
+    // Resolve PoE 2 anoints first using the passive tree's exact Chinese notable map
+    // (handles both "配置 [life_recoup17|坚韧血肉]", "配置 [DeliriumAnoint_Paragon|典范]", and plain "配置 诡计面纱").
+    if (notableEnByZh) {
+      const mBracketAnoint = trimmed.match(/^配置\s*\[[^|\]]+\|([^\]]+)\]$/);
+      if (mBracketAnoint) {
+        const zhTarget = mBracketAnoint[1]!.trim();
+        const enFromZh = notableEnByZh.get(zhTarget);
+        if (enFromZh) {
+          out.push(`Allocates ${enFromZh}`);
+          continue;
+        }
+      }
+      const mPlainAnoint = trimmed.match(/^配置\s+([^\[\]\s][^[\]]*)$/);
+      if (mPlainAnoint) {
+        const zhTarget = mPlainAnoint[1]!.trim();
+        const enFromZh = notableEnByZh.get(zhTarget);
+        if (enFromZh) {
+          out.push(`Allocates ${enFromZh}`);
+          continue;
+        }
+      }
+    }
+    // Run normalizeStatLineToEn on the raw WeGame string FIRST so embedded English keys like
+    // "[DeliriumAnoint_Paragon|典范]" and "[LegacyOfBismuth|灰岩] 继承" are preserved before bracket stripping.
+    let en = normalizeStatLineToEn(raw);
+    if (!en) continue;
+    if (notableEnByNorm && /^Allocates\s+/i.test(en)) {
+      const target = en.replace(/^Allocates\s+/i, '').trim();
+      const normKey = target.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const exact = notableEnByNorm.get(normKey);
+      if (exact) {
+        en = `Allocates ${exact}`;
+      }
+    }
+    out.push(en);
   }
   return out;
+}
+
+function isWeGameSocketedJewel(si: WeGameRawSocketedItem): boolean {
+  const base = cleanWeGameMarkup(si.baseType || si.typeLine || si.name);
+  const propNames = (si.properties ?? []).map((p) => cleanWeGameMarkup(p.name)).join(' ');
+  if (/珠宝|Jewel/i.test(propNames)) return true;
+  if (/^(?:宝钻|红玉|翠绿|蓝玉|钻石|蓝宝石|绿宝石|红宝石|失落的(?:红玉|翠绿|蓝玉)|永恒珠宝|Time-Lost|Timeless|Ruby|Emerald|Sapphire|Diamond)$/i.test(base)) {
+    return true;
+  }
+  return /珠宝|Jewel/i.test(base);
+}
+
+function isWeGameGrantedSkillSocket(si: WeGameRawSocketedItem): boolean {
+  // WeGame includes item-granted active skills in `socketedItems` with no mods & no rune/jewel base
+  const hasMods =
+    (Array.isArray(si.explicitMods) && si.explicitMods.length > 0) ||
+    (Array.isArray(si.implicitMods) && si.implicitMods.length > 0);
+  return !hasMods && !isWeGameSocketedJewel(si);
+}
+
+function resolveCanonicalBaseFallback(rawBaseZh: string, props?: WeGameProperty[]): string {
+  const propText = (props ?? []).map((p) => cleanWeGameMarkup(p.name)).join(' ');
+  if (/法器|Focus/i.test(rawBaseZh) || /\bFocus\b|法器/i.test(propText)) return 'Focus';
+  if (/圆盾|轻盾|Buckler/i.test(rawBaseZh)) return 'Buckler';
+  if (/塔盾|巨盾|盾|Shield/i.test(rawBaseZh) || /格挡几率|Chance to Block/i.test(propText)) return 'Shield';
+  if (/箭袋|Quiver/i.test(rawBaseZh)) return 'Quiver';
+  if (/战矛|Spear/i.test(rawBaseZh) || /战矛|Spear/i.test(propText)) return 'Spear';
+  if (/战弩|弩|Crossbow/i.test(rawBaseZh)) return 'Crossbow';
+  if (/长弓|弓|Bow/i.test(rawBaseZh)) return 'Bow';
+  if (/细杖|Quarterstaff/i.test(rawBaseZh)) return 'Quarterstaff';
+  if (/长杖|Staff/i.test(rawBaseZh)) return 'Staff';
+  if (/法杖|Wand/i.test(rawBaseZh)) return 'Wand';
+  if (/权杖|Sceptre/i.test(rawBaseZh)) return 'Sceptre';
+  if (/戒指|Ring/i.test(rawBaseZh)) return 'Ring';
+  if (/项链|Amulet/i.test(rawBaseZh)) return 'Amulet';
+  if (/腰带|Belt/i.test(rawBaseZh)) return 'Belt';
+  return rawBaseZh;
 }
 
 function mapRarity(frameType?: number, rarity?: string): ItemRarity {
@@ -211,6 +313,7 @@ function parseWeGameItemProperties(
   let armour = 0;
   let evasion = 0;
   let energyShield = 0;
+  let ward = 0;
   let blockChance: number | undefined;
   let spirit: number | undefined;
   let physRange: [number, number] | null = null;
@@ -237,6 +340,9 @@ function parseWeGameItemProperties(
     } else if (/^(?:能量护盾|Energy Shield)$/i.test(name) && val0) {
       const v = parseFirstNumber(val0);
       if (v !== null) energyShield = v;
+    } else if (/^(?:符文结界|结界|Ward)$/i.test(name) && val0) {
+      const v = parseFirstNumber(val0);
+      if (v !== null) ward = v;
     } else if (/格挡几率|Chance to Block/i.test(name) && val0) {
       const v = parseFirstNumber(val0);
       if (v !== null) blockChance = v;
@@ -279,11 +385,12 @@ function parseWeGameItemProperties(
   }
 
   const armourStats: ArmourBaseStats | undefined =
-    armour > 0 || evasion > 0 || energyShield > 0 || blockChance !== undefined
+    armour > 0 || evasion > 0 || energyShield > 0 || ward > 0 || blockChance !== undefined
       ? {
           ...(armour > 0 ? { armour } : {}),
           ...(evasion > 0 ? { evasion } : {}),
           ...(energyShield > 0 ? { energyShield } : {}),
+          ...(ward > 0 ? { ward } : {}),
           ...(blockChance !== undefined ? { blockChance } : {}),
         }
       : undefined;
@@ -444,6 +551,112 @@ export function parseWeGamePoe2Build(bundle: WeGamePoe2Bundle): Build {
     (h): h is number => typeof h === 'number' && Number.isFinite(h),
   );
 
+  // Parse PoE 2 self-selected attribute travel nodes & custom overrides from `talent_tree.skill_overrides`
+  const attributeOverrides: Record<number, 'str' | 'dex' | 'int'> = {};
+  const nodeOverrides: Record<number, { name?: string; stats: string[] }> = {};
+  for (const [rawNodeId, ov] of Object.entries(rawTree?.skill_overrides ?? {})) {
+    const nodeId = Number(rawNodeId);
+    if (!Number.isFinite(nodeId) || !ov) continue;
+    const ovId = (ov.id ?? '').toLowerCase();
+    const ovStats = (ov.stats ?? []).map((s) => normalizeStatLineToEn(s)).filter(Boolean);
+    if (
+      (ov.grantedStrength && ov.grantedStrength > 0) ||
+      ovId.includes('generic_attribute_strength') ||
+      (ovStats.length === 1 && /^\+\d+\s+to Strength$/i.test(ovStats[0]!))
+    ) {
+      attributeOverrides[nodeId] = 'str';
+    } else if (
+      (ov.grantedDexterity && ov.grantedDexterity > 0) ||
+      ovId.includes('generic_attribute_dexterity') ||
+      (ovStats.length === 1 && /^\+\d+\s+to Dexterity$/i.test(ovStats[0]!))
+    ) {
+      attributeOverrides[nodeId] = 'dex';
+    } else if (
+      (ov.grantedIntelligence && ov.grantedIntelligence > 0) ||
+      ovId.includes('generic_attribute_intelligence') ||
+      (ovStats.length === 1 && /^\+\d+\s+to Intelligence$/i.test(ovStats[0]!))
+    ) {
+      attributeOverrides[nodeId] = 'int';
+    } else if (ovStats.length > 0) {
+      nodeOverrides[nodeId] = {
+        ...(ov.name ? { name: cleanWeGameMarkup(ov.name) } : {}),
+        stats: ovStats,
+      };
+    }
+  }
+
+  // Build lookup tables for Delirium Anoints & Chinese Unique/Base -> Canonical English names
+  const notableEnByNorm = new Map<string, string>();
+  const notableEnByZh = new Map<string, string>();
+  for (const node of Object.values(tree.nodes)) {
+    if (node.kind === 'notable' || node.kind === 'keystone') {
+      const enName = node.name.en.trim();
+      const zhName = node.name.zh?.trim();
+      if (enName) {
+        notableEnByNorm.set(enName.toLowerCase().replace(/[^a-z0-9]/g, ''), enName);
+        if (zhName) {
+          notableEnByZh.set(zhName, enName);
+        }
+      }
+    }
+  }
+  const slotToUniqueBucket = (s: string): string => {
+    if (/^Weapon|^Offhand|Shield|Quiver|Focus/i.test(s)) return 'Weapon';
+    if (/^Ring/i.test(s)) return 'Ring';
+    if (/^Flask/i.test(s)) return 'Flask';
+    if (/^Charm/i.test(s)) return 'Charm';
+    if (/^Helm/i.test(s)) return 'Helmet';
+    return s;
+  };
+  const uniqueZhBySlot = new Map<string, { nameEn: string; baseEn: string }>();
+  const baseZhLookup = new Map<string, string>();
+  for (const u of getUniquesForGame(game)) {
+    if (u.zh && u.s) {
+      const key = `${u.zh.trim()}::${slotToUniqueBucket(u.s)}`;
+      if (!uniqueZhBySlot.has(key)) {
+        uniqueZhBySlot.set(key, { nameEn: u.en, baseEn: u.b });
+      }
+    }
+    if (u.bz && u.b) {
+      baseZhLookup.set(u.bz.trim(), u.b);
+    }
+  }
+  // Common CN PoE 2 unique aliases (slot-scoped to prevent cross-slot collisions like Belt "夜临" vs Shield "Nightfall")
+  const extraUniqueAliases: Array<{ zh: string; bucket: string; nameEn: string; baseEn: string }> = [
+    { zh: '无生之辱', bucket: 'Body Armour', nameEn: 'Morior Invictus', baseEn: 'Grand Regalia' },
+    { zh: '卡兰德之触', bucket: 'Ring', nameEn: "Kalandra's Touch", baseEn: 'Ring' },
+    { zh: '埃斯特拉的道路', bucket: 'Ring', nameEn: "Estra's Path", baseEn: 'Ring' },
+    { zh: '元素之章', bucket: 'Ring', nameEn: 'The Taming', baseEn: 'Prismatic Ring' },
+    { zh: '库勒马克之握', bucket: 'Ring', nameEn: 'Grip of Kulemak', baseEn: 'Abyssal Signet' },
+    { zh: '法师之血', bucket: 'Belt', nameEn: 'Mageblood', baseEn: 'Utility Belt' },
+    { zh: '夜临', bucket: 'Belt', nameEn: 'Darkness Enthroned', baseEn: 'Fine Belt' },
+    { zh: '黑暗统御', bucket: 'Belt', nameEn: 'Darkness Enthroned', baseEn: 'Fine Belt' },
+    { zh: '薛朗的背包', bucket: 'Belt', nameEn: "Shavronne's Satchel", baseEn: 'Fine Belt' },
+    { zh: '猎首', bucket: 'Belt', nameEn: 'Headhunter', baseEn: 'Heavy Belt' },
+    { zh: '阿兹里的蔑视', bucket: 'Helmet', nameEn: "Atziri's Disdain", baseEn: 'Gold Circlet' },
+    { zh: '收缩指令', bucket: 'Helmet', nameEn: 'Constricting Command', baseEn: 'Viper Cap' },
+    { zh: '祭礼之雨', bucket: 'Helmet', nameEn: 'The Bringer of Rain', baseEn: 'Decorated Helm' },
+    { zh: '谜容', bucket: 'Helmet', nameEn: 'Mask of the Sanguimancer', baseEn: 'Tribal Mask' },
+    { zh: '均衡之符', bucket: 'Amulet', nameEn: 'Astramentis', baseEn: 'Stellar Amulet' },
+    { zh: '烈火繁花', bucket: 'Amulet', nameEn: 'Fireflower', baseEn: 'Solar Amulet' },
+    { zh: '马雷格罗的玫红手套', bucket: 'Gloves', nameEn: "Maligaro's Virtuosity", baseEn: 'Fine Bracers' },
+    { zh: '巨铜之顶', bucket: 'Body Armour', nameEn: 'The Brass Dome', baseEn: 'Champion Cuirass' },
+    { zh: '奉圣庇护所', bucket: 'Body Armour', nameEn: 'Sacred Sanctuary', baseEn: 'Corvus Mantle' },
+    { zh: '敬奉之绸', bucket: 'Body Armour', nameEn: 'Silks of Veneration', baseEn: 'Enlightened Robe' },
+    { zh: '血誓', bucket: 'Body Armour', nameEn: 'The Covenant', baseEn: 'Altar Robe' },
+    { zh: '神圣之火', bucket: 'Weapon', nameEn: 'Sacred Flame', baseEn: 'Shrine Sceptre' },
+    { zh: '森林灵像', bucket: 'Weapon', nameEn: "Sylvan's Effigy", baseEn: 'Stoic Sceptre' },
+    { zh: '遗孀之雹', bucket: 'Weapon', nameEn: 'Widowhail', baseEn: 'Crude Bow' },
+    { zh: '阿兹里的统治', bucket: 'Weapon', nameEn: "Atziri's Rule", baseEn: 'Reflecting Staff' },
+    { zh: '符文猎手的呼唤', bucket: 'Weapon', nameEn: "Runeseeker's Call", baseEn: 'Runic Fork' },
+    { zh: '斯瓦林', bucket: 'Weapon', nameEn: 'Svalinn', baseEn: 'Crucible Tower Shield' },
+    { zh: '尼布洛克', bucket: 'Weapon', nameEn: 'Nebuloch', baseEn: 'Brigand Mace' },
+    { zh: '穿心', bucket: 'Weapon', nameEn: 'Pierce', baseEn: 'Penetrating Quiver' },
+  ];
+  for (const entry of extraUniqueAliases) {
+    uniqueZhBySlot.set(`${entry.zh}::${entry.bucket}`, { nameEn: entry.nameEn, baseEn: entry.baseEn });
+  }
+
   // Equipped items (armour, weapons, jewellery, flasks, charms)
   const items: Record<string, Item> = {};
   const equipped: Partial<Record<EquipmentSlotId, string>> = {};
@@ -468,18 +681,19 @@ export function parseWeGamePoe2Build(bundle: WeGamePoe2Bundle): Build {
   let itemIdx = 0;
   for (const rawEq of bundle.equipments?.equipments ?? []) {
     itemIdx++;
-    const baseName = cleanWeGameMarkup(rawEq.baseType || rawEq.typeLine) || 'Unknown Base';
-    const name = cleanWeGameMarkup(rawEq.name) || baseName;
-    const parsedProps = parseWeGameItemProperties(rawEq.properties, baseName);
-    const isCharm = parsedProps.isCharm || baseName.includes('咒符') || /Charm$/i.test(baseName);
+    const rawBaseZh = cleanWeGameMarkup(rawEq.baseType || rawEq.typeLine) || 'Unknown Base';
+    const rawNameZh = cleanWeGameMarkup(rawEq.name) || rawBaseZh;
+    const rarity = mapRarity(rawEq.frameType, rawEq.rarity);
+    const parsedProps = parseWeGameItemProperties(rawEq.properties, rawBaseZh);
+    const isCharm = parsedProps.isCharm || rawBaseZh.includes('咒符') || /Charm$/i.test(rawBaseZh);
 
     let slot: EquipmentSlotId | undefined;
     if (rawEq.inventoryId === 'Flask') {
       if (isCharm) {
         slot = nextFreeSlot(['Charm 1', 'Charm 2', 'Charm 3'], usedCharmSlots);
-      } else if (baseName.includes('生命')) {
+      } else if (rawBaseZh.includes('生命') || /Life/i.test(rawBaseZh)) {
         slot = nextFreeSlot(['Flask 1', 'Flask 2'], usedFlaskSlots);
-      } else if (baseName.includes('魔力')) {
+      } else if (rawBaseZh.includes('魔力') || /Mana/i.test(rawBaseZh)) {
         slot = nextFreeSlot(['Flask 2', 'Flask 1'], usedFlaskSlots);
       } else {
         slot = nextFreeSlot(['Flask 1', 'Flask 2'], usedFlaskSlots);
@@ -489,25 +703,57 @@ export function parseWeGamePoe2Build(bundle: WeGamePoe2Bundle): Build {
     }
     if (!slot) continue;
 
-    const fallbackStats = getBaseItemStats(baseName, 0, game);
+    const matchedUnique =
+      rarity === 'UNIQUE' ? uniqueZhBySlot.get(`${rawNameZh}::${slotToUniqueBucket(slot)}`) : undefined;
+    const canonicalBase =
+      matchedUnique?.baseEn ??
+      baseZhLookup.get(rawBaseZh) ??
+      (/^[\x00-\x7F]+$/.test(rawBaseZh) ? rawBaseZh : resolveCanonicalBaseFallback(rawBaseZh, rawEq.properties));
+    const canonicalName = matchedUnique?.nameEn ?? rawNameZh;
+    const baseName = canonicalBase;
+    const name = canonicalName;
+
+    const fallbackStats = getBaseItemStats(baseName, 0, game) ?? getBaseItemStats(rawBaseZh, 0, game);
     const weaponStats = parsedProps.weapon ?? fallbackStats?.weapon;
     const armourStats = parsedProps.armour ?? fallbackStats?.armour;
     const localStatsPrecomputed = Boolean(parsedProps.weapon || parsedProps.armour);
 
     const hasPrecomputedSpiritProp = Boolean(parsedProps.spirit && parsedProps.spirit > 0);
     const filterLocalSpiritLine = (line: string): boolean =>
-      !(hasPrecomputedSpiritProp && /(?:该装备|此装备|此物品)?(?:精魂|Spirit)(?:提高|增加)\s*\d+%/i.test(line));
+      !(hasPrecomputedSpiritProp && /(?:该装备|此装备|此物品)?(?:精魂|Spirit)(?:提高|增加)\s*\d+%|^\d+%\s*increased Spirit$/i.test(line));
+
+    // Extract any equipment-socketed Jewels (e.g. PoE 2 0.5 Grafted / Cardigan's Jewel sockets inside Gloves/Rings)
+    const equipSocketedJewelMods: string[] = [];
+    let nonSkillSocketedCount = 0;
+    for (const si of rawEq.socketedItems ?? []) {
+      if (isWeGameGrantedSkillSocket(si)) continue;
+      nonSkillSocketedCount++;
+      if (isWeGameSocketedJewel(si)) {
+        equipSocketedJewelMods.push(
+          ...extractModLines(si.implicitMods, notableEnByNorm, notableEnByZh),
+          ...extractModLines(si.explicitMods, notableEnByNorm, notableEnByZh),
+        );
+      }
+    }
+    const socketCount = Array.isArray(rawEq.sockets) && rawEq.sockets.length > 0 ? rawEq.sockets.length : undefined;
+    const filledSocketCount =
+      nonSkillSocketedCount > 0
+        ? socketCount !== undefined
+          ? Math.min(socketCount, nonSkillSocketedCount)
+          : nonSkillSocketedCount
+        : undefined;
 
     const implicits = [
       ...(hasPrecomputedSpiritProp ? [`+${parsedProps.spirit} to Spirit`] : []),
-      ...extractModLines(rawEq.enchantMods).filter(filterLocalSpiritLine),
-      ...extractModLines(rawEq.implicitMods).filter(filterLocalSpiritLine),
-      ...extractModLines(rawEq.runeMods).filter(filterLocalSpiritLine),
+      ...extractModLines(rawEq.enchantMods, notableEnByNorm, notableEnByZh).filter(filterLocalSpiritLine),
+      ...extractModLines(rawEq.implicitMods, notableEnByNorm, notableEnByZh).filter(filterLocalSpiritLine),
+      ...extractModLines(rawEq.runeMods, notableEnByNorm, notableEnByZh).filter(filterLocalSpiritLine),
     ];
     const explicits = [
-      ...extractModLines(rawEq.fracturedMods).filter(filterLocalSpiritLine),
-      ...extractModLines(rawEq.explicitMods).filter(filterLocalSpiritLine),
-      ...extractModLines(rawEq.craftedMods).filter(filterLocalSpiritLine),
+      ...extractModLines(rawEq.fracturedMods, notableEnByNorm, notableEnByZh).filter(filterLocalSpiritLine),
+      ...extractModLines(rawEq.explicitMods, notableEnByNorm, notableEnByZh).filter(filterLocalSpiritLine),
+      ...extractModLines(rawEq.craftedMods, notableEnByNorm, notableEnByZh).filter(filterLocalSpiritLine),
+      ...equipSocketedJewelMods,
     ];
 
     // Estimate flat Spirit contribution per weapon set so activeWeaponSet picks the Sceptre set when needed
@@ -525,10 +771,14 @@ export function parseWeGamePoe2Build(bundle: WeGamePoe2Bundle): Build {
     items[id] = {
       id,
       name,
+      ...(rawNameZh !== name ? { nameZh: rawNameZh } : {}),
       baseName,
-      rarity: mapRarity(rawEq.frameType, rawEq.rarity),
+      ...(rawBaseZh !== baseName ? { baseNameZh: rawBaseZh } : {}),
+      rarity,
       slotType: slot,
       quality: parsedProps.quality,
+      ...(socketCount !== undefined ? { socketCount, sockets: Array(socketCount).fill('S').join(' ') } : {}),
+      ...(filledSocketCount !== undefined ? { filledSocketCount } : {}),
       weaponStats,
       armourStats,
       implicits,
@@ -556,43 +806,110 @@ export function parseWeGamePoe2Build(bundle: WeGamePoe2Bundle): Build {
     return [];
   })();
 
+  // Exact PoE 2 0.5 PassiveJewel_<index> -> passive tree jewel socket nodeId mapping
+  // (critical for radius jewels like Against the Darkness, Time-Lost Jewels, and Controlled Metamorphosis)
+  const POE2_PASSIVE_JEWEL_SOCKET_TO_NODE: Record<number, number> = {
+    0: 26725,
+    4: 60735,
+    5: 61834,
+    11: 7960,
+    12: 46882,
+    13: 55190,
+    14: 61419,
+    15: 2491,
+    16: 54127,
+    17: 32763,
+    18: 26196,
+    20: 21984,
+  };
+  const JEWEL_UNIQUE_ZH_TO_EN: Record<string, string> = {
+    抗衡黑暗: 'Against the Darkness',
+    妄想症: 'Megalomaniac',
+    可控变形: 'Controlled Metamorphosis',
+    无根之源: 'From Nothing',
+    人格分裂: 'Split Personality',
+    泉井之心: 'Heart of the Well',
+    信念的棱镜: 'Prism of Belief',
+    英雄的悲歌: 'Heroic Tragedy',
+    天神之音: 'Voices',
+  };
+  const JEWEL_BASE_ZH_TO_EN: Record<string, string> = {
+    失落的宝钻: 'Time-Lost Diamond',
+    失落的翡翠: 'Time-Lost Emerald',
+    失落的蓝玉: 'Time-Lost Sapphire',
+    失落的红玉: 'Time-Lost Ruby',
+    永恒珠宝: 'Timeless Jewel',
+    宝钻: 'Diamond',
+    翡翠: 'Emerald',
+    蓝玉: 'Sapphire',
+    红玉: 'Ruby',
+  };
+
   const jewelSummaries: string[] = [];
-  const jewelItemIds: string[] = [];
+  const parsedJewels: Array<{ id: string; socketIdx?: number; mods: string[] }> = [];
   rawJewelList.forEach((slotEntry, idx) => {
     const j = slotEntry.jewel;
     if (!j) return;
-    const jName = cleanWeGameMarkup(j.display_name || j.name) || `Jewel ${idx + 1}`;
-    const jBase = cleanWeGameMarkup(j.name) || 'Jewel';
+    const rawJName = cleanWeGameMarkup(j.display_name || j.name) || `Jewel ${idx + 1}`;
+    const rawJBase = cleanWeGameMarkup(j.name) || 'Jewel';
+    const jRarity = mapRarity(j.rarity);
+    const jName = (jRarity === 'UNIQUE' ? JEWEL_UNIQUE_ZH_TO_EN[rawJName] : undefined) ?? rawJName;
+    const jBase = JEWEL_BASE_ZH_TO_EN[rawJBase] ?? rawJBase;
     const jMods: string[] = [];
     for (const md of j.mod_descriptions ?? []) {
-      for (const v of md.values ?? []) {
-        const cleaned = cleanWeGameMarkup(v);
-        if (cleaned) jMods.push(cleaned);
-      }
+      jMods.push(...extractModLines(md.values, notableEnByNorm, notableEnByZh));
     }
     const id = j.id ? `wg_jewel_${j.id.slice(0, 12)}` : `wg_jewel_${idx + 1}`;
     items[id] = {
       id,
       name: jName,
+      ...(rawJName !== jName ? { nameZh: rawJName } : {}),
       baseName: jBase,
-      rarity: mapRarity(j.rarity),
+      ...(rawJBase !== jBase ? { baseNameZh: rawJBase } : {}),
+      rarity: jRarity,
       slotType: 'Any',
       quality: 0,
       implicits: [],
       explicits: jMods,
       localStatsPrecomputed: false,
     };
-    jewelItemIds.push(id);
-    jewelSummaries.push(`- ${slotEntry.socket_name || slotEntry.socket_id || `Jewel ${idx + 1}`}: ${jName} (${jBase})${jMods.length ? ` — ${jMods.join(' / ')}` : ''}`);
+    const mSockIdx = slotEntry.socket_id?.match(/PassiveJewel_(\d+)/i);
+    const socketIdx = mSockIdx ? Number(mSockIdx[1]) : undefined;
+    parsedJewels.push({ id, socketIdx, mods: jMods });
+    jewelSummaries.push(`- ${slotEntry.socket_name || slotEntry.socket_id || `Jewel ${idx + 1}`}: ${rawJName} (${rawJBase})${jMods.length ? ` — ${jMods.join(' / ')}` : ''}`);
   });
 
-  // Socket parsed passive jewels into allocated jewel socket nodes on the passive tree
+  // Socket parsed passive jewels into their exact allocated jewel socket nodes on the passive tree.
+  // Any overflow jewels (e.g. Sinister/Ascendancy extra sockets PassiveJewel_24/25/26/30) preserve
+  // their non-radius mods via customMods so equipped jewel stats are never dropped.
   const allocatedJewelNodes = [...hashSet]
     .filter((id) => tree.nodes[id]?.kind === 'jewel')
     .sort((a, b) => a - b);
+  const allocatedJewelNodeSet = new Set(allocatedJewelNodes);
   const socketedJewels: Record<number, string> = {};
-  for (let i = 0; i < Math.min(allocatedJewelNodes.length, jewelItemIds.length); i++) {
-    socketedJewels[allocatedJewelNodes[i]!] = jewelItemIds[i]!;
+  const unmappedJewels: Array<{ id: string; mods: string[] }> = [];
+  for (const pj of parsedJewels) {
+    const exactNodeId =
+      pj.socketIdx !== undefined ? POE2_PASSIVE_JEWEL_SOCKET_TO_NODE[pj.socketIdx] : undefined;
+    if (exactNodeId !== undefined && allocatedJewelNodeSet.has(exactNodeId) && !socketedJewels[exactNodeId]) {
+      socketedJewels[exactNodeId] = pj.id;
+    } else {
+      unmappedJewels.push({ id: pj.id, mods: pj.mods });
+    }
+  }
+  const freeAllocatedJewelNodes = allocatedJewelNodes.filter((nid) => !socketedJewels[nid]);
+  const extraJewelMods: string[] = [];
+  for (const uj of unmappedJewels) {
+    const freeNode = freeAllocatedJewelNodes.shift();
+    if (freeNode !== undefined) {
+      socketedJewels[freeNode] = uj.id;
+    } else {
+      for (const line of uj.mods) {
+        if (!/in Radius|Ring|Upgrades radius/i.test(line)) {
+          extraJewelMods.push(line);
+        }
+      }
+    }
   }
 
   // Skills & Support Gems
@@ -689,10 +1006,17 @@ export function parseWeGamePoe2Build(bundle: WeGamePoe2Bundle): Build {
       }
     }
     const isMinion = primaryDef?.tags.some((t) => t.toLowerCase() === 'minion') ?? false;
+    const isUtilitySkill =
+      Boolean(
+        primaryDef &&
+          (primaryDef.tags.some((t) => /^(?:mark|curse|guard|warcry|travel|movement|meta)$/i.test(t)) ||
+            /\b(?:mark|curse|barrage|blink)\b/i.test(primaryDef.name.en)),
+      );
     const primaryLevel = sg.gems[0]?.level ?? 20;
     const lowLevelUtilityPenalty = primaryLevel <= 5 ? -45 : 0;
     const score =
       (isAttackOrSpell ? 100 : 0) +
+      (isUtilitySkill ? -45 : 0) +
       (isMinion ? -15 : 0) +
       lowLevelUtilityPenalty +
       profileBonus +
@@ -740,21 +1064,49 @@ export function parseWeGamePoe2Build(bundle: WeGamePoe2Bundle): Build {
     noteLines.push('', 'Socketed Passive Jewels:', ...jewelSummaries);
   }
 
-  // Apply optional/choice PoE 2 campaign quest bonuses into customMods while excluding fixed campaign
-  // baselines ALREADY built into POE2_RULESET (+100 Spirit, +20 Life, 5% inc Life, 5% inc Mana,
-  // and Act 1-3 +10% Fire/Cold/Lightning Res baked into net -50% endgameResistPenalty) so they are never double-counted.
-  const applicableQuestStats = questStats.filter(
-    (q) =>
-      !/^\+?100\s*(?:精魂|Spirit)$/i.test(q) &&
-      !/^\+?20\s*(?:生命上限|最大生命|to maximum Life)$/i.test(q) &&
-      !/^(?:(?:生命上限|最大生命)(?:提高|增加)\s*5%|5%\s*increased maximum Life)$/i.test(q) &&
-      !/^(?:(?:魔力上限|最大魔力)(?:提高|增加)\s*5%|5%\s*increased maximum Mana)$/i.test(q) &&
-      !/^(?:(?:火焰|冰霜|冰冷|闪电)抗性\s*\+?10%|\+10%\s*to (?:Fire|Cold|Lightning) Resistance)$/i.test(q) &&
-      !/毁面首领|咒符栏|BrokenFace|Charm Slot/i.test(q),
-  );
+  // Apply optional/choice PoE 2 campaign quest bonuses as NET DELTAS over fixed campaign baselines
+  // already built into POE2_RULESET (+100 Spirit, +20 Life, +5% inc Life, +5% inc Mana,
+  // and Act 1-3 +10% Fire/Cold/Lightning Res baked into net -50% endgameResistPenalty).
+  const applicableQuestStats: string[] = [];
+  for (const rawQ of rawTree?.quest_stats ?? []) {
+    const enQ = normalizeStatLineToEn(rawQ);
+    if (!enQ || /毁面首领|咒符栏|BrokenFace|Charm Slot/i.test(enQ)) continue;
+    const mSpirit = enQ.match(/^\+?(\d+)\s+to Spirit$/i);
+    if (mSpirit) {
+      const delta = Number(mSpirit[1]) - 100;
+      if (delta !== 0) applicableQuestStats.push(`${delta > 0 ? '+' : ''}${delta} to Spirit`);
+      continue;
+    }
+    const mFlatLife = enQ.match(/^\+?(\d+)\s+to maximum Life$/i);
+    if (mFlatLife) {
+      const delta = Number(mFlatLife[1]) - 20;
+      if (delta > 0) applicableQuestStats.push(`+${delta} to maximum Life`);
+      continue;
+    }
+    const mIncLife = enQ.match(/^(\d+)% increased maximum Life$/i);
+    if (mIncLife) {
+      const delta = Number(mIncLife[1]) - 5;
+      if (delta > 0) applicableQuestStats.push(`${delta}% increased maximum Life`);
+      continue;
+    }
+    const mIncMana = enQ.match(/^(\d+)% increased maximum Mana$/i);
+    if (mIncMana) {
+      const delta = Number(mIncMana[1]) - 5;
+      if (delta > 0) applicableQuestStats.push(`${delta}% increased maximum Mana`);
+      continue;
+    }
+    const mEleRes = enQ.match(/^\+?(\d+)% to (Fire|Cold|Lightning) Resistance$/i);
+    if (mEleRes) {
+      const delta = Number(mEleRes[1]) - 10;
+      if (delta !== 0) applicableQuestStats.push(`${delta > 0 ? '+' : ''}${delta}% to ${mEleRes[2]} Resistance`);
+      continue;
+    }
+    applicableQuestStats.push(enQ);
+  }
+  const allCustomMods = [...applicableQuestStats, ...extraJewelMods];
   const config = {
     ...createDefaultConfig(),
-    ...(applicableQuestStats.length > 0 ? { customMods: applicableQuestStats.join('\n') } : {}),
+    ...(allCustomMods.length > 0 ? { customMods: allCustomMods.join('\n') } : {}),
   };
 
   // Auto-select Weapon Set 2 if Weapon Set 2 holds a Spirit Sceptre needed to cover Spirit reservations
@@ -778,6 +1130,8 @@ export function parseWeGamePoe2Build(bundle: WeGamePoe2Bundle): Build {
       weaponSet1NodeIds,
       weaponSet2NodeIds,
       masteryEffects: {},
+      ...(Object.keys(attributeOverrides).length > 0 ? { attributeOverrides } : {}),
+      ...(Object.keys(nodeOverrides).length > 0 ? { nodeOverrides } : {}),
       ...(Object.keys(socketedJewels).length > 0 ? { socketedJewels } : {}),
     },
     skills,
