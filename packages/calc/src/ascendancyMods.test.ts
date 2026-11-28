@@ -55,15 +55,17 @@ describe('ascendancyMods', () => {
       expect(scaled[1]?.value).toBe(12); // Math.trunc(8 * 1.5) = 12
       expect(scaled[2]?.value).toBe(true);
 
-      // PoE 2 CalcSetup.lua:397 (`not node.isAttribute`): pure attribute travel nodes are NOT scaled
+      // PoE 2 CalcSetup.lua:397 (`not node.isAttribute`): `+5` Attribute choice travel nodes are NOT scaled,
+      // while dedicated small Strength/Dexterity/Intelligence passives (+8/+12) ARE scaled by Hulking Form.
       const attrTravelMods: Mod[] = [
         { name: 'Str', type: 'BASE', value: 5, flags: 0, keywordFlags: 0, source: 'Tree: Attribute' },
       ];
       expect(scaleSmallPassiveMods(attrTravelMods, mult)[0]?.value).toBe(5);
-      const strTravelMods: Mod[] = [
+      const strSmallMods: Mod[] = [
         { name: 'Str', type: 'BASE', value: 8, flags: 0, keywordFlags: 0, source: 'Tree: Strength' },
+        { name: 'Str', type: 'BASE', value: 12, flags: 0, keywordFlags: 0, source: 'Tree: Strength' },
       ];
-      expect(scaleSmallPassiveMods(strTravelMods, mult)[0]?.value).toBe(8);
+      expect(scaleSmallPassiveMods(strSmallMods, mult).map((m) => m.value)).toEqual([12, 18]);
     });
   });
 

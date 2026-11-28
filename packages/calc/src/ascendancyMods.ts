@@ -279,8 +279,9 @@ export function computeSmallPassiveEffectMultiplier(allocatedNodes: readonly Pas
 
 /**
  * Scales numeric BASE/INC/MORE values on small passive modifiers using PoB's integer truncation.
- * Matches upstream PoB 2 `CalcSetup.lua:397` (`not node.isAttribute`): pure attribute travel nodes
- * (`Tree: Attribute|Strength|Dexterity|Intelligence`) are NOT scaled by Titan `Hulking Form`.
+ * Matches upstream PoB 2 `CalcSetup.lua:397` (`not node.isAttribute`): only `+5` attribute choice
+ * travel nodes (`Tree: Attribute`) are NOT scaled by Titan `Hulking Form`; dedicated small attribute
+ * passives (`Tree: Strength`, `Tree: Dexterity`, `Tree: Intelligence`, e.g. `+8`/`+12`) ARE scaled.
  */
 export function scaleSmallPassiveMods(mods: readonly Mod[], multiplier: number): Mod[] {
   if (multiplier === 1) return [...mods];
@@ -290,7 +291,7 @@ export function scaleSmallPassiveMods(mods: readonly Mod[], multiplier: number):
       (m) =>
         m.type === 'BASE' &&
         (m.name === 'Str' || m.name === 'Dex' || m.name === 'Int') &&
-        /^Tree:\s*(?:Attribute|Strength|Dexterity|Intelligence)$/i.test(m.source ?? ''),
+        /^Tree:\s*Attribute$/i.test(m.source ?? ''),
     );
   if (isAttributeTravelNode) return [...mods];
   return mods.map((mod) => {
