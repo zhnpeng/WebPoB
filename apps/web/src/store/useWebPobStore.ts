@@ -29,7 +29,7 @@ import {
   loadOfficialUniques,
   removeNodeAndPruneDisconnected,
 } from '@webpob/data';
-import { createEmptyCalcOutput } from '@webpob/calc/lite';
+import { createEmptyCalcOutput } from '../utils/emptyCalcOutput';
 import { calculateBuildInWorker } from '../workers/calcWorkerClient';
 
 export type ActiveTab = 'tree' | 'skills' | 'items' | 'calcs' | 'config' | 'import' | 'notes';
@@ -41,6 +41,7 @@ interface WebPobState {
   treePaintMode: TreePaintMode;
   corsProxyUrl: string;
   dataLoading: boolean;
+  calcReady: boolean;
   treeRevision: number;
   build: Build;
   calc: CalcOutput;
@@ -62,7 +63,7 @@ interface WebPobState {
   switchGame: (game: GameId) => void;
   loadSampleBuild: (game?: GameId) => void;
   createNewBuild: (game?: GameId) => void;
-  replaceBuild: (nextBuild: Build) => void;
+  replaceBuild: (nextBuild: Build) => Promise<void>;
 
   // Character & Tree
   setBuildMeta: (patch: Partial<Pick<Build, 'name' | 'level' | 'classId' | 'ascendancyId' | 'activeWeaponSet' | 'bandit' | 'notes'>>) => void;
@@ -175,23 +176,24 @@ const secondaryLoaded: Partial<Record<GameId, Promise<void>>> = {};
 
 export const useWebPobStore = create<WebPobState>((set, get) => {
   let calcSeq = 0;
+
   const scheduleCalc = (targetBuild: Build): Promise<void> => {
-    const seq = ++calcSeq;
-    return calculateBuildInWorker(targetBuild)
-      .then((calc) => {
-        if (seq === calcSeq) {
-          set({ calc });
+    const ticket = ++calcSeq;
+    return calculateBuildInWorker(targetBuild, get().locale)
+      .then((output) => {
+        if (ticket === calcSeq) {
+          set({ calc: output, calcReady: true });
         }
       })
       .catch((err) => {
-        console.warn('[WebPoB] Calc worker calculation failed:', err);
+        console.warn('[WebPoB] Background calculation error:', err);
       });
   };
 
   const commitBuild = (
     rawNext: Build,
     opts?: { recordHistory?: boolean; clearHistory?: boolean },
-  ) => {
+  ): Promise<void> => {
     const prevBuild = get().build;
     let nextBuild = rawNext;
     if (nextBuild.treeSpecs && nextBuild.treeSpecs.length > 0) {
@@ -229,7 +231,11 @@ export const useWebPobStore = create<WebPobState>((set, get) => {
     return scheduleCalc(nextBuild);
   };
 
-  void scheduleCalc(initial.build);
+  queueMicrotask(() => {
+    if (calcSeq === 0) {
+      void scheduleCalc(initial.build);
+    }
+  });
 
   return {
     locale: initial.locale,
@@ -237,9 +243,10 @@ export const useWebPobStore = create<WebPobState>((set, get) => {
     treePaintMode: 'shared',
     corsProxyUrl: DEFAULT_CORS_PROXY,
     dataLoading: false,
+    calcReady: false,
     treeRevision: 0,
     build: initial.build,
-    calc: createEmptyCalcOutput(initial.build.game),
+    calc: createEmptyCalcOutput(initial.build),
     past: [],
     future: [],
     canUndo: false,
@@ -291,7 +298,7 @@ export const useWebPobStore = create<WebPobState>((set, get) => {
           const cur = get().build;
           if (cur.game === game) {
             set({ treeRevision: get().treeRevision + 1 });
-            await scheduleCalc(cur);
+            void scheduleCalc(cur);
           }
         })
         .catch((err) => {
@@ -312,7 +319,7 @@ export const useWebPobStore = create<WebPobState>((set, get) => {
       if (loaded && get().build.game === game) {
         const cur = get().build;
         set({ treeRevision: get().treeRevision + 1 });
-        await scheduleCalc(cur);
+        void scheduleCalc(cur);
       }
     },
 
@@ -348,8 +355,8 @@ export const useWebPobStore = create<WebPobState>((set, get) => {
           if (isStarterSample || validCount === 0) {
             if (cur.id === 'sample-poe1-arc' || cur.id === 'sample-poe2-spark') {
               const upgraded = getSampleBuild(game);
-              await commitBuild(upgraded, { clearHistory: true });
               set({ treeRevision: get().treeRevision + 1, dataLoading: false });
+              await commitBuild(upgraded, { clearHistory: true });
             } else {
               const startId = tree.classStartNodeIds[cur.classId] ?? Object.values(tree.classStartNodeIds)[0]!;
               const nextBuild: Build = {
@@ -362,12 +369,12 @@ export const useWebPobStore = create<WebPobState>((set, get) => {
                   weaponSet2NodeIds: [],
                 },
               };
-              await commitBuild(nextBuild, { clearHistory: true });
               set({ treeRevision: get().treeRevision + 1, dataLoading: false });
+              await commitBuild(nextBuild, { clearHistory: true });
             }
           } else {
-            await commitBuild(cur, { recordHistory: false });
             set({ treeRevision: get().treeRevision + 1, dataLoading: false });
+            await commitBuild(cur, { recordHistory: false });
           }
         } else {
           set({ treeRevision: get().treeRevision + 1, dataLoading: false });
@@ -409,31 +416,32 @@ export const useWebPobStore = create<WebPobState>((set, get) => {
       if (get().build.game === game) return;
       const sample = getSampleBuild(game);
       set({ treePaintMode: 'shared' });
-      commitBuild(sample, { clearHistory: true });
+      void commitBuild(sample, { clearHistory: true });
       void get().ensureOfficialDataLoaded(game);
     },
 
     loadSampleBuild: (game) => {
       const targetGame = game ?? get().build.game;
       set({ treePaintMode: 'shared' });
-      commitBuild(getSampleBuild(targetGame), { clearHistory: true });
+      void commitBuild(getSampleBuild(targetGame), { clearHistory: true });
     },
 
     createNewBuild: (game) => {
       const targetGame = game ?? get().build.game;
       set({ treePaintMode: 'shared' });
-      commitBuild(createEmptyBuild(targetGame), { clearHistory: true });
+      void commitBuild(createEmptyBuild(targetGame), { clearHistory: true });
     },
 
-    replaceBuild: (nextBuild) => {
+    replaceBuild: async (nextBuild) => {
       set({ treePaintMode: 'shared' });
-      commitBuild(nextBuild, { clearHistory: true });
+      const calcPromise = commitBuild(nextBuild, { clearHistory: true });
       // Imported builds may target a historical tree version (old share links). Load
       // that exact passive tree so allocated nodes keep rendering correctly.
       const targetVersion = nextBuild.tree?.treeVersion;
       if (targetVersion && !hasOfficialTreeLoaded(nextBuild.game, targetVersion)) {
-        void get().ensureOfficialDataLoaded(nextBuild.game, targetVersion);
+        await get().ensureOfficialDataLoaded(nextBuild.game, targetVersion);
       }
+      await calcPromise;
     },
 
     setBuildMeta: (patch) => {

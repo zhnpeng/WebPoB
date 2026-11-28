@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { GitCompare, ShieldCheck, TrendingUp, Zap } from 'lucide-react';
-import { DAMAGE_TYPES, type Build, type DamageType } from '@webpob/core';
+import { DAMAGE_TYPES, type Build, type CalcOutput, type DamageType } from '@webpob/core';
 import { getSampleBuild } from '@webpob/data';
-import { calculateBuild } from '@webpob/calc';
 import { DAMAGE_TYPE_LABELS, localizeText, t, uiText } from '@webpob/i18n';
 import { useWebPobStore } from '../store/useWebPobStore';
 import { listSavedBuilds, type SavedBuildRecord } from '../storage/buildLibrary';
+import { calculateBatchInWorker, calculateBuildInWorker } from '../workers/calcWorkerClient';
 
 const DMG_COLOR: Record<string, string> = {
   Physical: 'text-zinc-200',
@@ -70,15 +70,28 @@ export function CalcsTab() {
   }, [build.game, savedBuilds, locale]);
 
   const comparedTarget = compareTargets.find((c) => c.id === compareId) ?? compareTargets[0];
-  const comparedCalc = useMemo(
-    () => (comparedTarget ? calculateBuild(comparedTarget.build) : null),
-    [comparedTarget],
-  );
+  const [comparedCalc, setComparedCalc] = useState<CalcOutput | null>(null);
+  useEffect(() => {
+    if (!comparedTarget) {
+      setComparedCalc(null);
+      return;
+    }
+    let cancelled = false;
+    void calculateBuildInWorker(comparedTarget.build, locale)
+      .then((res) => {
+        if (!cancelled) setComparedCalc(res);
+      })
+      .catch(() => {
+        if (!cancelled) setComparedCalc(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [comparedTarget, locale]);
 
   // Live Quick Scenario What-If Analysis (Flasks, Charges, Pinnacle Boss, +2 Gem Level, Shock/Onslaught)
-  const scenarioRows = useMemo(() => {
-    const baseDps = calc.offence.fullDps ?? calc.offence.totalDps;
-    const baseEhp = calc.defence.effectiveHitPool;
+  const [scenarioOutputs, setScenarioOutputs] = useState<Record<string, CalcOutput>>({});
+  const scenarioDefs = useMemo(() => {
     const allFlaskSlots = (['Flask 1', 'Flask 2', 'Flask 3', 'Flask 4', 'Flask 5'] as const).reduce(
       (acc, slot) => {
         if (build.equipped[slot]) acc[slot] = true;
@@ -87,12 +100,12 @@ export function CalcsTab() {
       {} as NonNullable<Build['activeFlaskSlots']>,
     );
 
-    const scenarios: Array<{ id: string; labelEn: string; labelZh: string; mutate: (b: Build) => Build }> = [
+    return [
       {
         id: 'plus2_gem',
         labelEn: '+2 to All Skill Gems (What-If)',
         labelZh: '假设所有技能宝石等级 +2',
-        mutate: (b) => ({
+        mutate: (b: Build): Build => ({
           ...b,
           config: {
             ...b.config,
@@ -104,7 +117,7 @@ export function CalcsTab() {
         id: 'pinnacle',
         labelEn: 'vs Pinnacle Boss (50% Ele / 30% Chaos Res)',
         labelZh: '对阵巅峰 Boss（高抗性）',
-        mutate: (b) => ({
+        mutate: (b: Build): Build => ({
           ...b,
           config: {
             ...b.config,
@@ -120,7 +133,7 @@ export function CalcsTab() {
         id: 'mapping',
         labelEn: 'vs Normal Mapping Mob (0% Resist)',
         labelZh: '对阵普通刷图怪物（0% 抗性）',
-        mutate: (b) => ({
+        mutate: (b: Build): Build => ({
           ...b,
           config: {
             ...b.config,
@@ -137,7 +150,7 @@ export function CalcsTab() {
         id: 'no_charges',
         labelEn: 'Without Any Charges / Onslaught',
         labelZh: '无充能球与猛攻（裸状态）',
-        mutate: (b) => ({
+        mutate: (b: Build): Build => ({
           ...b,
           config: {
             ...b.config,
@@ -152,7 +165,7 @@ export function CalcsTab() {
         id: 'full_buffs',
         labelEn: 'Full Charges (3/3/3) + Onslaught + 20% Shock',
         labelZh: '满三球 (3/3/3) + 猛攻 + 20% 感电',
-        mutate: (b) => ({
+        mutate: (b: Build): Build => ({
           ...b,
           config: {
             ...b.config,
@@ -172,15 +185,34 @@ export function CalcsTab() {
         id: 'all_flasks',
         labelEn: Object.keys(allFlaskSlots).length > 0 ? 'All Equipped Flasks Active' : 'No Equipped Flasks (Baseline)',
         labelZh: Object.keys(allFlaskSlots).length > 0 ? '全部已装备药剂开启' : '未装备药剂（基准）',
-        mutate: (b) => ({
+        mutate: (b: Build): Build => ({
           ...b,
           activeFlaskSlots: allFlaskSlots,
         }),
       },
     ];
+  }, [build.equipped]);
 
-    return scenarios.map((sc) => {
-      const res = calculateBuild(sc.mutate(build));
+  useEffect(() => {
+    let cancelled = false;
+    const batch = scenarioDefs.map((sc) => ({ key: sc.id, build: sc.mutate(build) }));
+    void calculateBatchInWorker(batch, locale)
+      .then((res) => {
+        if (!cancelled) setScenarioOutputs(res);
+      })
+      .catch(() => {
+        if (!cancelled) setScenarioOutputs({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [build, scenarioDefs, locale]);
+
+  const scenarioRows = useMemo(() => {
+    const baseDps = calc.offence.fullDps ?? calc.offence.totalDps;
+    const baseEhp = calc.defence.effectiveHitPool;
+    return scenarioDefs.map((sc) => {
+      const res = scenarioOutputs[sc.id] ?? calc;
       const nextDps = res.offence.fullDps ?? res.offence.totalDps;
       const nextEhp = res.defence.effectiveHitPool;
       const dpsDelta = nextDps - baseDps;
@@ -196,21 +228,61 @@ export function CalcsTab() {
         ehpPct,
       };
     });
-  }, [build, calc, locale]);
+  }, [scenarioDefs, scenarioOutputs, calc, locale]);
 
   // Live Character Level (60->100) & Main Gem Level (18->30) Progression Curve
+  const [progressionOutputs, setProgressionOutputs] = useState<Record<string, CalcOutput>>({});
+  useEffect(() => {
+    let cancelled = false;
+    const batch: Array<{ key: string; build: Build }> = [];
+    if (curveMode === 'char') {
+      for (const lv of [60, 70, 80, 90, 95, 100]) {
+        batch.push({ key: `Lv.${lv}`, build: { ...build, level: lv } });
+      }
+    } else {
+      const mainGroup = build.skills.find((g) => g.id === build.mainSkillGroupId) ?? build.skills[0];
+      for (const glv of [18, 19, 20, 21, 23, 25, 28, 30]) {
+        const mutated: Build = mainGroup
+          ? {
+              ...build,
+              skills: build.skills.map((g) =>
+                g.id === mainGroup.id
+                  ? {
+                      ...g,
+                      gems: g.gems.map((gem, idx) => (idx === 0 ? { ...gem, level: glv } : gem)),
+                    }
+                  : g,
+              ),
+            }
+          : build;
+        batch.push({ key: `Gem ${glv}`, build: mutated });
+      }
+    }
+    void calculateBatchInWorker(batch, locale)
+      .then((res) => {
+        if (!cancelled) setProgressionOutputs(res);
+      })
+      .catch(() => {
+        if (!cancelled) setProgressionOutputs({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [build, curveMode, locale]);
+
   const progressionRows = useMemo(() => {
     const baseDps = calc.offence.fullDps ?? calc.offence.totalDps;
     const baseEhp = calc.defence.effectiveHitPool;
     if (curveMode === 'char') {
       const levels = [60, 70, 80, 90, 95, 100];
       return levels.map((lv) => {
-        const res = calculateBuild({ ...build, level: lv });
+        const key = `Lv.${lv}`;
+        const res = progressionOutputs[key] ?? calc;
         const dps = res.offence.fullDps ?? res.offence.totalDps;
         const pct = baseDps > 0 ? ((dps - baseDps) / baseDps) * 100 : 0;
         const ehp = res.defence.effectiveHitPool;
         return {
-          key: `Lv.${lv}`,
+          key,
           isCurrent: build.level === lv,
           dps,
           dpsPct: pct,
@@ -225,25 +297,13 @@ export function CalcsTab() {
     const mainGroup = build.skills.find((g) => g.id === build.mainSkillGroupId) ?? build.skills[0];
     const curGemLv = calc.offence.mainSkillBaseLevel ?? mainGroup?.gems[0]?.level ?? 20;
     return gemLevels.map((glv) => {
-      const mutated: Build = mainGroup
-        ? {
-            ...build,
-            skills: build.skills.map((g) =>
-              g.id === mainGroup.id
-                ? {
-                    ...g,
-                    gems: g.gems.map((gem, idx) => (idx === 0 ? { ...gem, level: glv } : gem)),
-                  }
-                : g,
-            ),
-          }
-        : build;
-      const res = calculateBuild(mutated);
+      const key = `Gem ${glv}`;
+      const res = progressionOutputs[key] ?? calc;
       const dps = res.offence.fullDps ?? res.offence.totalDps;
       const pct = baseDps > 0 ? ((dps - baseDps) / baseDps) * 100 : 0;
       const ehp = res.defence.effectiveHitPool;
       return {
-        key: `Gem ${glv}`,
+        key,
         isCurrent: curGemLv === glv,
         dps,
         dpsPct: pct,
@@ -253,7 +313,7 @@ export function CalcsTab() {
         ehpPct: baseEhp > 0 ? ((ehp - baseEhp) / baseEhp) * 100 : 0,
       };
     });
-  }, [build, calc, curveMode]);
+  }, [build, calc, curveMode, progressionOutputs]);
 
   const maxProgressionDps = Math.max(1, ...progressionRows.map((r) => r.dps));
   const maxProgressionEhp = Math.max(1, ...progressionRows.map((r) => r.ehp));

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { AlertTriangle, Check, CheckCircle2, ChevronDown, ChevronRight, Copy, Sparkles } from 'lucide-react';
-import { analyzeBuildDiagnostics } from '@webpob/calc/lite';
+import { analyzeBuildDiagnostics } from '@webpob/calc/diagnostics';
 import { getClassesForGame } from '@webpob/data';
 import { localizeText, t, uiText } from '@webpob/i18n';
 import { useWebPobStore } from '../store/useWebPobStore';
@@ -32,11 +32,14 @@ function StatRow({
 }
 
 export function SidebarStats() {
-  const { locale, build, calc, setMainSkillGroup, setActiveTab, toggleFlaskActive } = useWebPobStore();
+  const { locale, build, calc, calcReady, setMainSkillGroup, setActiveTab, toggleFlaskActive } = useWebPobStore();
   const { offence, defence } = calc;
   const [diagOpen, setDiagOpen] = useState(true);
   const [copiedStats, setCopiedStats] = useState(false);
-  const diagnostics = useMemo(() => analyzeBuildDiagnostics(build, calc), [build, calc]);
+  const diagnostics = useMemo(
+    () => (calcReady ? analyzeBuildDiagnostics(build, calc) : []),
+    [build, calc, calcReady],
+  );
 
   const manaReserved = Math.max(0, defence.mana - defence.manaUnreserved);
   const manaReservedPct =

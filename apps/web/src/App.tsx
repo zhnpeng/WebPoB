@@ -189,7 +189,8 @@ export function App() {
             if (cancelled) return;
             const imported = await fetchWeGamePoe2Build(importUrl, proxy);
             if (cancelled) return;
-            replaceBuild(imported);
+            await replaceBuild(imported);
+            if (cancelled) return;
             setImportErrorToast(null);
             setHashToast(imported.name);
             setTimeout(() => setHashToast(null), 4500);
@@ -219,7 +220,8 @@ export function App() {
           await ensureOfficialDataLoaded(game);
           if (cancelled) return;
           const { build: imported } = importBuildFromCode(xml);
-          replaceBuild(imported);
+          await replaceBuild(imported);
+          if (cancelled) return;
           setImportErrorToast(null);
           setHashToast(imported.name);
           setTimeout(() => setHashToast(null), 4500);
@@ -256,7 +258,8 @@ export function App() {
         await ensureOfficialDataLoaded(game);
         if (cancelled) return;
         const { build: imported } = importBuildFromCode(code);
-        replaceBuild(imported);
+        await replaceBuild(imported);
+        if (cancelled) return;
         setHashToast(imported.name);
         setTimeout(() => setHashToast(null), 4000);
       } catch (err) {

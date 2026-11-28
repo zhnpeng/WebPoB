@@ -63,7 +63,10 @@ export const onRequest = async (context: {
     });
   }
 
-  const edgeCache = (caches as unknown as { default?: Cache }).default;
+  const edgeCache =
+    typeof caches !== 'undefined'
+      ? (caches as unknown as { default?: Cache }).default
+      : undefined;
 
   // Dedicated read-only POST allowlist for public WeGame PoE 2 Helper share links
   if (request.method === 'POST') {

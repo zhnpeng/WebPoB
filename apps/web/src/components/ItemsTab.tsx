@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ClipboardPaste, Copy, ExternalLink, FlaskConical, GitCompareArrows, Hammer, Layers, Power, PowerOff, Search, Shield, Sparkles, Trash2, TrendingUp, X } from 'lucide-react';
 import type { EquipmentSlotId, Item } from '@webpob/core';
 import {
@@ -13,17 +13,20 @@ import {
   type CompactUniqueEntry,
 } from '@webpob/data';
 import { parseItemText } from '@webpob/codec';
+import type { RankedUniqueUpgrade } from '@webpob/calc';
+import { resolveItemEffectiveStats, type ResolvedItemStats } from '@webpob/calc/localItem';
+import { getSlotLabel, localizeStatLine, t, toTraditionalZh, uiText } from '@webpob/i18n';
+import { useWebPobStore } from '../store/useWebPobStore';
 import {
-  calculateBuild,
   canWieldTwoHandedMartialInOneHand,
   canWieldWeaponInOneHand,
   hasCantUseBodyArmour,
-  parseModLine,
-  rankUniqueUpgradesForSlot,
-  resolveItemEffectiveStats,
-} from '@webpob/calc';
-import { getSlotLabel, localizeStatLine, t, toTraditionalZh, uiText } from '@webpob/i18n';
-import { useWebPobStore } from '../store/useWebPobStore';
+} from '../utils/itemSlotRules';
+import {
+  calculateBuildInWorker,
+  checkItemPasteInWorker,
+  rankUniqueUpgradesInWorker,
+} from '../workers/calcWorkerClient';
 import { ItemCompareModal } from './ItemCompareModal';
 import { GearSummaryDrawer } from './GearSummaryDrawer';
 
@@ -277,49 +280,55 @@ export function ItemsTab() {
     // Count how many item modifiers + base stats actively participate in calculation
     const resolved = resolveItemEffectiveStats(parsed, build.game);
     const totalModLines = parsed.implicits.length + parsed.explicits.length;
-    const consumedLocalCount =
-      totalModLines - (resolved.globalImplicits.length + resolved.globalExplicits.length);
-    const parsedGlobalCount = [...resolved.globalImplicits, ...resolved.globalExplicits].filter(
-      (line) => parseModLine(line, 'Check').length > 0,
-    ).length;
-    const activeModCount = consumedLocalCount + parsedGlobalCount;
-
-    let deltaSummary = '';
-    if (targetSlot) {
-      const afterCalc = useWebPobStore.getState().calc;
-      const parts: string[] = [];
-      const dDps = Math.round(afterCalc.offence.totalDps - beforeCalc.offence.totalDps);
-      const dLife = Math.round(afterCalc.defence.life - beforeCalc.defence.life);
-      const dEs = Math.round(afterCalc.defence.energyShield - beforeCalc.defence.energyShield);
-      const dArm = Math.round(afterCalc.defence.armour - beforeCalc.defence.armour);
-      const dEva = Math.round(afterCalc.defence.evasion - beforeCalc.defence.evasion);
-      const dRes =
-        (afterCalc.defence.fireResist - beforeCalc.defence.fireResist) +
-        (afterCalc.defence.coldResist - beforeCalc.defence.coldResist) +
-        (afterCalc.defence.lightningResist - beforeCalc.defence.lightningResist) +
-        (afterCalc.defence.chaosResist - beforeCalc.defence.chaosResist);
-      if (dDps !== 0) parts.push(`DPS ${dDps > 0 ? '+' : ''}${dDps.toLocaleString()}`);
-      if (dLife !== 0) parts.push(`${uiText(locale, '生命', 'Life')} ${dLife > 0 ? '+' : ''}${dLife}`);
-      if (dEs !== 0) parts.push(`${uiText(locale, '护盾', 'ES')} ${dEs > 0 ? '+' : ''}${dEs}`);
-      if (dArm !== 0) parts.push(`${uiText(locale, '护甲', 'Armour')} ${dArm > 0 ? '+' : ''}${dArm}`);
-      if (dEva !== 0) parts.push(`${uiText(locale, '闪避', 'Evasion')} ${dEva > 0 ? '+' : ''}${dEva}`);
-      if (dRes !== 0) parts.push(`${uiText(locale, '抗性', 'Res')} ${dRes > 0 ? '+' : ''}${dRes}%`);
-      if (parts.length > 0) {
-        deltaSummary = ` · ${parts.join(' / ')}`;
-      }
-    }
-    const modCountNote =
-      totalModLines > 0
-        ? ` · ${uiText(locale, `词缀已生效 ${activeModCount}/${totalModLines}`, `${activeModCount}/${totalModLines} mods active`)}`
-        : '';
+    const globalLines = [...resolved.globalImplicits, ...resolved.globalExplicits];
+    const consumedLocalCount = totalModLines - globalLines.length;
+    const destLabel = targetSlot ? getSlotLabel(locale, targetSlot) : t(locale, 'items.stash');
+    const updatedBuild = useWebPobStore.getState().build;
 
     setStatusMsg({
       ok: true,
-      text: `${t(locale, 'items.parseSuccess')} (${parsed.name} → ${
-        targetSlot ? getSlotLabel(locale, targetSlot) : t(locale, 'items.stash')
-      }${modCountNote}${deltaSummary})`,
+      text: `${t(locale, 'items.parseSuccess')} (${parsed.name} → ${destLabel})`,
     });
     setPasteText('');
+
+    void checkItemPasteInWorker(updatedBuild, globalLines, locale)
+      .then(({ parsedGlobalCount, output: afterCalc }) => {
+        const activeModCount = consumedLocalCount + parsedGlobalCount;
+        let deltaSummary = '';
+        if (targetSlot) {
+          const parts: string[] = [];
+          const dDps = Math.round(afterCalc.offence.totalDps - beforeCalc.offence.totalDps);
+          const dLife = Math.round(afterCalc.defence.life - beforeCalc.defence.life);
+          const dEs = Math.round(afterCalc.defence.energyShield - beforeCalc.defence.energyShield);
+          const dArm = Math.round(afterCalc.defence.armour - beforeCalc.defence.armour);
+          const dEva = Math.round(afterCalc.defence.evasion - beforeCalc.defence.evasion);
+          const dRes =
+            (afterCalc.defence.fireResist - beforeCalc.defence.fireResist) +
+            (afterCalc.defence.coldResist - beforeCalc.defence.coldResist) +
+            (afterCalc.defence.lightningResist - beforeCalc.defence.lightningResist) +
+            (afterCalc.defence.chaosResist - beforeCalc.defence.chaosResist);
+          if (dDps !== 0) parts.push(`DPS ${dDps > 0 ? '+' : ''}${dDps.toLocaleString()}`);
+          if (dLife !== 0) parts.push(`${uiText(locale, '生命', 'Life')} ${dLife > 0 ? '+' : ''}${dLife}`);
+          if (dEs !== 0) parts.push(`${uiText(locale, '护盾', 'ES')} ${dEs > 0 ? '+' : ''}${dEs}`);
+          if (dArm !== 0) parts.push(`${uiText(locale, '护甲', 'Armour')} ${dArm > 0 ? '+' : ''}${dArm}`);
+          if (dEva !== 0) parts.push(`${uiText(locale, '闪避', 'Evasion')} ${dEva > 0 ? '+' : ''}${dEva}`);
+          if (dRes !== 0) parts.push(`${uiText(locale, '抗性', 'Res')} ${dRes > 0 ? '+' : ''}${dRes}%`);
+          if (parts.length > 0) {
+            deltaSummary = ` · ${parts.join(' / ')}`;
+          }
+        }
+        const modCountNote =
+          totalModLines > 0
+            ? ` · ${uiText(locale, `词缀已生效 ${activeModCount}/${totalModLines}`, `${activeModCount}/${totalModLines} mods active`)}`
+            : '';
+        setStatusMsg({
+          ok: true,
+          text: `${t(locale, 'items.parseSuccess')} (${parsed.name} → ${destLabel}${modCountNote}${deltaSummary})`,
+        });
+      })
+      .catch(() => {
+        // keep initial success banner on worker error
+      });
   };
 
   const handleEquipUnique = (entry: CompactUniqueEntry, explicitSlot?: EquipmentSlotId) => {
@@ -430,34 +439,70 @@ export function ItemsTab() {
     };
   }, [craftOpen, effectiveCraftBase, craftCategory, selectedSlot, craftQuality, craftAffixes]);
 
-  const craftPreviewDelta = useMemo(() => {
-    if (!craftedDraftItem) return null;
+  const [craftPreviewDelta, setCraftPreviewDelta] = useState<{
+    resolved: ResolvedItemStats;
+    dpsDelta: number;
+    dpsDeltaPct: number;
+    lifeDelta: number;
+    esDelta: number;
+    wardDelta: number;
+    ehpDelta: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!craftedDraftItem) {
+      setCraftPreviewDelta(null);
+      return;
+    }
+    let cancelled = false;
+    const resolved = resolveItemEffectiveStats(craftedDraftItem, build.game);
     const simBuild = {
       ...build,
       items: { ...build.items, [craftedDraftItem.id]: craftedDraftItem },
       equipped: { ...build.equipped, [selectedSlot]: craftedDraftItem.id },
     };
-    const nextCalc = calculateBuild(simBuild);
-    const resolved = resolveItemEffectiveStats(craftedDraftItem, build.game);
-    return {
-      resolved,
-      dpsDelta: nextCalc.offence.totalDps - calc.offence.totalDps,
-      dpsDeltaPct:
-        calc.offence.totalDps > 0
-          ? ((nextCalc.offence.totalDps - calc.offence.totalDps) / calc.offence.totalDps) * 100
-          : 0,
-      lifeDelta: nextCalc.defence.life - calc.defence.life,
-      esDelta: nextCalc.defence.energyShield - calc.defence.energyShield,
-      wardDelta: (nextCalc.defence.ward ?? 0) - (calc.defence.ward ?? 0),
-      ehpDelta: nextCalc.defence.effectiveHitPool - calc.defence.effectiveHitPool,
+    void calculateBuildInWorker(simBuild, locale)
+      .then((nextCalc) => {
+        if (cancelled) return;
+        setCraftPreviewDelta({
+          resolved,
+          dpsDelta: nextCalc.offence.totalDps - calc.offence.totalDps,
+          dpsDeltaPct:
+            calc.offence.totalDps > 0
+              ? ((nextCalc.offence.totalDps - calc.offence.totalDps) / calc.offence.totalDps) * 100
+              : 0,
+          lifeDelta: nextCalc.defence.life - calc.defence.life,
+          esDelta: nextCalc.defence.energyShield - calc.defence.energyShield,
+          wardDelta: (nextCalc.defence.ward ?? 0) - (calc.defence.ward ?? 0),
+          ehpDelta: nextCalc.defence.effectiveHitPool - calc.defence.effectiveHitPool,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setCraftPreviewDelta(null);
+      });
+    return () => {
+      cancelled = true;
     };
-  }, [craftedDraftItem, build, selectedSlot, calc]);
+  }, [craftedDraftItem, build, selectedSlot, calc, locale]);
 
-  const rankedUniqueUpgrades = useMemo(() => {
-    void treeRevision;
-    if (!advisorOpen) return [];
-    return rankUniqueUpgradesForSlot(build, selectedSlot, advisorSort, 8);
-  }, [advisorOpen, build, selectedSlot, advisorSort, treeRevision]);
+  const [rankedUniqueUpgrades, setRankedUniqueUpgrades] = useState<RankedUniqueUpgrade[]>([]);
+  useEffect(() => {
+    if (!advisorOpen) {
+      setRankedUniqueUpgrades([]);
+      return;
+    }
+    let cancelled = false;
+    void rankUniqueUpgradesInWorker(build, selectedSlot, advisorSort, 8, locale)
+      .then((items) => {
+        if (!cancelled) setRankedUniqueUpgrades(items);
+      })
+      .catch(() => {
+        if (!cancelled) setRankedUniqueUpgrades([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [advisorOpen, build, selectedSlot, advisorSort, treeRevision, locale]);
 
   const itemSets = useMemo(
     () =>
@@ -468,22 +513,43 @@ export function ItemsTab() {
   );
   const activeItemSetIdx = Math.max(0, Math.min(itemSets.length - 1, build.activeItemSetIndex ?? 0));
 
-  const itemSetBaselineDelta = useMemo(() => {
-    if (itemSets.length <= 1 || activeItemSetIdx === 0) return null;
+  const [itemSetBaselineDelta, setItemSetBaselineDelta] = useState<{
+    dpsPct: number;
+    ehpPct: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (itemSets.length <= 1 || activeItemSetIdx === 0) {
+      setItemSetBaselineDelta(null);
+      return;
+    }
+    let cancelled = false;
     const baseSet = itemSets[0]!;
-    const baseCalc = calculateBuild({
-      ...build,
-      equipped: baseSet.equipped,
-      activeFlaskSlots: baseSet.activeFlaskSlots ?? {},
-    });
-    const baseDps = baseCalc.offence.fullDps ?? baseCalc.offence.totalDps;
-    const curDps = calc.offence.fullDps ?? calc.offence.totalDps;
-    const baseEhp = Math.max(1, baseCalc.defence.effectiveHitPool);
-    return {
-      dpsPct: baseDps > 0 ? ((curDps - baseDps) / baseDps) * 100 : 0,
-      ehpPct: ((calc.defence.effectiveHitPool - baseEhp) / baseEhp) * 100,
+    void calculateBuildInWorker(
+      {
+        ...build,
+        equipped: baseSet.equipped,
+        activeFlaskSlots: baseSet.activeFlaskSlots ?? {},
+      },
+      locale,
+    )
+      .then((baseCalc) => {
+        if (cancelled) return;
+        const baseDps = baseCalc.offence.fullDps ?? baseCalc.offence.totalDps;
+        const curDps = calc.offence.fullDps ?? calc.offence.totalDps;
+        const baseEhp = Math.max(1, baseCalc.defence.effectiveHitPool);
+        setItemSetBaselineDelta({
+          dpsPct: baseDps > 0 ? ((curDps - baseDps) / baseDps) * 100 : 0,
+          ehpPct: ((calc.defence.effectiveHitPool - baseEhp) / baseEhp) * 100,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setItemSetBaselineDelta(null);
+      });
+    return () => {
+      cancelled = true;
     };
-  }, [itemSets, activeItemSetIdx, build, calc]);
+  }, [itemSets, activeItemSetIdx, build, calc, locale]);
 
   const trackedSlots = ruleset.equipmentSlots.filter(
     (slot) => !(build.game === 'poe2' && (slot === 'Weapon 1 Swap' || slot === 'Weapon 2 Swap')),
