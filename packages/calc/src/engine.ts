@@ -5357,8 +5357,19 @@ function computeGroupOffence(
     chosenActiveInst = chosen.inst;
     activeBaseLevel = chosen.inst.level;
 
-    // Two-pass PoB RPN SkillType compatibility filtering across linked supports
-    const supportResolution = resolveCompatibleSupports(activeDef, supportCandidates);
+    // Two-pass PoB RPN SkillType compatibility filtering across linked supports.
+    // Merge PoE 2 Meta wrapper `addedSkillTypes` (e.g. Spell Totem -> Totem/UsedByTotem/SummonsTotem)
+    // BEFORE compatibility filtering so totem/meta supports like Urgent Totems III are accepted.
+    const activeDefForSupportCompat =
+      poe2MetaResolution?.addedSkillTypes && poe2MetaResolution.addedSkillTypes.length > 0
+        ? {
+            ...activeDef,
+            skillTypes: [
+              ...new Set([...(activeDef.skillTypes ?? []), ...poe2MetaResolution.addedSkillTypes]),
+            ],
+          }
+        : activeDef;
+    const supportResolution = resolveCompatibleSupports(activeDefForSupportCompat, supportCandidates);
     effectiveSkillTypeSet = supportResolution.effectiveSkillTypes;
     if (poe2MetaResolution?.addedSkillTypes) {
       for (const st of poe2MetaResolution.addedSkillTypes) {
@@ -9417,6 +9428,59 @@ function computeGroupOffence(
           ? activeSkillData.boltCount
           : skillDb.sum('BASE', 'CrossbowBoltCount', flags, kwFlags))
       : 0;
+  // PoE 2 Grenade Activate Twice (`CalcOffence.lua:1281-1284`): `GrenadeActivateTwice` BASE -> `DPS MORE`
+  if (build.game === 'poe2' && (effectiveSkillTypeSet.has('grenade') || activeDef.tags.some((t) => t.toLowerCase() === 'grenade'))) {
+    const detonateTwice = Math.min(100, Math.max(0, skillDb.sum('BASE', 'GrenadeActivateTwice', flags, kwFlags)));
+    if (detonateTwice > 0) {
+      skillDb.addMod({
+        name: 'DPS',
+        type: 'MORE',
+        value: detonateTwice,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Grenade Activate Twice',
+      });
+    }
+  }
+  const crossbowBaseReloadTable: Record<string, number> = {
+    'makeshift crossbow': 0.8,
+    'tense crossbow': 0.85,
+    'sturdy crossbow': 0.75,
+    'varnished crossbow': 0.8,
+    'dyad crossbow': 1.1,
+    'alloy crossbow': 0.7,
+    'bombard crossbow': 0.75,
+    'construct crossbow': 0.8,
+    'blackfire crossbow': 0.85,
+    'piercing crossbow': 0.85,
+    'cumbrous crossbow': 0.9,
+    'dedalian crossbow': 0.85,
+    'esoteric crossbow': 0.8,
+    'taut crossbow': 0.85,
+    'robust crossbow': 0.75,
+    'painted crossbow': 0.8,
+    'twin crossbow': 1.1,
+    'cannonade crossbow': 0.75,
+    'bleak crossbow': 0.8,
+    'runeforged makeshift crossbow': 0.8,
+    'runeforged tense crossbow': 0.85,
+    'runemastered tense crossbow': 0.6,
+    'runeforged sturdy crossbow': 0.85,
+    'runeforged dyad crossbow': 1.1,
+    'runemastered dyad crossbow': 0.75,
+    'runeforged bombard crossbow': 0.75,
+    'stout crossbow': 0.75,
+    'engraved crossbow': 0.8,
+    'flexed crossbow': 0.85,
+    'gemini crossbow': 1.1,
+    'siege crossbow': 0.75,
+    'desolate crossbow': 0.8,
+    'elegant crossbow': 0.85,
+  };
+  const weaponCrossbowReload =
+    activeWeapons.main?.baseName
+      ? crossbowBaseReloadTable[activeWeapons.main.baseName.trim().toLowerCase()]
+      : undefined;
   const crossbowBaseReload =
     build.game === 'poe2' &&
     weaponStats?.weaponType === 'Crossbow' &&
@@ -9424,7 +9488,7 @@ function computeGroupOffence(
       ? typeof activeSkillData?.reloadTime === 'number' && activeSkillData.reloadTime > 0
         ? activeSkillData.reloadTime
         : crossbowBoltCount > 0 && activeNameLower !== 'crossbow shot'
-          ? 0.8
+          ? (weaponCrossbowReload ?? 0.8)
           : 0
       : 0;
   if (crossbowBaseReload > 0 && crossbowBoltCount > 0 && speedExact > 0) {
