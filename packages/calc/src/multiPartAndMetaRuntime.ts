@@ -668,12 +668,72 @@ function isSpellTotemMetaDef(def: GemDefinition): boolean {
   return (def.altIds ?? []).some((a) => /metatotemspelltotem|skillgemspelltotem/i.test(a));
 }
 
+function isMortarCannonMetaDef(def: GemDefinition): boolean {
+  const key = normalizeGemLookupName(def.name.en);
+  if (key === 'mortar cannon' || key === 'supportmortarcannonplayer') {
+    return true;
+  }
+  const idLower = def.id.toLowerCase();
+  if (idLower === 'poe2_mortarcannon' || idLower.includes('mortarcannon')) {
+    return true;
+  }
+  return (def.altIds ?? []).some((a) => /mortarcannon/i.test(a));
+}
+
+function isHollowFormMetaDef(def: GemDefinition): boolean {
+  const key = normalizeGemLookupName(def.name.en);
+  if (key === 'hollow form' || key === 'supporthollowformplayer') {
+    return true;
+  }
+  const idLower = def.id.toLowerCase();
+  if (idLower === 'poe2_hollowform' || idLower.includes('hollowform')) {
+    return true;
+  }
+  return (def.altIds ?? []).some((a) => /hollowform/i.test(a));
+}
+
+function isMirageDeadeyeMetaDef(def: GemDefinition): boolean {
+  const key = normalizeGemLookupName(def.name.en);
+  if (key === 'mirage deadeye' || key === 'supportmiragedeadeyeplayer') {
+    return true;
+  }
+  const idLower = def.id.toLowerCase();
+  if (idLower === 'poe2_miragedeadeye' || idLower.includes('miragedeadeye')) {
+    return true;
+  }
+  return (def.altIds ?? []).some((a) => /miragedeadeye/i.test(a));
+}
+
+function isMirageArcherMetaDef(def: GemDefinition): boolean {
+  const key = normalizeGemLookupName(def.name.en);
+  if (key === 'mirage archer' || key === 'supportmiragearcherplayer') {
+    return true;
+  }
+  const idLower = def.id.toLowerCase();
+  if (idLower === 'poe2_miragearcher' || idLower.includes('miragearcher')) {
+    return true;
+  }
+  return (def.altIds ?? []).some((a) => /miragearcher/i.test(a));
+}
+
+function isAncestralWarriorTotemMetaDef(def: GemDefinition): boolean {
+  const key = normalizeGemLookupName(def.name.en);
+  if (key === 'ancestral warrior totem' || key === 'supportancestralwarriortotemplayer') {
+    return true;
+  }
+  const idLower = def.id.toLowerCase();
+  if (idLower === 'poe2_ancestralwarriortotem' || idLower.includes('ancestralwarriortotem')) {
+    return true;
+  }
+  return (def.altIds ?? []).some((a) => /ancestralwarriortotem/i.test(a));
+}
+
 /**
  * Detects PoE 2 Meta Gem wrapper groups (`Cast on Critical`, `Cast on Shock`, `Cast on Freeze`,
  * `Cast on Ignite`, `Cast on Elemental Ailment`, `Cast on Minion Death`, `Cast on Block`,
- * `Elemental Invocation`, `Reaper's Invocation`, `Spellslinger`, and `Spell Totem`) and extracts
- * the socketed payload active spell(s), routed supports, and wrapper modifiers (`Spell Totem`
- * `-25%` less cast speed with `estimatedTriggerRate: 0` so totem cast speed is calculated normally).
+ * `Elemental Invocation`, `Reaper's Invocation`, `Spellslinger`, `Spell Totem`, `Mortar Cannon`,
+ * `Hollow Form`, `Mirage Deadeye`, `Mirage Archer`, and `Ancestral Warrior Totem`) and extracts
+ * the socketed payload active skill(s), routed supports, and wrapper modifiers.
  */
 export function resolvePoe2MetaGemGroup(
   group: SkillGroup,
@@ -688,7 +748,16 @@ export function resolvePoe2MetaGemGroup(
     const def = getGemDef(inst.gemId);
     if (!def) continue;
     resolved.push({ inst, def });
-    if (!metaGem && (isPoe2MetaGemDefinition(def) || isSpellTotemMetaDef(def))) {
+    if (
+      !metaGem &&
+      (isPoe2MetaGemDefinition(def) ||
+        isSpellTotemMetaDef(def) ||
+        isMortarCannonMetaDef(def) ||
+        isHollowFormMetaDef(def) ||
+        isMirageDeadeyeMetaDef(def) ||
+        isMirageArcherMetaDef(def) ||
+        isAncestralWarriorTotemMetaDef(def))
+    ) {
       metaGem = inst;
       metaDef = def;
     }
@@ -703,13 +772,23 @@ export function resolvePoe2MetaGemGroup(
   }
 
   const isSpellTotem = isSpellTotemMetaDef(metaDef);
+  const isMortarCannon = isMortarCannonMetaDef(metaDef);
+  const isHollowForm = isHollowFormMetaDef(metaDef);
+  const isMirageDeadeye = isMirageDeadeyeMetaDef(metaDef);
+  const isMirageArcher = isMirageArcherMetaDef(metaDef);
+  const isAncestralWarriorTotem = isAncestralWarriorTotemMetaDef(metaDef);
   const payloadActives = resolved.filter(
     ({ inst, def }) =>
       inst !== metaGem &&
       def.category === 'active' &&
       !def.isAuraOrBuff &&
       !isPoe2MetaGemDefinition(def) &&
-      !isSpellTotemMetaDef(def),
+      !isSpellTotemMetaDef(def) &&
+      !isMortarCannonMetaDef(def) &&
+      !isHollowFormMetaDef(def) &&
+      !isMirageDeadeyeMetaDef(def) &&
+      !isMirageArcherMetaDef(def) &&
+      !isAncestralWarriorTotemMetaDef(def),
   );
   const routedSupports = resolved.filter(
     ({ inst, def }) => inst !== metaGem && def.category === 'support',
@@ -758,6 +837,164 @@ export function resolvePoe2MetaGemGroup(
       routedSupports,
       metaSupportMods,
       addedSkillTypes: ['UsedByTotem', 'UsedByProxy', 'SupportedBySpellTotem', 'Totem'],
+      estimatedTriggerRate: 0,
+    };
+  }
+
+  if (isMortarCannon) {
+    // PoB 2 Data/Skills/act_str.lua:14245-14330 SupportMortarCannonPlayer:
+    // -50% less Attack Speed (ModFlag.Attack), -50% less Damage, +100% increased Grenade Cooldown Recovery,
+    // +1 ActiveTotemLimit, adds Totem / UsedByTotem / SupportedByMortarTotem skill types.
+    const metaSupportMods: Mod[] = [
+      {
+        name: 'Speed',
+        type: 'MORE',
+        value: -50,
+        flags: ModFlag.Attack,
+        keywordFlags: 0,
+        source: 'Mortar Cannon',
+      },
+      {
+        name: 'Damage',
+        type: 'MORE',
+        value: -50,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Mortar Cannon',
+      },
+      {
+        name: 'CooldownRecovery',
+        type: 'INC',
+        value: 100,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Mortar Cannon',
+      },
+      {
+        name: 'ActiveTotemLimit',
+        type: 'BASE',
+        value: 1,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Mortar Cannon',
+      },
+    ];
+    return {
+      isMetaGroup: true,
+      metaGem,
+      metaDef,
+      payloadActives,
+      routedSupports,
+      metaSupportMods,
+      addedSkillTypes: ['UsedByTotem', 'UsedByProxy', 'SupportedByMortarTotem', 'Totem'],
+      estimatedTriggerRate: 0,
+    };
+  }
+
+  if (isHollowForm) {
+    // PoB 2 Data/Skills/other.lua:8955-9032 SupportHollowFormPlayer:
+    // -30% less Attack Speed (ModFlag.Attack), -15% less Damage, adds UsedByClone / UsedByProxy / SupportedByHollowForm.
+    const metaSupportMods: Mod[] = [
+      {
+        name: 'Speed',
+        type: 'MORE',
+        value: -30,
+        flags: ModFlag.Attack,
+        keywordFlags: 0,
+        source: 'Hollow Form',
+      },
+      {
+        name: 'Damage',
+        type: 'MORE',
+        value: -15,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Hollow Form',
+      },
+    ];
+    return {
+      isMetaGroup: true,
+      metaGem,
+      metaDef,
+      payloadActives,
+      routedSupports,
+      metaSupportMods,
+      addedSkillTypes: ['UsedByClone', 'UsedByProxy', 'SupportedByHollowForm'],
+      estimatedTriggerRate: 0,
+    };
+  }
+
+  if (isMirageDeadeye) {
+    // PoB 2 Data/Skills/other.lua:11415-11490 SupportMirageDeadeyePlayer:
+    // -50% less Damage (`support_lingering_mirage_damage_+%_final = -50`), adds UsedByClone / UsedByProxy / SupportedByMirageDeadeye.
+    const metaSupportMods: Mod[] = [
+      {
+        name: 'Damage',
+        type: 'MORE',
+        value: -50,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Mirage Deadeye',
+      },
+    ];
+    return {
+      isMetaGroup: true,
+      metaGem,
+      metaDef,
+      payloadActives,
+      routedSupports,
+      metaSupportMods,
+      addedSkillTypes: ['UsedByClone', 'UsedByProxy', 'SupportedByMirageDeadeye'],
+      estimatedTriggerRate: 0,
+    };
+  }
+
+  if (isMirageArcher) {
+    // PoB 2 Data/Skills/act_dex.lua:5022-5095 SupportMirageArcherPlayer:
+    // -30% less Damage (`support_lingering_mirage_damage_+%_final = -30`), adds UsedByClone / UsedByProxy / SupportedByMirageArcher.
+    const metaSupportMods: Mod[] = [
+      {
+        name: 'Damage',
+        type: 'MORE',
+        value: -30,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Mirage Archer',
+      },
+    ];
+    return {
+      isMetaGroup: true,
+      metaGem,
+      metaDef,
+      payloadActives,
+      routedSupports,
+      metaSupportMods,
+      addedSkillTypes: ['UsedByClone', 'UsedByProxy', 'SupportedByMirageArcher'],
+      estimatedTriggerRate: 0,
+    };
+  }
+
+  if (isAncestralWarriorTotem) {
+    // PoB 2 Data/Skills/act_str.lua:570-605 SupportAncestralWarriorTotemPlayer:
+    // ActiveTotemLimit OVERRIDE 10, adds UsedByTotem / UsedByProxy / Totem.
+    const metaSupportMods: Mod[] = [
+      {
+        name: 'ActiveTotemLimit',
+        type: 'OVERRIDE',
+        value: 10,
+        flags: 0,
+        keywordFlags: 0,
+        source: 'Ancestral Warrior Totem',
+      },
+    ];
+    return {
+      isMetaGroup: true,
+      metaGem,
+      metaDef,
+      payloadActives,
+      routedSupports,
+      metaSupportMods,
+      addedSkillTypes: ['UsedByTotem', 'UsedByProxy', 'Totem'],
       estimatedTriggerRate: 0,
     };
   }
@@ -1104,30 +1341,47 @@ export function evaluatePersistentBuffAndStanceSkills(
         if (lower === 'withering presence') {
           if (seenPersistentBuffs.has('withering presence')) continue;
           seenPersistentBuffs.add('withering presence');
-          const stacks = Math.min(10, Math.max(1, Math.round(gem.count ?? 10)));
-          // Scale PoE 2 Withered (5% per stack, max 10 stacks) by WitherEffect (e.g. +60% -> 8%/stack = 80%).
-          const witherEffectInc =
-            playerDb.sum('INC', 'WitherEffect') + enemyDb.sum('INC', 'WitherEffect');
-          const perStackPct = Math.floor(5 * Math.max(0, 1 + witherEffectInc / 100) + 1e-9);
-          const chaosTakenInc = stacks * perStackPct;
-          witheredStacksApplied = Math.max(witheredStacksApplied, stacks);
-          addEnemyMod({
-            name: 'ChaosDamageTaken',
-            type: 'INC',
-            value: chaosTakenInc,
+          // PoB 2 Data/Skills/act_int.lua:23274-23338 WitheringPresencePlayer & CalcPerform.lua:714-718:
+          // Withering Presence grants `Condition:CanWither`; Withered stacks are ONLY applied when
+          // configured via `<Input name="multiplierWitheredStackCount">` (handled in `engine.ts`).
+          // Never fabricate 10 Withered stacks when `gem.count` is omitted or default `1`, which both
+          // inflates unconfigured builds by +50..80% and double-counts configured `cfg.witheredStacks`.
+          // Explicit multi-stack `gem.count > 1` remains honored for direct unit/caller tests.
+          addPlayerMod({
+            name: 'Condition:CanWither',
+            type: 'FLAG',
+            value: true,
             flags: 0,
             keywordFlags: 0,
-            source: `Withering Presence (${stacks} Withered)`,
+            source: 'Withering Presence',
           });
-          addEnemyMod({
-            name: 'EnemyChaosDamageTaken',
-            type: 'INC',
-            value: chaosTakenInc,
-            flags: 0,
-            keywordFlags: 0,
-            source: `Withering Presence (${stacks} Withered)`,
-          });
-          enemyDb.setMultiplier('WitheredStack', stacks);
+          playerDb.setCondition('CanWither', true);
+          if (gem.count !== undefined && gem.count > 1) {
+            const stacks = Math.min(10, Math.round(gem.count));
+            // Scale PoE 2 Withered (5% per stack, max 10 stacks) by WitherEffect (e.g. +60% -> 8%/stack = 80%).
+            const witherEffectInc =
+              playerDb.sum('INC', 'WitherEffect') + enemyDb.sum('INC', 'WitherEffect');
+            const perStackPct = Math.floor(5 * Math.max(0, 1 + witherEffectInc / 100) + 1e-9);
+            const chaosTakenInc = stacks * perStackPct;
+            witheredStacksApplied = Math.max(witheredStacksApplied, stacks);
+            addEnemyMod({
+              name: 'ChaosDamageTaken',
+              type: 'INC',
+              value: chaosTakenInc,
+              flags: 0,
+              keywordFlags: 0,
+              source: `Withering Presence (${stacks} Withered)`,
+            });
+            addEnemyMod({
+              name: 'EnemyChaosDamageTaken',
+              type: 'INC',
+              value: chaosTakenInc,
+              flags: 0,
+              keywordFlags: 0,
+              source: `Withering Presence (${stacks} Withered)`,
+            });
+            enemyDb.setMultiplier('WitheredStack', stacks);
+          }
           appliedSkills.push('Withering Presence');
           continue;
         }

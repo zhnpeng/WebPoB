@@ -874,4 +874,147 @@ describe('multiPartAndMetaRuntime', () => {
     const expectedCorpse = Math.round(getPoe1MonsterLife(84) * 0.079);
     expect(corpseRes.baseDamage.Fire).toEqual([expectedCorpse, expectedCorpse]);
   });
+
+  it('routes PoE 2 Mortar Cannon, Hollow Form, Mirage Deadeye, Mirage Archer, and Ancestral Warrior Totem meta wrappers with official PoB 2 support mods', () => {
+    const explosiveGrenade = makeGemDef({
+      id: 'poe2_explosivegrenade',
+      en: 'Explosive Grenade',
+      game: 'poe2',
+      tags: ['Attack', 'Grenade', 'Fire'],
+    });
+    const mortarCannon = makeGemDef({
+      id: 'poe2_mortarcannon',
+      en: 'Mortar Cannon',
+      game: 'poe2',
+      tags: ['Meta', 'Totem', 'Grenade'],
+      altIds: ['MetaMortarCannonPlayer', 'SupportMortarCannonPlayer'],
+    });
+    const whirlingAssault = makeGemDef({
+      id: 'poe2_whirlingassault',
+      en: 'Whirling Assault',
+      game: 'poe2',
+      tags: ['Attack', 'Melee'],
+    });
+    const hollowForm = makeGemDef({
+      id: 'poe2_hollowform',
+      en: 'Hollow Form',
+      game: 'poe2',
+      tags: ['Meta', 'Melee'],
+      altIds: ['MetaHollowFormPlayer', 'SupportHollowFormPlayer'],
+    });
+    const lightningArrow = makeGemDef({
+      id: 'poe2_lightningarrow',
+      en: 'Lightning Arrow',
+      game: 'poe2',
+      tags: ['Attack', 'Projectile', 'Bow'],
+    });
+    const mirageDeadeye = makeGemDef({
+      id: 'poe2_miragedeadeye',
+      en: 'Mirage Deadeye',
+      game: 'poe2',
+      tags: ['Meta'],
+      altIds: ['MetaMirageDeadeyePlayer', 'SupportMirageDeadeyePlayer'],
+    });
+    const mirageArcher = makeGemDef({
+      id: 'poe2_miragearcher',
+      en: 'Mirage Archer',
+      game: 'poe2',
+      tags: ['Meta'],
+      altIds: ['MetaMirageArcherPlayer', 'SupportMirageArcherPlayer'],
+    });
+    const ancestralTotem = makeGemDef({
+      id: 'poe2_ancestralwarriortotem',
+      en: 'Ancestral Warrior Totem',
+      game: 'poe2',
+      tags: ['Meta', 'Totem'],
+      altIds: ['AncestralWarriorTotemPlayer', 'SupportAncestralWarriorTotemPlayer'],
+    });
+
+    const lookup = new Map<string, GemDefinition>([
+      [explosiveGrenade.id, explosiveGrenade],
+      [mortarCannon.id, mortarCannon],
+      [whirlingAssault.id, whirlingAssault],
+      [hollowForm.id, hollowForm],
+      [lightningArrow.id, lightningArrow],
+      [mirageDeadeye.id, mirageDeadeye],
+      [mirageArcher.id, mirageArcher],
+      [ancestralTotem.id, ancestralTotem],
+    ]);
+
+    const mortarRes = resolvePoe2MetaGemGroup(
+      makeGroup({ gems: [makeGemInst({ gemId: mortarCannon.id }), makeGemInst({ gemId: explosiveGrenade.id })] }),
+      (id) => lookup.get(id),
+    );
+    expect(mortarRes.isMetaGroup).toBe(true);
+    expect(mortarRes.estimatedTriggerRate).toBe(0);
+    expect(mortarRes.addedSkillTypes).toEqual(expect.arrayContaining(['Totem', 'UsedByTotem', 'SupportedByMortarTotem']));
+    expect(mortarRes.metaSupportMods).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'Speed', type: 'MORE', value: -50, flags: ModFlag.Attack }),
+        expect.objectContaining({ name: 'Damage', type: 'MORE', value: -50 }),
+        expect.objectContaining({ name: 'CooldownRecovery', type: 'INC', value: 100 }),
+        expect.objectContaining({ name: 'ActiveTotemLimit', type: 'BASE', value: 1 }),
+      ]),
+    );
+
+    const hollowRes = resolvePoe2MetaGemGroup(
+      makeGroup({ gems: [makeGemInst({ gemId: hollowForm.id }), makeGemInst({ gemId: whirlingAssault.id })] }),
+      (id) => lookup.get(id),
+    );
+    expect(hollowRes.isMetaGroup).toBe(true);
+    expect(hollowRes.estimatedTriggerRate).toBe(0);
+    expect(hollowRes.addedSkillTypes).toEqual(expect.arrayContaining(['UsedByClone', 'SupportedByHollowForm']));
+    expect(hollowRes.metaSupportMods).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'Speed', type: 'MORE', value: -30, flags: ModFlag.Attack }),
+        expect.objectContaining({ name: 'Damage', type: 'MORE', value: -15 }),
+      ]),
+    );
+
+    const deadeyeRes = resolvePoe2MetaGemGroup(
+      makeGroup({ gems: [makeGemInst({ gemId: mirageDeadeye.id }), makeGemInst({ gemId: lightningArrow.id })] }),
+      (id) => lookup.get(id),
+    );
+    expect(deadeyeRes.metaSupportMods).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'Damage', type: 'MORE', value: -50 })]),
+    );
+    expect(deadeyeRes.addedSkillTypes).toContain('SupportedByMirageDeadeye');
+
+    const archerRes = resolvePoe2MetaGemGroup(
+      makeGroup({ gems: [makeGemInst({ gemId: mirageArcher.id }), makeGemInst({ gemId: lightningArrow.id })] }),
+      (id) => lookup.get(id),
+    );
+    expect(archerRes.metaSupportMods).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'Damage', type: 'MORE', value: -30 })]),
+    );
+
+    const ancRes = resolvePoe2MetaGemGroup(
+      makeGroup({ gems: [makeGemInst({ gemId: ancestralTotem.id }), makeGemInst({ gemId: whirlingAssault.id })] }),
+      (id) => lookup.get(id),
+    );
+    expect(ancRes.metaSupportMods).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'ActiveTotemLimit', type: 'OVERRIDE', value: 10 })]),
+    );
+    expect(ancRes.addedSkillTypes).toContain('Totem');
+  });
+
+  it('does NOT fabricate 10 Withered stacks for PoE 2 Withering Presence when gem.count is omitted or default 1', () => {
+    const wpDef = makeGemDef({ id: 'wp', en: 'Withering Presence', game: 'poe2', isAuraOrBuff: true });
+    const defs = new Map<string, GemDefinition>([[wpDef.id, wpDef]]);
+
+    const playerDb = new ModDB();
+    const enemyDb = new ModDB();
+    const res = evaluatePersistentBuffAndStanceSkills(
+      [makeGroup({ id: 'g1', gems: [makeGemInst({ gemId: 'wp', level: 20, count: 1 })] })],
+      1,
+      'poe2',
+      playerDb,
+      enemyDb,
+      (id) => defs.get(id),
+    );
+    expect(res.appliedSkills).toContain('Withering Presence');
+    expect(res.witheredStacksApplied).toBe(0);
+    expect(playerDb.getEvalContext().conditions.CanWither).toBe(true);
+    expect(enemyDb.sum('INC', 'ChaosDamageTaken')).toBe(0);
+  });
 });

@@ -1,5 +1,5 @@
 import type { ArmourBaseStats, GameId, Item, WeaponBaseStats } from '@webpob/core';
-import { getBaseItemStats } from '@webpob/data';
+import { getBaseItemStats, getPoe2RunesData } from '@webpob/data';
 import { normalizeStatLineToEn } from '@webpob/i18n';
 import { normalizeWeaponType } from './offenceUpgrade.js';
 
@@ -15,6 +15,7 @@ interface LocalArmourAccum {
   flatEvasion: number;
   flatEs: number;
   flatBlock: number;
+  incBlock: number;
   flatWard: number;
   incArmour: number;
   incEvasion: number;
@@ -36,6 +37,7 @@ function tryConsumeLocalArmourMod(
   rawLine: string,
   acc: LocalArmourAccum,
   allowBonded?: boolean,
+  isShield?: boolean,
 ): boolean {
   let line = normalizeStatLineToEn(rawLine);
   if (!line) return false;
@@ -98,7 +100,15 @@ function tryConsumeLocalArmourMod(
     acc.incEs += v;
     return true;
   }
-  m = line.match(/^(\d+)% (increased|reduced) (?:Armour, Evasion(?: Rating)? and Energy Shield|Defences)$/i);
+  m = line.match(/^(\d+)% (increased|reduced) Armour, Evasion(?: Rating)? and Energy Shield$/i);
+  if (m) {
+    const v = (m[2]!.toLowerCase() === 'reduced' ? -1 : 1) * Number(m[1]);
+    acc.incArmour += v;
+    acc.incEvasion += v;
+    acc.incEs += v;
+    return true;
+  }
+  m = line.match(/^(\d+)% (increased|reduced) Defences$/i);
   if (m) {
     const v = (m[2]!.toLowerCase() === 'reduced' ? -1 : 1) * Number(m[1]);
     acc.incArmour += v;
@@ -107,10 +117,18 @@ function tryConsumeLocalArmourMod(
     acc.incWard += v;
     return true;
   }
-  m = line.match(/^\+(\d+)% Chance to Block$/i);
-  if (m) {
-    acc.flatBlock += Number(m[1]);
-    return true;
+  if (isShield) {
+    m = line.match(/^\+(\d+)% Chance to Block$/i);
+    if (m) {
+      acc.flatBlock += Number(m[1]);
+      return true;
+    }
+    m = line.match(/^(\d+)% (increased|reduced) (?:Block Chance|Chance to Block)$/i);
+    if (m) {
+      const s = m[2]!.toLowerCase() === 'reduced' ? -1 : 1;
+      acc.incBlock += s * Number(m[1]);
+      return true;
+    }
   }
   m = line.match(/^\+(\d+) to (?:maximum )?(?:Runic )?Ward$/i);
   if (m) {
@@ -196,6 +214,97 @@ function tryConsumeLocalWeaponMod(
   return false;
 }
 
+function normalizeBondedTemplate(line: string): string {
+  return normalizeStatLineToEn(line.replace(/\{[^}]*\}/g, '').trim())
+    .replace(/^Bonded\s*:\s*/i, '')
+    .replace(/[+-]?\d+(?:\.\d+)?/g, '#')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Upstream PoB 2 `Classes/Item.lua:2232-2240, 2824`:
+ * When an item carries `"Idols socketed in this item gain the benefits of their Bonded modifiers"`
+ * (e.g. `Fox Idol` or `The Brass Dome` / `Darkness Enthroned`), bonded modifiers originating from
+ * socketed `Idol`-type augments are unlocked even on non-Shaman characters, while bonded modifiers
+ * from non-Idol Runes (e.g. `Rune of the Blossom`) remain locked unless `allowBonded` is true.
+ */
+function unlockSocketedIdolBondedLines(
+  item: Item,
+  game: GameId,
+  lines: readonly string[],
+  allowBonded?: boolean,
+): string[] {
+  if (game !== 'poe2' || allowBonded) return [...lines];
+  const hasIdolBondedEnabler = [...item.implicits, ...item.explicits].some((l) =>
+    /Idols socketed in this item gain the benefits of their Bonded modifiers/i.test(
+      normalizeStatLineToEn(l.replace(/\{[^}]*\}/g, '').trim()),
+    ),
+  );
+  if (!hasIdolBondedEnabler) return [...lines];
+
+  const runeNames: string[] = [];
+  if (Array.isArray(item.runes)) {
+    for (const r of item.runes) {
+      const cleaned = r.trim();
+      if (cleaned && cleaned.toLowerCase() !== 'none') runeNames.push(cleaned);
+    }
+  }
+  if (runeNames.length === 0 && item.rawText) {
+    for (const raw of item.rawText.split(/\r?\n/)) {
+      const m = raw.match(/^\s*Rune\s*:\s*(.+)$/i);
+      if (m) {
+        const cleaned = m[1]!.trim();
+        if (cleaned && cleaned.toLowerCase() !== 'none') runeNames.push(cleaned);
+      }
+    }
+  }
+  if (runeNames.length === 0) return [...lines];
+
+  const ds = getPoe2RunesData();
+  const idolBondedTemplates = new Set<string>();
+  if (ds?.runes) {
+    const byLower = new Map<string, Record<string, { type?: string; bonded?: string[] }>>();
+    for (const [k, v] of Object.entries(ds.runes)) {
+      if (v && typeof v === 'object') {
+        byLower.set(k.trim().toLowerCase(), v as Record<string, { type?: string; bonded?: string[] }>);
+      }
+    }
+    for (const rn of runeNames) {
+      const entry = byLower.get(rn.trim().toLowerCase());
+      if (!entry) continue;
+      for (const sub of Object.values(entry)) {
+        if (sub?.type === 'Idol' && Array.isArray(sub.bonded)) {
+          for (const bl of sub.bonded) {
+            idolBondedTemplates.add(normalizeBondedTemplate(bl));
+          }
+        }
+      }
+    }
+  } else {
+    // Minimal built-in fallback when poe2-runes.json dataset is not loaded (e.g. isolated unit tests)
+    for (const rn of runeNames) {
+      if (rn.trim().toLowerCase() === 'fox idol') {
+        idolBondedTemplates.add(normalizeBondedTemplate('+5% to Quality of all Skills'));
+        idolBondedTemplates.add(normalizeBondedTemplate('Minions have 30% increased Area of Effect'));
+      }
+    }
+  }
+  if (idolBondedTemplates.size === 0) return [...lines];
+
+  return lines.map((rawLine) => {
+    const stripped = rawLine.replace(/\{[^}]*\}/g, '').trim();
+    const en = normalizeStatLineToEn(stripped);
+    if (!/^Bonded\s*:/i.test(en)) return rawLine;
+    const tpl = normalizeBondedTemplate(en);
+    if (!idolBondedTemplates.has(tpl)) return rawLine;
+    return en.replace(/^Bonded\s*:\s*/i, '').trim();
+  });
+}
+
+const ARMOUR_BASE_NAME_RE =
+  /\b(?:shield|buckler|focus|targe|cuirass|plate|robe|garb|vestment|vestments|jacket|doublet|brigandine|coat|tunic|mail|regalia|raiment|mantle|garment|helmet|helm|crown|tiara|circlet|cap|hood|mask|burgonet|bascinet|greathelm|gloves|gauntlets|mitts|bracers|wraps|cuffs|boots|greaves|sandals|shoes|slippers|sabatons|leggings)\b/i;
+
 /**
  * Resolves Path of Building-authentic Local Armour & Local Weapon stats
  * (PoE 1 3.25+/3.30 & PoE 2 0.5 multiplicative quality formula) and returns
@@ -216,6 +325,9 @@ export function resolveItemEffectiveStats(
     };
   }
 
+  const effectiveImplicits = unlockSocketedIdolBondedLines(item, game, item.implicits, opts?.allowBonded);
+  const effectiveExplicits = unlockSocketedIdolBondedLines(item, game, item.explicits, opts?.allowBonded);
+
   const hasPrecomputedSpiritHeader = Boolean(
     item.rawText && /^(?:Spirit|精魂)\s*[:：]\s*\+?\d+/im.test(item.rawText),
   );
@@ -232,14 +344,14 @@ export function resolveItemEffectiveStats(
       item.slotType === 'Helmet' ||
       item.slotType === 'Gloves' ||
       item.slotType === 'Boots' ||
-      /\b(?:shield|buckler|focus)\b/i.test(item.baseName));
+      ARMOUR_BASE_NAME_RE.test(item.baseName));
 
   if (!isWeapon && !isArmour) {
     return {
       armourStats: item.armourStats,
       weaponStats: item.weaponStats,
-      globalImplicits: stripLocalSpirit(item.implicits),
-      globalExplicits: stripLocalSpirit(item.explicits),
+      globalImplicits: stripLocalSpirit(effectiveImplicits),
+      globalExplicits: stripLocalSpirit(effectiveExplicits),
     };
   }
 
@@ -247,32 +359,50 @@ export function resolveItemEffectiveStats(
   const globalExplicits: string[] = [];
 
   if (isArmour) {
+    const baseBlockFromDb = getBaseItemStats(item.baseName, 0, game)?.armour?.blockChance;
+    const isShield =
+      /\b(?:shield|buckler|targe)\b/i.test(item.baseName) ||
+      Boolean(baseBlockFromDb || item.armourStats?.blockChance);
+
     const acc: LocalArmourAccum = {
       flatArmour: 0,
       flatEvasion: 0,
       flatEs: 0,
       flatBlock: 0,
+      incBlock: 0,
       flatWard: 0,
       incArmour: 0,
       incEvasion: 0,
       incEs: 0,
       incWard: 0,
     };
-    for (const line of item.implicits) {
-      if (!tryConsumeLocalArmourMod(line, acc, opts?.allowBonded)) globalImplicits.push(line);
+    for (const line of effectiveImplicits) {
+      if (!tryConsumeLocalArmourMod(line, acc, opts?.allowBonded, isShield)) {
+        globalImplicits.push(line);
+      }
     }
-    for (const line of item.explicits) {
-      if (!tryConsumeLocalArmourMod(line, acc, opts?.allowBonded)) globalExplicits.push(line);
+    for (const line of effectiveExplicits) {
+      if (!tryConsumeLocalArmourMod(line, acc, opts?.allowBonded, isShield)) {
+        globalExplicits.push(line);
+      }
     }
 
     if (item.localStatsPrecomputed) {
       let preArmour = item.armourStats;
-      if (preArmour && preArmour.blockChance === undefined) {
-        const baseBlock = getBaseItemStats(item.baseName, 0, game)?.armour?.blockChance;
+      const hasPrecomputedBlockHeader = Boolean(
+        item.rawText && /^\s*(?:Chance to Block|Block Chance|格挡几率)\s*[:：]\s*\d+/im.test(item.rawText),
+      );
+      if (preArmour && isShield && !hasPrecomputedBlockHeader) {
+        const baseBlock = baseBlockFromDb ?? preArmour.blockChance;
         if (baseBlock || acc.flatBlock) {
           preArmour = {
             ...preArmour,
-            blockChance: Math.min(100, (baseBlock ?? 0) + acc.flatBlock),
+            blockChance: Math.min(
+              100,
+              Math.floor(
+                ((baseBlock ?? 0) + acc.flatBlock) * Math.max(0, 1 + acc.incBlock / 100) + 1e-9,
+              ),
+            ),
           };
         }
       }
@@ -300,14 +430,20 @@ export function resolveItemEffectiveStats(
     const baseEva = (rawBase.evasion ?? 0) + acc.flatEvasion;
     const baseEs = (rawBase.energyShield ?? 0) + acc.flatEs;
     const baseWard = (rawBase.ward ?? 0) + acc.flatWard;
+    const rawBlock = (rawBase.blockChance ?? 0) + acc.flatBlock;
 
     const computedArmour: ArmourBaseStats = {
       ...(baseArm > 0 ? { armour: Math.round(baseArm * Math.max(0, 1 + acc.incArmour / 100) * qMult) } : {}),
       ...(baseEva > 0 ? { evasion: Math.round(baseEva * Math.max(0, 1 + acc.incEvasion / 100) * qMult) } : {}),
       ...(baseEs > 0 ? { energyShield: Math.round(baseEs * Math.max(0, 1 + acc.incEs / 100) * qMult) } : {}),
       ...(baseWard > 0 ? { ward: Math.round(baseWard * Math.max(0, 1 + acc.incWard / 100) * qMult) } : {}),
-      ...(rawBase.blockChance || acc.flatBlock
-        ? { blockChance: Math.min(100, (rawBase.blockChance ?? 0) + acc.flatBlock) }
+      ...(rawBlock > 0
+        ? {
+            blockChance: Math.min(
+              100,
+              Math.floor(rawBlock * Math.max(0, 1 + acc.incBlock / 100) + 1e-9),
+            ),
+          }
         : {}),
     };
 
@@ -329,10 +465,10 @@ export function resolveItemEffectiveStats(
     incCrit: 0,
     eleDamage: {},
   };
-  for (const line of item.implicits) {
+  for (const line of effectiveImplicits) {
     if (!tryConsumeLocalWeaponMod(line, acc, opts?.allowBonded)) globalImplicits.push(line);
   }
-  for (const line of item.explicits) {
+  for (const line of effectiveExplicits) {
     if (!tryConsumeLocalWeaponMod(line, acc, opts?.allowBonded)) globalExplicits.push(line);
   }
 

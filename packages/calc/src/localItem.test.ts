@@ -119,4 +119,141 @@ describe('localItem — resolveItemEffectiveStats', () => {
     expect(withBonded.armourStats?.armour).toBe(612);
     expect(withBonded.globalImplicits).toEqual([]);
   });
+
+  it('scales local shield % increased Block chance (both precomputed without header and uncomputed) while keeping non-shield Block global', () => {
+    // 1. PoE 2 shield with localStatsPrecomputed=false (Chernobog's Pillar style: base 26, 27% inc Block -> floor(26 * 1.27) = 33)
+    const chernobog: Item = {
+      id: 'sh1',
+      name: "Chernobog's Pillar",
+      baseName: 'Blacksteel Tower Shield',
+      rarity: 'UNIQUE',
+      slotType: 'Weapon 2',
+      quality: 20,
+      localStatsPrecomputed: false,
+      armourStats: { armour: 180, blockChance: 26 },
+      implicits: [],
+      explicits: ['27% increased Block chance', '100% increased Armour'],
+    };
+    const res1 = resolveItemEffectiveStats(chernobog, 'poe2');
+    expect(res1.armourStats?.blockChance).toBe(33);
+    expect(res1.globalExplicits).not.toContain('27% increased Block chance');
+
+    // 2. PoE 1 shield with localStatsPrecomputed=true (Armour header present, NO Chance to Block header -> scales base block locally)
+    const poe1Shield: Item = {
+      id: 'sh2',
+      name: 'Rift Ward',
+      baseName: 'Heat-attuned Tower Shield',
+      rarity: 'RARE',
+      slotType: 'Weapon 2',
+      quality: 20,
+      localStatsPrecomputed: true,
+      armourStats: { armour: 400, blockChance: 29 },
+      implicits: [],
+      explicits: ['79% increased Chance to Block', '+60 to maximum Life'],
+      rawText: 'Rarity: RARE\nRift Ward\nHeat-attuned Tower Shield\nArmour: 400\nQuality: 20',
+    };
+    const res2 = resolveItemEffectiveStats(poe1Shield, 'poe1');
+    // floor(29 * 1.79) = 51; line must NOT leak into globalExplicits
+    expect(res2.armourStats?.blockChance).toBe(51);
+    expect(res2.globalExplicits).toEqual(['+60 to maximum Life']);
+
+    // 3. Shield WITH explicit Chance to Block header keeps precomputed header value without double-scaling
+    const preBlockShield: Item = {
+      ...poe1Shield,
+      id: 'sh3',
+      armourStats: { armour: 400, blockChance: 51 },
+      rawText: 'Rarity: RARE\nRift Ward\nHeat-attuned Tower Shield\nChance to Block: 51%\nArmour: 400',
+    };
+    const res3 = resolveItemEffectiveStats(preBlockShield, 'poe1');
+    expect(res3.armourStats?.blockChance).toBe(51);
+
+    // 4. Non-shield Body Armour keeps global "% increased Block chance" in globalExplicits
+    const bodyWithBlock: Item = {
+      id: 'b-blk',
+      name: 'Warden Plate',
+      baseName: 'Full Plate',
+      rarity: 'RARE',
+      slotType: 'Body Armour',
+      quality: 0,
+      localStatsPrecomputed: false,
+      armourStats: { armour: 200 },
+      implicits: [],
+      explicits: ['15% increased Chance to Block'],
+    };
+    const res4 = resolveItemEffectiveStats(bodyWithBlock, 'poe2');
+    expect(res4.armourStats?.blockChance).toBeUndefined();
+    expect(res4.globalExplicits).toEqual(['15% increased Chance to Block']);
+  });
+
+  it('keeps Iron Rune "Armour, Evasion and Energy Shield" from scaling Runic Ward while allowing "Defences" and Runeforged bases to compute Ward locally', () => {
+    // 1. Runemastered Helmet with Iron Rune ("Armour, Evasion and Energy Shield") must NOT scale local Ward
+    const starkonja: Item = {
+      id: 'h-ward',
+      name: "Starkonja's Head",
+      baseName: 'Runemastered Leatherbound Hood',
+      rarity: 'UNIQUE',
+      slotType: 'Helmet',
+      quality: 20,
+      localStatsPrecomputed: false,
+      armourStats: { evasion: 266, ward: 28 },
+      implicits: ['18% increased Armour, Evasion and Energy Shield'],
+      explicits: ['100% increased Evasion Rating'],
+    };
+    const rHelm = resolveItemEffectiveStats(starkonja, 'poe2');
+    // Ward: round(28 * 1.0 * 1.20) = 34 (NOT round(28 * 1.18 * 1.20) = 40)
+    expect(rHelm.armourStats?.ward).toBe(34);
+    expect(rHelm.armourStats?.evasion).toBe(Math.round(266 * 2.18 * 1.2));
+
+    // 2. Runeforged Champion Cuirass (no base armourStats, slotType='Any') still classifies as armour:
+    //    consumes "528% increased Armour" locally (0 Armour) and computes local Runic Ward = round(892 * 1.60 * 1.20) = 1713
+    const brassDomeRuneforged: Item = {
+      id: 'bd-rf',
+      name: 'The Brass Dome',
+      baseName: 'Runeforged Champion Cuirass',
+      rarity: 'UNIQUE',
+      slotType: 'Any',
+      quality: 20,
+      localStatsPrecomputed: false,
+      implicits: [
+        '60% increased Runic Ward',
+        'Bonded: Gain 6% of maximum Life as Extra maximum Runic Ward',
+        '+892 to maximum Runic Ward',
+      ],
+      explicits: [
+        '528% increased Armour',
+        '-1% to all Maximum Elemental Resistances',
+        'Take no Extra Damage from Critical Hits',
+      ],
+    };
+    const rBody = resolveItemEffectiveStats(brassDomeRuneforged, 'poe2');
+    expect(rBody.armourStats?.armour).toBeUndefined();
+    expect(rBody.armourStats?.ward).toBe(1713);
+    expect(rBody.globalExplicits).not.toContain('528% increased Armour');
+    expect(rBody.globalImplicits).not.toContain('60% increased Runic Ward');
+    expect(rBody.globalImplicits).not.toContain('+892 to maximum Runic Ward');
+  });
+
+  it('unlocks baked Idol Bonded lines (e.g. Fox Idol) when item grants socketed Idols their Bonded modifiers while keeping non-Idol Rune Bonded lines locked', () => {
+    const darkness: Item = {
+      id: 'belt-darkness',
+      name: 'Darkness Enthroned',
+      baseName: 'Fine Belt',
+      rarity: 'UNIQUE',
+      slotType: 'Belt',
+      quality: 0,
+      localStatsPrecomputed: false,
+      runes: ['Fox Idol', 'Rune of the Blossom'],
+      implicits: [
+        '{enchant}{rune}+99 to Spirit',
+        '{enchant}{rune}Bonded: +9% to Quality of all Skills',
+        '{enchant}{rune}Bonded: 9% increased Spirit Reservation Efficiency',
+        '{enchant}{rune}Idols socketed in this item gain the benefits of their Bonded modifiers',
+      ],
+      explicits: ['99% increased effect of Socketed Augment Items'],
+    };
+
+    const res = resolveItemEffectiveStats(darkness, 'poe2', { allowBonded: false });
+    expect(res.globalImplicits).toContain('+9% to Quality of all Skills');
+    expect(res.globalImplicits).toContain('{enchant}{rune}Bonded: 9% increased Spirit Reservation Efficiency');
+  });
 });

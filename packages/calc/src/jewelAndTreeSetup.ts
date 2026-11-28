@@ -222,6 +222,9 @@ function resolveJewelRadiusLabel(jewel: Item, game: GameId): JewelRadiusLabel {
   // 3. Sensible defaults by jewel type
   const lowerName = jewel.name.toLowerCase();
   const lowerBase = jewel.baseName.toLowerCase();
+  if (lowerName === 'undying hate') {
+    return 'Very Large';
+  }
   if (lowerName === 'against the darkness') {
     return 'Large';
   }
@@ -402,6 +405,13 @@ export function collectAllocatedAnointNodes(
  *
  * Still excludes sockets that belong exclusively to the INACTIVE PoE 2 Weapon Set.
  */
+/**
+ * Tracks PoE 2 `Voices` Sinister Jewel socket items resolved by `resolveActiveSocketedJewels`.
+ * Per official PoB 2 `Modules/CalcSetup.lua:120-126` (`getCorruptedJewelEffect`), `The Adorned`
+ * does NOT scale Corrupted Jewels socketed into Sinister Jewel sockets.
+ */
+const poe2SinisterSocketJewels = new WeakSet<Item>();
+
 export function resolveActiveSocketedJewels(
   build: Build,
   _tree: PassiveTreeData,
@@ -481,6 +491,23 @@ export function resolveActiveSocketedJewels(
 
     const isVoicesOrVirtual = !activeTreeNodes.has(nodeId);
     results.push({ nodeId, jewel, isVoicesOrVirtual });
+  }
+
+  // Mark PoE 2 virtual Sinister Jewel sockets added by `Voices` so `computeJewelEffectScale`
+  // excludes them from `The Adorned` scaling (`CalcSetup.lua:120-126`).
+  if (build.game === 'poe2') {
+    const hasVoicesSinister = results.some(({ jewel }) =>
+      [...jewel.implicits, ...jewel.explicits].some((l) =>
+        /^Allocates\s+\d+\s+Sinister\s+Jewel\s+sockets?$/i.test(stripPobTags(l)),
+      ),
+    );
+    if (hasVoicesSinister) {
+      for (const entry of results) {
+        if (!_tree.nodes[entry.nodeId]) {
+          poe2SinisterSocketJewels.add(entry.jewel);
+        }
+      }
+    }
   }
 
   return results;
@@ -628,7 +655,8 @@ export function computeJewelEffectScale(
   }
 
   let globalScale = 1;
-  if (isItemCorrupted(jewel)) {
+  const isPoe2Sinister = game === 'poe2' && poe2SinisterSocketJewels.has(jewel);
+  if (!isPoe2Sinister && isItemCorrupted(jewel)) {
     if (jewel.rarity === 'MAGIC' && adornedMagicPct > 0) {
       globalScale = 1 + adornedMagicPct / 100;
     } else if (jewel.rarity === 'RARE' && adornedRarePct > 0) {
@@ -1220,17 +1248,23 @@ export function evaluateRadiusAndDistanceJewels(
     }> = [];
 
     for (const line of allLines) {
-      let m = line.match(/^Notable Passive Skills in Radius also grant\s+(.+)$/i);
+      let m = line.match(
+        /^(?:Conquered\s+)?Notable Passive Skills(?:\s+in Radius)? also grant\s+(.+)$/i,
+      );
       if (m) {
         notableAlsoGrants.push(m[1]!.trim());
         continue;
       }
-      m = line.match(/^Small Passive Skills in Radius also grant\s+(.+)$/i);
+      m = line.match(
+        /^(?:Conquered\s+)?Small Passive Skills(?:\s+in Radius)? also grant\s+(.+)$/i,
+      );
       if (m) {
         smallAlsoGrants.push(m[1]!.trim());
         continue;
       }
-      m = line.match(/^Attribute Passive Skills in Radius also grant\s+(.+)$/i);
+      m = line.match(
+        /^(?:Conquered\s+)?Attribute Passive Skills(?:\s+in Radius)? also grant\s+(.+)$/i,
+      );
       if (m) {
         attrAlsoGrants.push(m[1]!.trim());
         continue;

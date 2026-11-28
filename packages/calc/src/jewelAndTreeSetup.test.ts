@@ -908,3 +908,121 @@ describe('applyClusterJewelAllocationFix', () => {
     expect(res.allocatedSmallCount).toBe(4);
   });
 });
+
+describe('PoE 2 The Adorned Sinister Sockets & Undying Hate Conquered Passives', () => {
+  it('excludes PoE 2 Voices Sinister Jewel sockets from The Adorned scaling while still scaling normal tree sockets', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe2',
+      version: '0_5',
+      classStartNodeIds: { druid: 1 },
+      nodes: {
+        1: mkNode(1, 'Start', 'start', 0, 0),
+        100: mkNode(100, 'Tree Socket Normal', 'jewel', 200, 0),
+        101: mkNode(101, 'Tree Socket Adorned', 'jewel', 400, 0),
+        102: mkNode(102, 'Tree Socket Voices', 'jewel', 600, 0),
+      },
+    };
+    const adorned = mkItem({
+      id: 'adorned',
+      name: 'The Adorned',
+      baseName: 'Diamond',
+      rarity: 'UNIQUE',
+      explicits: ['48% increased Effect of Socketed Corrupted Magic or Rare Jewels'],
+    });
+    const voices = mkItem({
+      id: 'voices',
+      name: 'Voices',
+      baseName: 'Diamond',
+      rarity: 'UNIQUE',
+      explicits: ['Allocates 3 Sinister Jewel sockets'],
+    });
+    const normalJewel = mkItem({
+      id: 'j-normal',
+      name: 'Normal Sapphire',
+      baseName: 'Sapphire',
+      rarity: 'RARE',
+      corrupted: true,
+      explicits: ['10% increased maximum Energy Shield'],
+    });
+    const sinisterJewel = mkItem({
+      id: 'j-sinister',
+      name: 'Sinister Sapphire',
+      baseName: 'Sapphire',
+      rarity: 'RARE',
+      corrupted: true,
+      explicits: ['10% increased maximum Energy Shield'],
+    });
+
+    const build = mkBuild({
+      game: 'poe2',
+      name: 'AdornedVoices',
+      classId: 'druid',
+      ascendancyId: 'oracle',
+      level: 95,
+      activeWeaponSet: 1,
+      tree: {
+        title: 'Default',
+        treeVersion: '0_5',
+        allocatedNodeIds: [1, 100, 101, 102],
+        weaponSet1NodeIds: [],
+        weaponSet2NodeIds: [],
+        masteryEffects: {},
+        socketedJewels: {
+          100: 'j-normal',
+          101: 'adorned',
+          102: 'voices',
+          // Virtual Voices Sinister socket ID absent from tree.nodes
+          11184: 'j-sinister',
+        },
+      },
+      items: {
+        adorned,
+        voices,
+        'j-normal': normalJewel,
+        'j-sinister': sinisterJewel,
+      },
+    });
+
+    const activeNodes = new Set([1, 100, 101, 102]);
+    const resolved = resolveActiveSocketedJewels(build, tree, activeNodes);
+    const allJewels = resolved.map((r) => r.jewel);
+
+    expect(computeJewelEffectScale(normalJewel, allJewels, 'poe2').globalScale).toBeCloseTo(1.48, 4);
+    expect(computeJewelEffectScale(sinisterJewel, allJewels, 'poe2').globalScale).toBe(1);
+  });
+
+  it('evaluates PoE 2 Undying Hate Conquered Attribute/Small/Notable Passive Skills in Very Large (1800px) radius', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe2',
+      version: '0_3',
+      classStartNodeIds: { witch: 1 },
+      nodes: {
+        1: mkNode(1, 'Start', 'start', 0, 0),
+        21984: mkNode(21984, 'Jewel Socket', 'jewel', 0, 0),
+        10382: mkNode(10382, 'Attribute', 'small', 954, 0, ['+5 to Intelligence']),
+        4059: mkNode(4059, 'Attribute', 'small', 1620, 0, ['+5 to Intelligence']),
+        9999: mkNode(9999, 'Attribute Far', 'small', 1950, 0, ['+5 to Intelligence']),
+      },
+    };
+    const undyingHate = mkItem({
+      id: 'uh-1',
+      name: 'Undying Hate',
+      baseName: 'Timeless Jewel',
+      rarity: 'UNIQUE',
+      explicits: [
+        'Glorifying the defilement of 712 souls in tribute to Tecrod',
+        'Passives in radius are Conquered by the Abyssals',
+        'Conquered Attribute Passive Skills also grant +8 to Strength',
+      ],
+    });
+    const res = evaluateRadiusAndDistanceJewels(
+      [{ nodeId: 21984, jewel: undyingHate }],
+      tree,
+      new Set([1, 21984, 10382, 4059, 9999]),
+      1,
+    );
+    const uhLines = res.addedStatLines.find((s) => s.source.includes('Undying Hate'))?.lines ?? [];
+    // Both 954px and 1620px are inside Very Large (1800px), while 1950px is outside -> 2 x "+8 to Strength"
+    expect(uhLines).toEqual(['+8 to Strength', '+8 to Strength']);
+  });
+});

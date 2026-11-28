@@ -171,7 +171,8 @@ export type TimelessJewelType =
   | 'Brutal Restraint'
   | 'Militant Faith'
   | 'Elegant Hubris'
-  | 'Heroic Tragedy';
+  | 'Heroic Tragedy'
+  | 'Undying Hate';
 
 export interface ParsedTimelessJewel {
   jewelType: TimelessJewelType;
@@ -790,6 +791,64 @@ function getConquerorKeystoneSpec(
         };
       }
       return null;
+
+    case 'Undying Hate':
+      // Official PoB 2 Data/TimelessJewelData/LegionPassives.lua:10274-10470 (Abyssal keystones)
+      if (c === 'amanamu') {
+        return {
+          keystoneName: 'Sacrifice of Flesh',
+          descriptionLines: [
+            'When taking damage from Hits, 20% of Life Loss is prevented, then 150% of Life Loss prevented this way is Lost over 4 seconds',
+          ],
+          buildMods: (src) => [mkMod('SacrificeOfFlesh', 'FLAG', true, src)],
+        };
+      }
+      if (c === 'kulemak') {
+        return {
+          keystoneName: 'Sacrifice of Loyalty',
+          descriptionLines: [
+            'You deal 1% more Damage per 2 total Power of your Undead Minions',
+            'Undead Minions have 25% less maximum Life',
+          ],
+          buildMods: (src) => [mkMod('SacrificeOfLoyalty', 'FLAG', true, src)],
+        };
+      }
+      if (c === 'kurgal') {
+        return {
+          keystoneName: 'Sacrifice of Mind',
+          descriptionLines: [
+            'Mana Recovery from Regeneration Overflows maximum Mana',
+            '50% less Mana Regeneration Rate',
+          ],
+          buildMods: (src) => [
+            mkMod('SacrificeOfMind', 'FLAG', true, src),
+            mkMod('ManaRegen', 'MORE', -50, src),
+          ],
+        };
+      }
+      if (c === 'tecrod') {
+        return {
+          keystoneName: 'Sacrifice of Blood',
+          descriptionLines: [
+            'Regenerate 1 Life per second per 16 Life spent in the past 4 seconds',
+            '20% more Life Cost of Skills',
+          ],
+          buildMods: (src) => [
+            mkMod('SacrificeOfBlood', 'FLAG', true, src),
+            mkMod('LifeCost', 'MORE', 20, src),
+          ],
+        };
+      }
+      if (c === 'ulaman') {
+        return {
+          keystoneName: 'Sacrifice of Sight',
+          descriptionLines: [
+            'Projectiles do one of the following at random: Fork an additional time, Chain an additional time, Chain from Terrain an additional time, Cannot collide with targets',
+          ],
+          buildMods: (src) => [mkMod('SacrificeOfSight', 'FLAG', true, src)],
+        };
+      }
+      return null;
   }
 }
 
@@ -890,12 +949,23 @@ export function parseTimelessJewel(
       conqueror = canonicalCapitalize(m[2]!);
       continue;
     }
+
+    m = line.match(
+      /Glorifying the defilement of (\d+) souls in tribute to (Amanamu|Kulemak|Kurgal|Tecrod|Ulaman)/i,
+    );
+    if (m) {
+      jewelType = 'Undying Hate';
+      seed = Number(m[1]);
+      conqueror = canonicalCapitalize(m[2]!);
+      continue;
+    }
   }
 
   if (!jewelType) return null;
 
   const spec = getConquerorKeystoneSpec(jewelType, conqueror, game);
-  const radiusLabel = resolveRadiusLabelFromItem(jewel, 'Large');
+  const defaultRadius: JewelRadiusLabel = jewelType === 'Undying Hate' ? 'Very Large' : 'Large';
+  const radiusLabel = resolveRadiusLabelFromItem(jewel, defaultRadius);
 
   return {
     jewelType,
@@ -2536,7 +2606,10 @@ export function evaluatePoe2UnbakedSocketedRunes(
     const { runeMult, soulCoreMult } = getSocketedEffectMultipliers(item);
     const candidateKeys = resolveDatasetRuneCandidateKeys(slot, item, slotCategory);
     const hasFoxIdolOnItem = runesFound.some((r) => r.trim().toLowerCase() === 'fox idol');
-    const allowItemBonded = Boolean(options?.allowBonded || hasFoxIdolOnItem);
+    const hasIdolsUseBondedLine = [...item.implicits, ...item.explicits].some((l) =>
+      /Idols socketed in this item gain the benefits of their Bonded modifiers/i.test(stripPobTags(l)),
+    );
+    const allowIdolBonded = Boolean(hasFoxIdolOnItem || hasIdolsUseBondedLine);
 
     const itemStatLines: string[] = [];
     const appliedRunes: string[] = [];
@@ -2564,7 +2637,7 @@ export function evaluatePoe2UnbakedSocketedRunes(
 
         const isIdol = sub.type === 'Idol';
         const includeBonded = Boolean(
-          options?.allowBonded || (hasFoxIdolOnItem && isIdol),
+          options?.allowBonded || (allowIdolBonded && isIdol),
         );
         const bondedLines = includeBonded && Array.isArray(sub.bonded) ? sub.bonded : [];
 
@@ -2595,7 +2668,6 @@ export function evaluatePoe2UnbakedSocketedRunes(
             itemStatLines.push(effectiveLine);
           }
         }
-        void allowItemBonded;
         continue;
       }
 

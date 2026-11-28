@@ -1217,4 +1217,110 @@ describe('evaluatePoe2UnbakedSocketedRunes', () => {
     );
     expect(brRes.addedStatLines[0]?.lines).toEqual(['+45 to maximum Life']);
   });
+
+  it('evaluates PoE 2 Undying Hate Timeless Jewel in Very Large (1800px) radius and conquers Keystones to Abyssal Sacrifices', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe2',
+      version: '0_3',
+      classStartNodeIds: { witch: 1 },
+      nodes: {
+        1: mkNode(1, 'Start', 'start', 0, 0),
+        21984: mkNode(21984, 'Jewel Socket', 'jewel', 0, 0),
+        33979: mkNode(33979, 'Conduit', 'keystone', 1664, 0, [
+          'If you would gain a Charge, Allies in your Presence gain that Charge instead',
+        ]),
+        99999: mkNode(99999, 'Far Keystone', 'keystone', 2100, 0, ['Far']),
+      },
+    };
+    const undyingTecrod = mkItem({
+      id: 'uh-tecrod',
+      name: 'Undying Hate',
+      baseName: 'Timeless Jewel',
+      rarity: 'UNIQUE',
+      explicits: [
+        'Glorifying the defilement of 712 souls in tribute to Tecrod',
+        'Passives in radius are Conquered by the Abyssals',
+        'Conquered Attribute Passive Skills also grant +8 to Strength',
+      ],
+    });
+
+    const parsed = parseTimelessJewel(undyingTecrod, 'poe2');
+    expect(parsed).toEqual(
+      expect.objectContaining({
+        jewelType: 'Undying Hate',
+        seed: 712,
+        conqueror: 'Tecrod',
+        keystoneName: 'Sacrifice of Blood',
+        radiusLabel: 'Very Large',
+      }),
+    );
+
+    const res = evaluateTimelessJewels(
+      [{ nodeId: 21984, jewel: undyingTecrod }],
+      tree,
+      new Set([1, 21984, 33979, 99999]),
+      { game: 'poe2' },
+    );
+    // 1664px is inside Very Large (1800px) -> conquered; 2100px is outside -> untouched
+    expect(res.suppressedNodeIds.has(33979)).toBe(true);
+    expect(res.suppressedNodeIds.has(99999)).toBe(false);
+    expect(res.replacedKeystones).toHaveLength(1);
+    expect(res.replacedKeystones[0]?.keystoneName).toBe('Sacrifice of Blood');
+    expect(res.addedMods).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'SacrificeOfBlood', type: 'FLAG', value: true }),
+        expect.objectContaining({ name: 'LifeCost', type: 'MORE', value: 20 }),
+      ]),
+    );
+  });
+
+  it('unlocks Idol Bonded modifiers on unbaked items carrying "Idols socketed in this item gain the benefits of their Bonded modifiers" without unlocking non-Idol Runes', () => {
+    const datasetRunes: import('@webpob/core').Poe2RunesDataset = {
+      schemaVersion: 1,
+      game: 'poe2',
+      runes: {
+        'Idol of Ralakesh': {
+          'body armour': {
+            type: 'Idol',
+            localMod: false,
+            isLocalBaked: false,
+            lines: ['8% increased Reservation Efficiency of Minion Skills'],
+            bonded: ['Minions Revive 8% faster'],
+          },
+        },
+        'Rune of the Blossom': {
+          'body armour': {
+            type: 'Rune',
+            localMod: false,
+            isLocalBaked: false,
+            lines: ['+50 to Spirit'],
+            bonded: ['5% increased Spirit Reservation Efficiency'],
+          },
+        },
+      },
+    };
+    const body = mkItem({
+      id: 'brass-dome-bonded',
+      name: 'The Brass Dome',
+      baseName: 'Champion Cuirass',
+      slotType: 'Body Armour',
+      explicits: ['Idols socketed in this item gain the benefits of their Bonded modifiers'],
+      rawText: [
+        'Sockets: S S',
+        'Rune: Idol of Ralakesh',
+        'Rune: Rune of the Blossom',
+      ].join('\n'),
+    });
+
+    const res = evaluatePoe2UnbakedSocketedRunes(
+      [{ slot: 'Body Armour', item: body }],
+      'poe2',
+      { datasetRunes, allowBonded: false },
+    );
+    const lines = res.addedStatLines[0]?.lines ?? [];
+    expect(lines).toContain('8% increased Reservation Efficiency of Minion Skills');
+    expect(lines).toContain('Minions Revive 8% faster');
+    expect(lines).toContain('+50 to Spirit');
+    expect(lines).not.toContain('5% increased Spirit Reservation Efficiency');
+  });
 });
