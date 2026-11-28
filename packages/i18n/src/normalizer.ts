@@ -674,6 +674,118 @@ const ZH_TO_EN_RULES: StatRewriteRule[] = [
       return `+${v} to Level of Socketed ${tag}Gems`;
     },
   },
+  // PoE 2 Crossbow reload / bolt count
+  {
+    zhPattern: /^(?:弩|十字弓)装填速度(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Crossbow Reload Speed`,
+  },
+  {
+    zhPattern: /^(?:弩|十字弓)可额外装填\s*1\s*发弩箭$/,
+    toEn: () => 'Crossbows load an additional Bolt',
+  },
+  {
+    zhPattern: /^可额外装填\s*1\s*发弩箭$/,
+    toEn: () => 'Loads an additional Bolt',
+  },
+  {
+    zhPattern: /^有\s*(\d+)%\s*几率不消耗弩箭$/,
+    toEn: (_, v) => `${v}% chance to not consume a Bolt`,
+  },
+  // PoE 2 Archon / Culling / Spirit / Reservation / Exposure / Curse & Ailment Magnitudes
+  {
+    zhPattern: /^执政官增益效果(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Effect of Archon Buffs on you`,
+  },
+  {
+    zhPattern: /^扑杀阈值(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Culling Strike Threshold`,
+  },
+  {
+    zhPattern: /^扑杀$/,
+    toEn: () => 'Culling Strike',
+  },
+  {
+    zhPattern: /^(?:最大)?精魂(?:上限)?(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Spirit`,
+  },
+  {
+    zhPattern: /^精魂保留效能(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Spirit Reservation Efficiency`,
+  },
+  {
+    zhPattern: /^技能的?魔力保留效能(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Mana Reservation Efficiency of Skills`,
+  },
+  {
+    zhPattern: /^(?:你施加的)?诅咒幅度(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Curse Magnitudes`,
+  },
+  {
+    zhPattern: /^光环技能幅度(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `Aura Skills have ${v}% increased Magnitude`,
+  },
+  {
+    zhPattern: /^你可以额外施加\s*1\s*个诅咒$/,
+    toEn: () => 'You can apply an additional Curse',
+  },
+  {
+    zhPattern: /^你施加的曝露使对应抗性额外降低\s*(\d+)%$/,
+    toEn: (_, v) => `Exposure you inflict lowers the affected Resistance by an additional ${v}%`,
+  },
+  {
+    zhPattern: /^你施加的(火焰|冰霜|冰冷|闪电)曝露使总(?:火焰|冰霜|冰冷|闪电)抗性额外降低\s*(\d+)%$/,
+    toEn: (_, el, v) => {
+      const enEl = ZH_DAMAGE_TYPE_TO_EN[el] ?? el;
+      return `${enEl} Exposure you inflict lowers Total ${enEl} Resistance by an extra ${v}%`;
+    },
+  },
+  {
+    zhPattern: /^(?:你施加的)?凋零(?:幅度|效果)(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Withered Magnitude`,
+  },
+  {
+    zhPattern: /^(?:你施加的)?感电(?:幅度|效果)(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Magnitude of Shock you inflict`,
+  },
+  {
+    zhPattern: /^(?:符文)?结界恢复速度加快\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% faster Restoration of Ward`,
+  },
+  // PoE 1 Impale / Overleech / Suppression / DoT Multiplier
+  {
+    zhPattern: /^攻击击中时有\s*(\d+)%\s*几率穿刺敌人$/,
+    toEn: (_, v) => `${v}% chance to Impale Enemies on Hit with Attacks`,
+  },
+  {
+    zhPattern: /^穿刺效果(?:提高|增加)\s*(\d+)%$/,
+    toEn: (_, v) => `${v}% increased Impale Effect`,
+  },
+  {
+    zhPattern: /^未保留生命回满时不会移除生命偷取效果$/,
+    toEn: () => 'Life Leech effects are not removed when Unreserved Life is Filled',
+  },
+  {
+    zhPattern: /^压制法术伤害时额外防止\s*\+?(\d+)%\s*伤害$/,
+    toEn: (_, v) => `Prevent +${v}% of Suppressed Spell Damage`,
+  },
+  {
+    zhPattern: /^(物理|火焰|冰霜|冰冷|闪电|混沌)?持续伤害加成\s*\+?(\d+)%$/,
+    toEn: (_, el, v) =>
+      el
+        ? `+${v}% to ${ZH_DAMAGE_TYPE_TO_EN[el] ?? el} Damage over Time Multiplier`
+        : `+${v}% to Damage over Time Multiplier`,
+  },
+  // Keystones (PoE 1 3.30 / Timeless / Bloodline & PoE 2)
+  { zhPattern: /^灵魂[升昇]华$/, toEn: () => 'Transfiguration of Soul' },
+  { zhPattern: /^心灵[升昇]华$/, toEn: () => 'Transfiguration of Mind' },
+  { zhPattern: /^躯体[升昇]华$/, toEn: () => 'Transfiguration of Body' },
+  { zhPattern: /^腐化之魂$/, toEn: () => 'Corrupted Soul' },
+  { zhPattern: /^神圣血肉$/, toEn: () => 'Divine Flesh' },
+  { zhPattern: /^永恒青春$/, toEn: () => 'Eternal Youth' },
+  { zhPattern: /^苦痛灵曲$/, toEn: () => 'Pain Attunement' },
+  { zhPattern: /^钢铁意志$/, toEn: () => 'Iron Will' },
+  { zhPattern: /^零点射击$/, toEn: () => 'Point Blank' },
+  { zhPattern: /^巨人之血$/, toEn: () => "Giant's Blood" },
 ];
 
 const EN_TO_ZH_RULES: EnToZhRule[] = [
@@ -941,6 +1053,118 @@ const EN_TO_ZH_RULES: EnToZhRule[] = [
     enPattern: /^\+(\d+)% to all maximum Elemental Resistances$/i,
     toZh: (_, v) => `所有元素抗性上限 +${v}%`,
   },
+  // PoE 2 Crossbow / Archon / Culling / Spirit / Exposure / Curse & Ailment Magnitudes / Ward
+  { enPattern: /^\+(\d+) to Ward$/i, toZh: (_, v) => `结界 +${v}` },
+  { enPattern: /^(\d+)% increased Ward$/i, toZh: (_, v) => `结界提高 ${v}%` },
+  { enPattern: /^(\d+)% faster Restoration of Ward$/i, toZh: (_, v) => `结界恢复速度加快 ${v}%` },
+  { enPattern: /^(\d+)% increased Spirit$/i, toZh: (_, v) => `精魂提高 ${v}%` },
+  {
+    enPattern: /^(\d+)% increased Spirit Reservation Efficiency$/i,
+    toZh: (_, v) => `精魂保留效能提高 ${v}%`,
+  },
+  {
+    enPattern: /^(\d+)% increased Mana Reservation Efficiency of Skills$/i,
+    toZh: (_, v) => `技能的魔力保留效能提高 ${v}%`,
+  },
+  {
+    enPattern: /^(\d+)% increased Crossbow Reload Speed$/i,
+    toZh: (_, v) => `弩装填速度提高 ${v}%`,
+  },
+  {
+    enPattern: /^Crossbows load an additional Bolt$/i,
+    toZh: () => `弩可额外装填 1 发弩箭`,
+  },
+  {
+    enPattern: /^Loads an additional Bolt$/i,
+    toZh: () => `可额外装填 1 发弩箭`,
+  },
+  {
+    enPattern: /^(\d+)% chance to not consume a Bolt$/i,
+    toZh: (_, v) => `有 ${v}% 几率不消耗弩箭`,
+  },
+  {
+    enPattern: /^(\d+)% increased Critical Spell Damage Bonus$/i,
+    toZh: (_, v) => `法术暴击伤害加成提高 ${v}%`,
+  },
+  {
+    enPattern: /^(\d+)% increased Critical Damage Bonus$/i,
+    toZh: (_, v) => `暴击伤害加成提高 ${v}%`,
+  },
+  {
+    enPattern: /^(\d+)% increased Effect of Archon Buffs on you$/i,
+    toZh: (_, v) => `执政官增益效果提高 ${v}%`,
+  },
+  {
+    enPattern: /^(\d+)% increased Culling Strike Threshold$/i,
+    toZh: (_, v) => `扑杀阈值提高 ${v}%`,
+  },
+  { enPattern: /^Culling Strike$/i, toZh: () => `扑杀` },
+  {
+    enPattern: /^(\d+)% increased (?:Curse Magnitudes?|Magnitude of Curses you inflict)$/i,
+    toZh: (_, v) => `诅咒幅度提高 ${v}%`,
+  },
+  {
+    enPattern: /^Aura Skills have (\d+)% increased Magnitudes?$/i,
+    toZh: (_, v) => `光环技能幅度提高 ${v}%`,
+  },
+  {
+    enPattern: /^You can apply an additional Curse$/i,
+    toZh: () => `你可以额外施加 1 个诅咒`,
+  },
+  {
+    enPattern: /^Exposure you inflict lowers the affected Resistance by an additional (\d+)%$/i,
+    toZh: (_, v) => `你施加的曝露使对应抗性额外降低 ${v}%`,
+  },
+  {
+    enPattern: /^(Fire|Cold|Lightning) Exposure you inflict lowers Total \1 Resistance by an extra (\d+)%$/i,
+    toZh: (_, el, v) => {
+      const zhEl = EN_DAMAGE_TYPE_TO_ZH[el] ?? el;
+      return `你施加的${zhEl}曝露使总${zhEl}抗性额外降低 ${v}%`;
+    },
+  },
+  {
+    enPattern: /^(\d+)% increased (?:Withered Magnitudes?|Effect of Withered)$/i,
+    toZh: (_, v) => `凋零幅度提高 ${v}%`,
+  },
+  {
+    enPattern: /^(\d+)% increased (?:Magnitude of Shock you inflict|Shock Magnitudes?)$/i,
+    toZh: (_, v) => `感电幅度提高 ${v}%`,
+  },
+  // PoE 1 Impale / Overleech / Suppression / DoT Multiplier
+  {
+    enPattern: /^(\d+)% chance to Impale Enemies on Hit with Attacks$/i,
+    toZh: (_, v) => `攻击击中时有 ${v}% 几率穿刺敌人`,
+  },
+  {
+    enPattern: /^(\d+)% increased Impale Effect$/i,
+    toZh: (_, v) => `穿刺效果提高 ${v}%`,
+  },
+  {
+    enPattern: /^Life Leech effects are not removed when Unreserved Life is Filled$/i,
+    toZh: () => `未保留生命回满时不会移除生命偷取效果`,
+  },
+  {
+    enPattern: /^Prevent \+(\d+)% of Suppressed Spell Damage$/i,
+    toZh: (_, v) => `压制法术伤害时额外防止 +${v}% 伤害`,
+  },
+  {
+    enPattern: /^\+(\d+)% to (?:(Physical|Fire|Cold|Lightning|Chaos) )?Damage over Time Multiplier$/i,
+    toZh: (_, v, el) =>
+      el
+        ? `${EN_DAMAGE_TYPE_TO_ZH[el] ?? el}持续伤害加成 +${v}%`
+        : `持续伤害加成 +${v}%`,
+  },
+  // Keystones (PoE 1 3.30 / Timeless / Bloodline & PoE 2)
+  { enPattern: /^Transfiguration of Soul$/i, toZh: () => `灵魂升华` },
+  { enPattern: /^Transfiguration of Mind$/i, toZh: () => `心灵升华` },
+  { enPattern: /^Transfiguration of Body$/i, toZh: () => `躯体升华` },
+  { enPattern: /^Corrupted Soul$/i, toZh: () => `腐化之魂` },
+  { enPattern: /^Divine Flesh$/i, toZh: () => `神圣血肉` },
+  { enPattern: /^Eternal Youth$/i, toZh: () => `永恒青春` },
+  { enPattern: /^Pain Attunement$/i, toZh: () => `苦痛灵曲` },
+  { enPattern: /^Iron Will$/i, toZh: () => `钢铁意志` },
+  { enPattern: /^Point Blank$/i, toZh: () => `零点射击` },
+  { enPattern: /^Giant's Blood$/i, toZh: () => `巨人之血` },
 ];
 
 /**
