@@ -1101,5 +1101,31 @@ describe('Real-World Corpus Coverage (parseModLine + parseModCompositional fallb
     expect(parseModCompositional('25% increased Effect of Sap', 'tree')).toEqual([
       expect.objectContaining({ name: 'EnemySapEffect', type: 'INC', value: 25 }),
     ]);
+
+    // Wave 5C conditional suffixes (not Ignited/Frozen/Shocked, Ignited an Enemy Recently, Insane/Sane)
+    expect(parseModCompositional('40% increased Armour while not Ignited, Frozen or Shocked', 'item')).toEqual([
+      expect.objectContaining({
+        name: 'Armour',
+        type: 'INC',
+        value: 40,
+        tags: [{ type: 'Condition', var: 'Ignited|Frozen|Shocked', neg: true }],
+      }),
+    ]);
+    expect(parseModCompositional("100% increased Burning Damage if you've Ignited an Enemy Recently", 'item')).toEqual([
+      expect.objectContaining({
+        name: 'IgniteDamage',
+        type: 'INC',
+        value: 100,
+        tags: [{ type: 'Condition', var: 'IgnitedEnemyRecently' }],
+      }),
+    ]);
+    expect(parseModCompositional('47% more Critical Strike Chance while Insane', 'item')).toEqual([
+      expect.objectContaining({
+        name: 'CritChance',
+        type: 'MORE',
+        value: 47,
+        tags: [{ type: 'Condition', var: 'Insane' }],
+      }),
+    ]);
   });
 });

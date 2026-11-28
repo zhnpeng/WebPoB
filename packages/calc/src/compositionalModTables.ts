@@ -1473,6 +1473,22 @@ export const STAGE1_SUFFIX_RULES: readonly Stage1Rule[] = [
     apply: (m) => ({ tags: [{ type: 'Condition', var: `Been${capFirst(m[1]!)}Recently` }] }),
   },
   {
+    regex: /(?:\s*,\s*|\s+)while\s+not\s+Ignited,\s+Frozen\s+or\s+Shocked$/i,
+    apply: () => ({ tags: [{ type: 'Condition', var: 'Ignited|Frozen|Shocked', neg: true }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)if\s+you(?:'ve|\s+have)\s+(Ignited|Chilled|Frozen|Shocked|Poisoned|Scorched|Brittle|Sapped)\s+an\s+Enemy\s+Recently$/i,
+    apply: (m) => ({ tags: [{ type: 'Condition', var: `${capFirst(m[1]!)}EnemyRecently` }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)while\s+Insane$/i,
+    apply: () => ({ tags: [{ type: 'Condition', var: 'Insane' }] }),
+  },
+  {
+    regex: /(?:\s*,\s*|\s+)while\s+Sane$/i,
+    apply: () => ({ tags: [{ type: 'Condition', var: 'Insane', neg: true }] }),
+  },
+  {
     regex: /(?:\s*,\s*|\s+)if\s+you(?:'ve|\s+have)\s+Shapeshifted(?:\s+to\s+an\s+Animal\s+form)?\s+Recently$/i,
     apply: () => ({ tags: [{ type: 'Condition', var: 'ShapeshiftedRecently' }] }),
   },
