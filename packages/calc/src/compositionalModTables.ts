@@ -1617,6 +1617,7 @@ export const STAGE2_SUFFIX_SCOPE_RULES: readonly Stage2ScopeRule[] = [
   { regex: /\s+(?:with|to) Spear Attacks$/i, flags: ModFlag.Sword | ModFlag.Melee | ModFlag.Attack },
   { regex: /\s+with Spears$/i, flags: ModFlag.Sword | ModFlag.Melee },
   { regex: /\s+with (?:this )?Weapons?$/i, flags: ModFlag.Attack },
+  { regex: /\s+from Melee Weapon(?:s| Attacks)?$/i, flags: ModFlag.Attack | ModFlag.Melee },
 
   // Delivery / Skill types (compound BEFORE single)
   { regex: /\s+with Hits and Ailments$/i, flags: ModFlag.Hit | ModFlag.Ailment },
@@ -1825,6 +1826,18 @@ export const MOD_NAME_TABLE: Record<string, ModNameTarget> = {
   'life recovery rate': { names: ['LifeRecoveryRate'] },
   'life cost efficiency': { names: ['LifeCostEfficiency'] },
   'weapon damage': { names: ['Damage'], flags: ModFlag.Attack },
+  'melee weapon critical strike multiplier': {
+    names: ['CritMultiplier'],
+    flags: ModFlag.Attack | ModFlag.Melee,
+  },
+  'melee weapon critical strike chance': {
+    names: ['CritChance'],
+    flags: ModFlag.Attack | ModFlag.Melee,
+  },
+  'melee weapon elemental damage': {
+    names: ['ElementalDamage'],
+    flags: ModFlag.Attack | ModFlag.Melee,
+  },
   'mana recovery rate': { names: ['ManaRecoveryRate'] },
   'energy shield recovery rate': { names: ['EnergyShieldRecoveryRate'] },
   'recovery rate of life, mana and energy shield': {

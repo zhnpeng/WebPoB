@@ -1034,5 +1034,32 @@ describe('Real-World Corpus Coverage (parseModLine + parseModCompositional fallb
         value: 40,
       }),
     ]);
+
+    // Wave 4R Tincture Melee Weapon mods & "from Melee Weapons" suffix
+    expect(parseModCompositional('+23% to Melee Weapon Critical Strike Multiplier', 'tincture')).toEqual([
+      expect.objectContaining({
+        name: 'CritMultiplier',
+        type: 'BASE',
+        value: 23,
+        flags: ModFlag.Attack | ModFlag.Melee,
+      }),
+    ]);
+    expect(parseModCompositional('100% increased Melee Weapon Critical Strike Chance', 'tincture')).toEqual([
+      expect.objectContaining({
+        name: 'CritChance',
+        type: 'INC',
+        value: 100,
+        flags: ModFlag.Attack | ModFlag.Melee,
+      }),
+    ]);
+    expect(parseModCompositional('90% Increased Damage with Bleed From Melee Weapons', 'tincture')).toEqual([
+      expect.objectContaining({
+        name: 'DotDamage',
+        type: 'INC',
+        value: 90,
+        flags: ModFlag.Attack | ModFlag.Melee,
+        keywordFlags: KeywordFlag.Bleed,
+      }),
+    ]);
   });
 });

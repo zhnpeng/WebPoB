@@ -1287,5 +1287,17 @@ describe('Mechanism-Layer Regression Suite — Round 2 (Upstream PoB spec/System
       ]);
       expect(wrappedRune?.explicits).toEqual(['+80 to maximum Life']);
     });
+
+    it('parses PoE 1 Tincture Melee Weapon mods and evaluates them in ModDB (Wave 4R)', () => {
+      const db = new ModDB();
+      db.addMods(parseModLine('+23% to Melee Weapon Critical Strike Multiplier', 'Tincture'));
+      db.addMods(parseModLine('100% increased Melee Weapon Critical Strike Chance', 'Tincture'));
+      db.addMods(parseModLine('90% Increased Damage with Bleed From Melee Weapons', 'Tincture'));
+      expect(db.sum('BASE', 'CritMultiplier', ModFlag.Attack | ModFlag.Melee)).toBe(23);
+      expect(db.sum('BASE', 'CritMultiplier', ModFlag.Spell)).toBe(0);
+      expect(db.sum('INC', 'CritChance', ModFlag.Attack | ModFlag.Melee)).toBe(100);
+      expect(db.sum('INC', 'DotDamage', ModFlag.Attack | ModFlag.Melee, KeywordFlag.Bleed)).toBe(90);
+      expect(db.sum('INC', 'DotDamage', ModFlag.Attack | ModFlag.Bow, KeywordFlag.Bleed)).toBe(0);
+    });
   });
 });
