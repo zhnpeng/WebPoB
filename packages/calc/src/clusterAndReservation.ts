@@ -1069,8 +1069,137 @@ export function evaluateAllocatedClusterJewels(
             });
             continue;
           }
+          // Precise Retaliation
+          const mPreciseRetalCrit = jLine.match(
+            /^(\d+)% increased Critical Strike Chance if you haven't Blocked Recently$/i,
+          );
+          if (mPreciseRetalCrit) {
+            jewelMods.push({
+              ...mkMod('CritChance', 'INC', Number(mPreciseRetalCrit[1]), notableSrc),
+              tags: [{ type: 'Condition', var: 'BlockedRecently', neg: true }],
+            });
+            continue;
+          }
+          const mPreciseRetalMulti = jLine.match(
+            /^\+(\d+)% to Critical Strike Multiplier if you have Blocked Recently$/i,
+          );
+          if (mPreciseRetalMulti) {
+            jewelMods.push({
+              ...mkMod('CritMultiplier', 'BASE', Number(mPreciseRetalMulti[1]), notableSrc),
+              tags: [{ type: 'Condition', var: 'BlockedRecently' }],
+            });
+            continue;
+          }
+          // Disease Vector
+          const mDiseaseVec = jLine.match(
+            /^\+(\d+)% to Damage over Time Multiplier for Poison while wielding a Claw or Dagger$/i,
+          );
+          if (mDiseaseVec) {
+            jewelMods.push({
+              ...mkMod('PoisonDotMultiplier', 'BASE', Number(mDiseaseVec[1]), notableSrc),
+              tags: [{ type: 'Condition', var: 'UsingClaw|UsingDagger' }],
+            });
+            continue;
+          }
+          // Wound Aggravation
+          const mWoundAgg = jLine.match(
+            /^\+(\d+)% to Physical Damage over Time Multiplier while wielding an Axe or Sword$/i,
+          );
+          if (mWoundAgg) {
+            jewelMods.push({
+              ...mkMod('PhysicalDotMultiplier', 'BASE', Number(mWoundAgg[1]), notableSrc),
+              tags: [{ type: 'Condition', var: 'UsingAxe|UsingSword' }],
+            });
+            continue;
+          }
+          // Steady Torment
+          const mSteadyBleed = jLine.match(
+            /^\+(\d+)% to Damage over Time Multiplier for Bleeding you inflict on Poisoned Enemies$/i,
+          );
+          if (mSteadyBleed) {
+            jewelMods.push({
+              ...mkMod('BleedDotMultiplier', 'BASE', Number(mSteadyBleed[1]), notableSrc),
+              tags: [{ type: 'Condition', var: 'EnemyPoisoned' }],
+            });
+            continue;
+          }
+          const mSteadyPoison = jLine.match(
+            /^\+(\d+)% to Damage over Time Multiplier for Poison you inflict on Bleeding Enemies$/i,
+          );
+          if (mSteadyPoison) {
+            jewelMods.push({
+              ...mkMod('PoisonDotMultiplier', 'BASE', Number(mSteadyPoison[1]), notableSrc),
+              tags: [{ type: 'Condition', var: 'EnemyBleeding' }],
+            });
+            continue;
+          }
+          // Lord of Drought
+          const mLordDrought = jLine.match(
+            /^(\d+)% increased Damage with Ignites inflicted on Cursed Enemies$/i,
+          );
+          if (mLordDrought) {
+            jewelMods.push({
+              ...mkMod(
+                'Damage',
+                'INC',
+                Number(mLordDrought[1]),
+                notableSrc,
+                ModFlag.Ailment,
+                KeywordFlag.Ignite,
+              ),
+              tags: [{ type: 'Condition', var: 'EnemyCursed' }],
+            });
+            continue;
+          }
+          // Storm's Hand
+          const mStormsHand = jLine.match(
+            /^(\d+)% of Wand Physical Damage converted to (Fire|Cold|Lightning|Chaos) Damage$/i,
+          );
+          if (mStormsHand) {
+            const el =
+              mStormsHand[2]!.charAt(0).toUpperCase() + mStormsHand[2]!.slice(1).toLowerCase();
+            jewelMods.push(
+              mkMod(`PhysicalDamageConvertTo${el}`, 'BASE', Number(mStormsHand[1]), notableSrc, ModFlag.Wand),
+            );
+            continue;
+          }
+          // Heart of Iron
+          const mHeartOfIron = jLine.match(/^Gain (\d+)% of Maximum Life as Extra Armour$/i);
+          if (mHeartOfIron) {
+            jewelMods.push({
+              ...mkMod('Armour', 'BASE', Number(mHeartOfIron[1]), notableSrc),
+              tags: [{ type: 'PerStat', stat: 'Life', div: 100 }],
+            });
+            continue;
+          }
+          // Master of the Maelstrom
+          const mMaelstrom = jLine.match(
+            /^\+(\d+)% to all maximum Elemental Resistances if you have Killed a Cursed Enemy Recently$/i,
+          );
+          if (mMaelstrom) {
+            const v = Number(mMaelstrom[1]);
+            const tags = [{ type: 'Condition' as const, var: 'KilledRecently' }];
+            jewelMods.push({ ...mkMod('FireResistMax', 'BASE', v, notableSrc), tags });
+            jewelMods.push({ ...mkMod('ColdResistMax', 'BASE', v, notableSrc), tags });
+            jewelMods.push({ ...mkMod('LightningResistMax', 'BASE', v, notableSrc), tags });
+            continue;
+          }
+          // Savage Response
+          const mSavageResp = jLine.match(
+            /^\+(\d+)% to Critical Strike Multiplier if you've taken a Savage Hit Recently$/i,
+          );
+          if (mSavageResp) {
+            jewelMods.push({
+              ...mkMod('CritMultiplier', 'BASE', Number(mSavageResp[1]), notableSrc),
+              tags: [{ type: 'Condition', var: 'BeenSavageHitRecently' }],
+            });
+            continue;
+          }
           jewelMods.push(...parseModLines([jLine], notableSrc));
         }
+      } else if (notableName.trim().toLowerCase() === 'rapid infusion') {
+        const notableSrc = `Cluster Notable (${nodeId}): Rapid Infusion`;
+        jewelMods.push(mkMod('InfusionEffect', 'INC', 50, notableSrc));
       }
     }
     if (grantedSmallCount > 0 && scaledSmallGrants.length > 0) {

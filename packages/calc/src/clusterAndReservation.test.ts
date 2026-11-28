@@ -2369,4 +2369,121 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     // Total Haste Aura Effect on Vaal Haste = +25% (Body Armour, counted once) + 25% (Tree) = +50% -> 30 * 1.5 = 45% Attack Speed
     expect(db.sum('INC', 'Speed', ModFlag.Attack)).toBe(45);
   });
+
+  it('parses Precise Retaliation, Disease Vector, Wound Aggravation, Steady Torment, Lord of Drought, Heart of Iron, and Rapid Infusion cluster notables', () => {
+    const mockLookup = (name: string) => {
+      const table: Record<string, { en: string; zh: string; st: string[] }> = {
+        'Precise Retaliation': {
+          en: 'Precise Retaliation',
+          zh: '睚眦必报',
+          st: [
+            "60% increased Critical Strike Chance if you haven't Blocked Recently",
+            '+30% to Critical Strike Multiplier if you have Blocked Recently',
+          ],
+        },
+        'Disease Vector': {
+          en: 'Disease Vector',
+          zh: '病原体',
+          st: ['+6% to Damage over Time Multiplier for Poison while wielding a Claw or Dagger'],
+        },
+        'Wound Aggravation': {
+          en: 'Wound Aggravation',
+          zh: '伤口恶化',
+          st: ['+5% to Physical Damage over Time Multiplier while wielding an Axe or Sword'],
+        },
+        'Steady Torment': {
+          en: 'Steady Torment',
+          zh: '持续折磨',
+          st: [
+            '+6% to Damage over Time Multiplier for Bleeding you inflict on Poisoned Enemies',
+            '+6% to Damage over Time Multiplier for Poison you inflict on Bleeding Enemies',
+          ],
+        },
+        'Lord of Drought': {
+          en: 'Lord of Drought',
+          zh: '干旱之王',
+          st: ['30% increased Damage with Ignites inflicted on Cursed Enemies'],
+        },
+        'Heart of Iron': {
+          en: 'Heart of Iron',
+          zh: '钢铁之心',
+          st: ['Gain 10% of Maximum Life as Extra Armour'],
+        },
+      };
+      return table[name];
+    };
+
+    const jewel1: Item = {
+      id: 'cj-1',
+      name: 'Large Cluster Jewel',
+      baseName: 'Large Cluster Jewel',
+      rarity: 'RARE',
+      slotType: 'Any',
+      quality: 0,
+      implicits: [],
+      explicits: [
+        'Adds 8 Passive Skills',
+        '2 Added Passive Skills are Jewel Sockets',
+        '1 Added Passive Skill is Precise Retaliation',
+        '1 Added Passive Skill is Disease Vector',
+        '1 Added Passive Skill is Wound Aggravation',
+      ],
+      rawText: '',
+    };
+    const jewel2: Item = {
+      id: 'cj-2',
+      name: 'Medium Cluster Jewel',
+      baseName: 'Medium Cluster Jewel',
+      rarity: 'RARE',
+      slotType: 'Any',
+      quality: 0,
+      implicits: [],
+      explicits: [
+        'Adds 4 Passive Skills',
+        '1 Added Passive Skill is a Jewel Socket',
+        '1 Added Passive Skill is Steady Torment',
+        '1 Added Passive Skill is Lord of Drought',
+        '1 Added Passive Skill is Heart of Iron',
+        '1 Added Passive Skill is Rapid Infusion',
+      ],
+      rawText: '',
+    };
+
+    const res = evaluateAllocatedClusterJewels(
+      [
+        { nodeId: 7960, jewel: jewel1 },
+        { nodeId: 29712, jewel: jewel2 },
+      ],
+      [7960, 29712],
+      mockLookup,
+    );
+    const db = new ModDB();
+    db.addMods(res.mods);
+    db.setCondition('UsingClaw', true);
+    db.setCondition('UsingAxe', true);
+    db.setCondition('EnemyPoisoned', true);
+    db.setCondition('EnemyBleeding', true);
+    db.setCondition('EnemyCursed', true);
+    db.setStat('Life', 5000);
+
+    // Precise Retaliation: not BlockedRecently -> +60% CritChance, 0 CritMultiplier
+    expect(db.sum('INC', 'CritChance')).toBe(60);
+    expect(db.sum('BASE', 'CritMultiplier')).toBe(0);
+    db.setCondition('BlockedRecently', true);
+    expect(db.sum('INC', 'CritChance')).toBe(0);
+    expect(db.sum('BASE', 'CritMultiplier')).toBe(30);
+
+    // Disease Vector (+6) + Steady Torment (+6) = +12 PoisonDotMultiplier
+    expect(db.sum('BASE', 'PoisonDotMultiplier')).toBe(12);
+    // Wound Aggravation (+5) PhysicalDotMultiplier
+    expect(db.sum('BASE', 'PhysicalDotMultiplier')).toBe(5);
+    // Steady Torment (+6) BleedDotMultiplier
+    expect(db.sum('BASE', 'BleedDotMultiplier')).toBe(6);
+    // Lord of Drought (+30% Ignite Damage INC)
+    expect(db.sum('INC', 'Damage', ModFlag.Ailment, KeywordFlag.Ignite)).toBe(30);
+    // Heart of Iron (10% of 5000 Life = 500 Armour)
+    expect(db.sum('BASE', 'Armour')).toBe(500);
+    // Rapid Infusion fallback (+50% InfusionEffect)
+    expect(db.sum('INC', 'InfusionEffect')).toBe(50);
+  });
 });
