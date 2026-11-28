@@ -368,6 +368,68 @@ function evalSingleConditionVar(varExpr: string, ctx?: ModEvalContext): boolean 
   if (varExpr === 'HaveEnergyShield') {
     return Boolean(ctx.conditions.FullEnergyShield);
   }
+  if (varExpr === 'Crit') {
+    return Boolean(ctx.conditions.CriticalStrike);
+  }
+  if (varExpr === 'CriticalStrike') {
+    return Boolean(ctx.conditions.Crit);
+  }
+  if (varExpr === 'ImpaledEnemyRecently') {
+    return Boolean(ctx.conditions.ImpaledRecently);
+  }
+  if (varExpr === 'ImpaledRecently') {
+    return Boolean(ctx.conditions.ImpaledEnemyRecently);
+  }
+  if (varExpr === 'EnemyImpaled') {
+    return (ctx.multipliers.EnemyImpaleStacks ?? 0) > 0;
+  }
+  if (varExpr === 'KilledRareOrUniqueRecently') {
+    return Boolean(ctx.conditions.KilledUniqueRecently);
+  }
+  if (varExpr === 'OnFullLife') {
+    return Boolean(ctx.conditions.FullLife);
+  }
+  if (varExpr === 'FullLife') {
+    return Boolean(ctx.conditions.OnFullLife);
+  }
+  if (varExpr === 'OnLowLife') {
+    return Boolean(ctx.conditions.LowLife);
+  }
+  if (varExpr === 'LowLife') {
+    return Boolean(ctx.conditions.OnLowLife);
+  }
+  if (varExpr === 'EnemyOnFullLife') {
+    return Boolean(ctx.conditions.EnemyFullLife);
+  }
+  if (varExpr === 'EnemyFullLife') {
+    return Boolean(ctx.conditions.EnemyOnFullLife);
+  }
+  if (varExpr === 'EnemyOnLowLife') {
+    return Boolean(ctx.conditions.EnemyLowLife);
+  }
+  if (varExpr === 'EnemyLowLife') {
+    return Boolean(ctx.conditions.EnemyOnLowLife);
+  }
+  if (varExpr === 'AtMaxPowerCharges') {
+    const cur = ctx.multipliers.PowerCharge ?? 0;
+    const max = ctx.multipliers.PowerChargeMax ?? ctx.multipliers.MaxPowerCharge ?? 0;
+    return cur > 0 && max > 0 && cur >= max;
+  }
+  if (varExpr === 'AtMaxFrenzyCharges') {
+    const cur = ctx.multipliers.FrenzyCharge ?? 0;
+    const max = ctx.multipliers.FrenzyChargeMax ?? ctx.multipliers.MaxFrenzyCharge ?? 0;
+    return cur > 0 && max > 0 && cur >= max;
+  }
+  if (varExpr === 'AtMaxEnduranceCharges') {
+    const cur = ctx.multipliers.EnduranceCharge ?? 0;
+    const max = ctx.multipliers.EnduranceChargeMax ?? ctx.multipliers.MaxEnduranceCharge ?? 0;
+    return cur > 0 && max > 0 && cur >= max;
+  }
+  if (varExpr === 'AtMaxRage') {
+    const cur = ctx.multipliers.Rage ?? 0;
+    const max = ctx.multipliers.RageMax ?? ctx.multipliers.MaxRage ?? 0;
+    return cur > 0 && max > 0 && cur >= max;
+  }
   return false;
 }
 

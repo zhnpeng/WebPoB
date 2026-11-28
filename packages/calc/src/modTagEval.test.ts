@@ -1310,4 +1310,33 @@ describe('parseConditionalSuffix', () => {
       evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'HaveEnergyShield' }] }), ctxNoEsCond).active,
     ).toBe(false);
   });
+
+  it('derives AtMax*Charges/AtMaxRage from multipliers and aliases Crit/Impale/Life conditions (Wave 5C)', () => {
+    const ctx = createEmptyEvalContext();
+    ctx.conditions.CriticalStrike = true;
+    ctx.conditions.ImpaledRecently = true;
+    ctx.conditions.KilledUniqueRecently = true;
+    ctx.conditions.FullLife = true;
+    ctx.conditions.EnemyLowLife = true;
+    ctx.multipliers.EnemyImpaleStacks = 5;
+    ctx.multipliers.PowerCharge = 11;
+    ctx.multipliers.PowerChargeMax = 11;
+    ctx.multipliers.FrenzyCharge = 4;
+    ctx.multipliers.FrenzyChargeMax = 6;
+    ctx.multipliers.EnduranceCharge = 6;
+    ctx.multipliers.MaxEnduranceCharge = 6;
+    ctx.multipliers.Rage = 55;
+    ctx.multipliers.RageMax = 55;
+
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'Crit' }] }), ctx).active).toBe(true);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'ImpaledEnemyRecently' }] }), ctx).active).toBe(true);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'EnemyImpaled' }] }), ctx).active).toBe(true);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'KilledRareOrUniqueRecently' }] }), ctx).active).toBe(true);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'OnFullLife' }] }), ctx).active).toBe(true);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'EnemyOnLowLife' }] }), ctx).active).toBe(true);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'AtMaxPowerCharges' }] }), ctx).active).toBe(true);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'AtMaxFrenzyCharges' }] }), ctx).active).toBe(false);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'AtMaxEnduranceCharges' }] }), ctx).active).toBe(true);
+    expect(evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'AtMaxRage' }] }), ctx).active).toBe(true);
+  });
 });
