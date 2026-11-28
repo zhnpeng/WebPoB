@@ -498,9 +498,16 @@ export function resolveActiveSocketedJewels(
     results.push({ nodeId, jewel, isVoicesOrVirtual });
   }
 
-  // Mark PoE 2 virtual Sinister Jewel sockets added by `Voices` so `computeJewelEffectScale`
-  // excludes them from `The Adorned` scaling (`CalcSetup.lua:120-126`).
-  if (build.game === 'poe2') {
+  // Mark PoE 2 virtual / Sinister Jewel sockets (absent from the base passive tree, e.g. added by
+  // `Voices` or Sinister socket IDs) so `computeJewelEffectScale` excludes them from `The Adorned`
+  // scaling, matching upstream PoB 2 `CalcSetup.lua:120-126` (`if not node or node.sinister then return 0`).
+  if (build.game === 'poe2' && isFullTree) {
+    for (const entry of results) {
+      if (!_tree.nodes[entry.nodeId]) {
+        poe2SinisterSocketJewels.add(entry.jewel);
+      }
+    }
+  } else if (build.game === 'poe2') {
     const hasVoicesSinister = results.some(({ jewel }) =>
       [...jewel.implicits, ...jewel.explicits].some((l) =>
         /^Allocates\s+\d+\s+Sinister\s+Jewel\s+sockets?$/i.test(stripPobTags(l)),

@@ -1133,4 +1133,26 @@ describe('multiPartAndMetaRuntime', () => {
     expect(compiledRes.playerModsAdded).toHaveLength(0);
     expect(compiledDb.sum('INC', 'Speed')).toBe(0);
   });
+
+  it('applies PoE 2 Trinity quality Skill Speed with flags=0 so both Attack and Cast Speed benefit at >= 250 Resonance (PoB 2 act_int.lua:21851)', () => {
+    const trinityDef = makeGemDef({
+      id: 'poe2_trinity',
+      en: 'Trinity',
+      game: 'poe2',
+      tags: ['Buff', 'Persistent'],
+    });
+    const playerDb = new ModDB();
+    playerDb.setMultiplier('ResonanceCount', 270);
+    const res = evaluatePersistentBuffAndStanceSkills(
+      [makeGroup({ gems: [makeGemInst({ gemId: trinityDef.id, level: 20, quality: 20 })] })],
+      1,
+      'poe2',
+      playerDb,
+      new ModDB(),
+      (id) => (id === trinityDef.id ? trinityDef : undefined),
+    );
+    expect(res.appliedSkills).toContain('Trinity');
+    expect(playerDb.sum('INC', 'Speed', ModFlag.Attack)).toBe(15);
+    expect(playerDb.sum('INC', 'Speed', ModFlag.Cast)).toBe(15);
+  });
 });

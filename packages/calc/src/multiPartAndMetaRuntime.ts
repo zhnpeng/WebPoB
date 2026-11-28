@@ -1574,21 +1574,15 @@ export function evaluatePersistentBuffAndStanceSkills(
               source: 'Trinity (Resonance)',
             });
           }
+          // PoB 2 Data/Skills/act_int.lua:21850-21854: `trinity_skill_speed_+%_while_all_resonance_is_at_least_250_to_grant`
+          // grants generic Skill Speed (`Speed INC`, flags = 0) applying to Attacks, Spells (Cast), Warcries, and Totems.
           const qualSpeedInc = Math.floor(Math.max(0, gem.quality ?? 0) * 0.75);
           if (qualSpeedInc > 0 && effectiveResonance >= 250) {
             addPlayerMod({
               name: 'Speed',
               type: 'INC',
               value: qualSpeedInc,
-              flags: ModFlag.Attack,
-              keywordFlags: 0,
-              source: 'Trinity (Quality)',
-            });
-            addPlayerMod({
-              name: 'Speed',
-              type: 'INC',
-              value: qualSpeedInc,
-              flags: ModFlag.Spell,
+              flags: 0,
               keywordFlags: 0,
               source: 'Trinity (Quality)',
             });

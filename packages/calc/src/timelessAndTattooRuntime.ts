@@ -979,9 +979,10 @@ export function parseTimelessJewel(
 
 function isAttributeTravelSmallNode(node: PassiveNode): boolean {
   if (node.kind !== 'small' || node.ascendancyId) return false;
+  if (node.name.en.trim().toLowerCase() === 'attribute') return true;
   if (node.stats.length !== 1) return false;
   const line = stripPobTags(node.stats[0]!);
-  return /^\+10 to (?:Strength|Dexterity|Intelligence)$/i.test(line);
+  return /^\+(?:5|10) to (?:Strength|Dexterity|Intelligence|any Attribute)$/i.test(line);
 }
 
 /**
@@ -1309,6 +1310,32 @@ export function evaluateTimelessJewels(
             lines: [`${bonusWardInc}% increased Ward`],
           });
         }
+      }
+      if (lutLookup?.lookupNode) {
+        for (const node of [...smalls, ...notables]) {
+          const hit = lutLookup.lookupNode(parsed.jewelType, parsed.seed, node.id);
+          if (hit) {
+            lutHits++;
+            if (hit.mode === 'replace') suppressedNodeIds.add(node.id);
+            lutLines.push(...hit.stats);
+          }
+        }
+      }
+    } else if (parsed.jewelType === 'Undying Hate') {
+      // Official PoB 2 `Classes/PassiveSpec.lua:1779-1786` (`conqueredBy.conqueror.type == "abyss"`):
+      // - Attribute travel small nodes keep their attribute and gain `+3 to Tribute`.
+      // - Non-attribute small passives in radius are replaced (`abyss_small_tribute`: `+5 to Tribute`).
+      let jewelTribute = 0;
+      for (const s of smalls) {
+        if (isAttributeTravelSmallNode(s)) {
+          jewelTribute += 3;
+        } else {
+          suppressedNodeIds.add(s.id);
+          jewelTribute += 5;
+        }
+      }
+      if (jewelTribute > 0) {
+        addedMods.push(mkMod('Tribute', 'BASE', jewelTribute, jewelSrc));
       }
       if (lutLookup?.lookupNode) {
         for (const node of [...smalls, ...notables]) {

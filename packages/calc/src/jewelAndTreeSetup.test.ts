@@ -1219,4 +1219,81 @@ describe('PoE 2 The Adorned Sinister Sockets & Undying Hate Conquered Passives',
       '3% increased maximum Energy Shield',
     ]);
   });
+
+  it('excludes PoE 2 non-tree Sinister jewel sockets from The Adorned scaling even without Voices in active sockets (PoB 2 CalcSetup.lua:120-126)', () => {
+    // Build a >50-node PoE 2 tree so isFullTree is true
+    const nodeMap: Record<number, PassiveNode> = {
+      1: mkNode(1, 'Start', 'start', 0, 0),
+      46882: mkNode(46882, 'Jewel Socket', 'jewel', 200, 0),
+      7960: mkNode(7960, 'Jewel Socket', 'jewel', 400, 0),
+    };
+    for (let i = 100; i < 160; i++) {
+      nodeMap[i] = mkNode(i, `Small ${i}`, 'small', i * 10, 50, ['+5 to Dexterity']);
+    }
+    const tree: PassiveTreeData = {
+      game: 'poe2',
+      version: '0_5',
+      nodes: nodeMap,
+      groups: {},
+      classStartNodeIds: {},
+      bounds: { minX: 0, maxX: 2000, minY: -500, maxY: 500 },
+    };
+    const adorned = mkItem({
+      id: 'adorned',
+      name: 'The Adorned',
+      baseName: 'Diamond',
+      rarity: 'UNIQUE',
+      corrupted: true,
+      explicits: [
+        '45% increased Effect of Jewel Socket Passive Skills',
+        'containing Corrupted Rare Jewels',
+      ],
+    });
+    const normalRare = mkItem({
+      id: 'normal-rare',
+      name: 'Loath Curio',
+      baseName: 'Emerald',
+      rarity: 'RARE',
+      corrupted: true,
+      explicits: ['34% increased Critical Damage Bonus for Attack Damage'],
+    });
+    const sinisterRare = mkItem({
+      id: 'sinister-rare',
+      name: 'Apocalypse Creed',
+      baseName: 'Emerald',
+      rarity: 'RARE',
+      corrupted: true,
+      explicits: ['33% increased Critical Damage Bonus for Attack Damage'],
+    });
+    const build = mkBuild({
+      game: 'poe2',
+      tree: {
+        title: 'Main',
+        treeVersion: '0_5',
+        allocatedNodeIds: [1, 46882, 7960],
+        weaponSet1NodeIds: [],
+        weaponSet2NodeIds: [],
+        masteryEffects: {},
+        socketedJewels: {
+          46882: 'adorned',
+          7960: 'normal-rare',
+          11184: 'sinister-rare', // Sinister socket absent from base tree (no Voices present)
+        },
+      },
+      items: {
+        adorned,
+        'normal-rare': normalRare,
+        'sinister-rare': sinisterRare,
+      },
+    });
+
+    const activeSockets = resolveActiveSocketedJewels(build, tree, new Set([1, 46882, 7960]));
+    const allJewels = activeSockets.map((s) => s.jewel);
+
+    const normalScale = computeJewelEffectScale(normalRare, allJewels, 'poe2');
+    const sinisterScale = computeJewelEffectScale(sinisterRare, allJewels, 'poe2');
+
+    expect(normalScale.globalScale).toBeCloseTo(1.45, 4);
+    expect(sinisterScale.globalScale).toBe(1);
+  });
 });

@@ -1373,4 +1373,49 @@ describe('evaluatePoe2UnbakedSocketedRunes', () => {
       ]),
     );
   });
+
+  it('replaces non-attribute small passives with +5 Tribute and adds +3 Tribute on attribute travel nodes for PoE 2 Undying Hate (PassiveSpec.lua:1779-1786)', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe2',
+      version: '0_5',
+      nodes: {
+        26196: mkNode(26196, 'Jewel Socket', 'jewel', 0, 0),
+        101: mkNode(101, 'Attribute', 'small', 400, 0, ['+5 to Intelligence']),
+        102: mkNode(102, 'Cast Speed', 'small', 600, 0, ['6% increased Cast Speed']),
+        103: mkNode(103, 'Spell Damage', 'small', 900, 0, ['12% increased Spell Damage']),
+        104: mkNode(104, 'Arcane Surge Notable', 'notable', 1000, 0, ['25% increased Spell Damage']),
+      },
+      groups: {},
+      classStartNodeIds: {},
+      bounds: { minX: -2000, maxX: 2000, minY: -2000, maxY: 2000 },
+    };
+    const undyingHate = mkItem({
+      id: 'uh-1',
+      name: 'Undying Hate',
+      baseName: 'Timeless Jewel',
+      rarity: 'UNIQUE',
+      explicits: [
+        'Glorifying the defilement of 4575 souls in tribute to Ulaman',
+        'Passives in radius are Conquered by the Abyssals',
+      ],
+    });
+
+    const res = evaluateTimelessJewels(
+      [{ nodeId: 26196, jewel: undyingHate }],
+      tree,
+      new Set([26196, 101, 102, 103, 104]),
+      { game: 'poe2' },
+    );
+
+    // Non-attribute small passives (102, 103) are replaced; attribute travel node (101) is NOT suppressed
+    expect(res.suppressedNodeIds.has(101)).toBe(false);
+    expect(res.suppressedNodeIds.has(102)).toBe(true);
+    expect(res.suppressedNodeIds.has(103)).toBe(true);
+    // Tribute = 3 (1 attr node) + 2 * 5 (2 non-attr smalls) = 13
+    expect(res.addedMods).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'Tribute', type: 'BASE', value: 13 }),
+      ]),
+    );
+  });
 });
