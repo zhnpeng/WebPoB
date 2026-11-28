@@ -1533,4 +1533,77 @@ describe('skillActorRuntime — 5. PoB 1 & PoB 2 Ailment, Skill DoT, Routing & M
     // Total INC = 100 (Lightning) + 50 (Cold) + 50 (Chaos) = +200% (3.0x) -> 0.9 * 1000 * 3.0 = 2700
     expect(chaosIgnRes.ignite.singleStackDps).toBeCloseTo(2700, 1);
   });
+
+  it('wires PoE 1 Holy Relic (RelicTriggeredNova Spell/Area 250% eff + 0.3s CDR) and Herald of Agony (Projectile + VirulenceStack)', () => {
+    // 1. Summon Holy Relic of Conviction: Spell|Area, 250% Added Damage Effectiveness, 0.30s CDR trigger rate
+    const relicMinionDb = new ModDB();
+    relicMinionDb.addMod(mkMod('ChaosMin', 'BASE', 100));
+    relicMinionDb.addMod(mkMod('ChaosMax', 'BASE', 100));
+    relicMinionDb.addMod(mkMod('Damage', 'MORE', 40, ModFlag.Spell)); // Controlled Destruction
+    relicMinionDb.addMod(mkMod('CritChance', 'MORE', -80, ModFlag.Spell));
+    relicMinionDb.addMod(mkMod('CooldownRecovery', 'INC', 52)); // 0.3 / 1.52 = 0.1973s -> ceil(0.1973/0.033)*0.033 = 0.198s -> 5.05/s
+    const relicRes = computeMinionGroupOffence({
+      game: 'poe1',
+      minionBase: {
+        physicalMin: 1000,
+        physicalMax: 1000,
+        attacksPerSecond: 1,
+        critChance: 5,
+        critMultiplier: 130,
+        limitStat: 'ActiveHolyRelicLimit',
+        baseLimit: 2,
+      },
+      minionDb: relicMinionDb,
+      enemyDb: new ModDB(),
+      effLevel: 20,
+      gemInst: { gemId: 'poe1_summonholyrelicaltx', level: 20, quality: 20 },
+    });
+    expect(relicRes.perMinion.critChance).toBeCloseTo(1, 2);
+    expect(relicRes.perMinion.speed).toBeCloseTo(1 / (6 * 0.033), 2);
+    // Added 100 Chaos * 2.5 effectiveness = 250 Chaos * 1.4 MORE Spell = 350 Chaos
+    expect(relicRes.perMinion.damageByType.Chaos.average).toBeCloseTo(350, 0);
+
+    // 2. Herald of Agony: Projectile Attack, 1/1.3 base APS, syncs parent VirulenceStack onto minionDb
+    const hoagPlayerDb = new ModDB();
+    hoagPlayerDb.setMultiplier('VirulenceStack', 40);
+    const hoagMinionDb = new ModDB();
+    hoagMinionDb.addMod({
+      name: 'PhysicalMin',
+      type: 'BASE',
+      value: 10,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Herald of Agony',
+      tags: [{ type: 'Multiplier', var: 'VirulenceStack' }],
+    });
+    hoagMinionDb.addMod({
+      name: 'PhysicalMax',
+      type: 'BASE',
+      value: 10,
+      flags: 0,
+      keywordFlags: 0,
+      source: 'Herald of Agony',
+      tags: [{ type: 'Multiplier', var: 'VirulenceStack' }],
+    });
+    hoagMinionDb.addMod(mkMod('Damage', 'MORE', 50, ModFlag.Attack | ModFlag.Projectile));
+    const hoagRes = computeMinionGroupOffence({
+      game: 'poe1',
+      minionBase: {
+        physicalMin: 100,
+        physicalMax: 100,
+        attacksPerSecond: 0.5,
+        critChance: 5,
+        critMultiplier: 130,
+      },
+      minionDb: hoagMinionDb,
+      enemyDb: new ModDB(),
+      playerDb: hoagPlayerDb,
+      effLevel: 20,
+      gemInst: { gemId: 'poe1_heraldofagony', level: 20, quality: 0 },
+    });
+    // Base 100 + 40*10 = 500 Phys * 1.5 MORE Projectile Attack = 750 Phys
+    expect(hoagRes.perMinion.damageByType.Physical.average).toBeCloseTo(750, 0);
+    // Profile attackTime = 1.3 -> 1/1.3 = 0.77 APS
+    expect(hoagRes.perMinion.speed).toBeCloseTo(1 / 1.3, 2);
+  });
 });

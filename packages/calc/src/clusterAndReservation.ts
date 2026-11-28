@@ -4234,6 +4234,24 @@ export function evaluateAurasAndWatchersEye(
             playerDb.setCondition(ck, true);
           }
         }
+        // Propagate PoE 1 Herald of Agony VirulenceStack multiplier (clamped by VirulenceStacksMax)
+        if (build.game === 'poe1' && lowerAuraName === 'herald of agony') {
+          const rawVir = Number(
+            build.config.rawInputs?.heraldOfAgonyVirulenceStack ??
+              playerDb.getEvalContext().multipliers.VirulenceStack ??
+              0,
+          );
+          if (Number.isFinite(rawVir) && rawVir > 0) {
+            const baseMaxVir =
+              tmpPlayer.getEvalContext().multipliers.VirulenceStacksMax ??
+              playerDb.getEvalContext().multipliers.VirulenceStacksMax ??
+              40;
+            const bonusMaxVir = playerDb.sum('BASE', ['VirulenceStacksMax', 'MaxVirulenceStacks']);
+            const effVir = Math.max(0, Math.min(Math.max(40, baseMaxVir + bonusMaxVir), rawVir));
+            playerDb.setMultiplier('VirulenceStack', effVir);
+            minionDb.setMultiplier('VirulenceStack', effVir);
+          }
+        }
         enemyDb.addMods(collectModsFromDb(tmpEnemy));
         minionDb.addMods(collectModsFromDb(tmpMinion));
       }

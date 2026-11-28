@@ -3158,4 +3158,49 @@ describe('clusterAndReservation — Auras, Generosity, The Hand of Phrecia & Wat
     // Pride from party should NOT activate player-only "while using Pride"
     expect(res.watchersEyeLines.find((l) => l.requiredAura === 'Pride')?.active).toBe(false);
   });
+
+  it('propagates PoE 1 Herald of Agony VirulenceStack (clamped by VirulenceStacksMax) to playerDb and minionDb', () => {
+    const hoagDef: GemDefinition = {
+      id: 'poe1_heraldofagony',
+      name: { en: 'Herald of Agony', zh: '苦痛之捷' },
+      category: 'active',
+      game: 'poe1',
+      color: 'green',
+      tags: ['herald', 'minion', 'chaos', 'physical', 'spell'],
+      modFlags: 0,
+      keywordFlags: 0,
+      manaReservationPct: 25,
+      isAuraOrBuff: true,
+      stats: [],
+      compiledMods: [
+        { name: 'Multiplier:VirulenceStacksMax', type: 'BASE', value: 40, flags: 0, keywordFlags: 0, target: 'player' },
+        { name: 'PoisonChance', type: 'BASE', value: 20, flags: 0, keywordFlags: 0, target: 'player' },
+      ],
+    };
+    const pDb = new ModDB();
+    const mDb = new ModDB();
+    pDb.addMod({ name: 'VirulenceStacksMax', type: 'BASE', value: 20, flags: 0, keywordFlags: 0, source: 'Cluster' });
+    const build = mkBuild({
+      game: 'poe1',
+      skills: [
+        {
+          id: 'sg-hoag',
+          label: 'HoAg',
+          enabled: true,
+          gems: [{ instanceId: 'h1', gemId: 'poe1_heraldofagony', level: 20, quality: 0, enabled: true }],
+        },
+      ],
+    });
+    build.config.rawInputs = { heraldOfAgonyVirulenceStack: 150 };
+    evaluateAurasAndWatchersEye({
+      build,
+      playerDb: pDb,
+      minionDb: mDb,
+      getGemByIdFn: (_g, id) => (id === 'poe1_heraldofagony' ? hoagDef : undefined),
+      maxMana: 1000,
+    });
+    // Clamped to 40 + 20 = 60
+    expect(pDb.getEvalContext().multipliers.VirulenceStack).toBe(60);
+    expect(mDb.getEvalContext().multipliers.VirulenceStack).toBe(60);
+  });
 });
