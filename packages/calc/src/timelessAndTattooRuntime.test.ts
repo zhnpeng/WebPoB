@@ -1689,4 +1689,62 @@ describe('evaluatePoe2UnbakedSocketedRunes', () => {
       ]),
     );
   });
+
+  it('resolves all 15 PoE 1 Legion Timeless Keystones + Black Scythe Training with exact PoB1 3.30 flags and descriptions', () => {
+    const tree: PassiveTreeData = {
+      game: 'poe1',
+      version: '3_30',
+      bounds: { minX: -2000, maxX: 2000, minY: -2000, maxY: 2000 },
+      nodes: {
+        100: mkNode(100, 'Jewel Socket', 'jewel', 0, 0, []),
+        101: mkNode(101, 'Minion Instability', 'keystone', 600, 0, ['Minions explode']),
+      },
+      groups: {},
+      classStartNodeIds: {},
+    };
+    const mkTimeless = (id: string, name: string, line: string) =>
+      mkItem({ id, name, baseName: 'Timeless Jewel', explicits: [line] });
+    const cases: Array<{ line: string; keystone: string; expectedFlag: string }> = [
+      { line: 'Bathed in the blood of 1234 sacrificed in the name of Doryani', keystone: 'Corrupted Soul', expectedFlag: 'CorruptedSoul' },
+      { line: 'Bathed in the blood of 1234 sacrificed in the name of Xibaqua', keystone: 'Divine Flesh', expectedFlag: 'DivineFlesh' },
+      { line: 'Bathed in the blood of 1234 sacrificed in the name of Ahuana', keystone: 'Immortal Ambition', expectedFlag: 'ImmortalAmbition' },
+      { line: 'Commanded leadership over 12000 warriors under Kaom', keystone: 'Strength of Blood', expectedFlag: 'StrengthOfBlood' },
+      { line: 'Commanded leadership over 12000 warriors under Rakiata', keystone: 'Tempered by War', expectedFlag: 'TemperedByWar' },
+      { line: 'Commanded leadership over 12000 warriors under Akoya', keystone: 'Chainbreaker', expectedFlag: 'Chainbreaker' },
+      { line: 'Denoted service of 1500 dekhara in the akhara of Balbala', keystone: 'The Traitor', expectedFlag: 'TheTraitor' },
+      { line: 'Denoted service of 1500 dekhara in the akhara of Asenath', keystone: 'Dance with Death', expectedFlag: 'DanceWithDeath' },
+      { line: 'Denoted service of 1500 dekhara in the akhara of Nasima', keystone: 'Second Sight', expectedFlag: 'SecondSight' },
+      { line: 'Carved to glorify 3000 new faithful converted by High Templar Dominus', keystone: 'Inner Conviction', expectedFlag: 'GainPowerInsteadOfFrenzy' },
+      { line: 'Carved to glorify 3000 new faithful converted by High Templar Maxarius', keystone: 'Transcendence', expectedFlag: 'Transcendence' },
+      { line: 'Carved to glorify 3000 new faithful converted by High Templar Avarius', keystone: 'Power of Purpose', expectedFlag: 'PowerOfPurpose' },
+      { line: 'Commissioned 12000 coins to commemorate Cadiro', keystone: 'Supreme Decadence', expectedFlag: 'SupremeDecadence' },
+      { line: 'Commissioned 12000 coins to commemorate Victario', keystone: 'Supreme Grandstanding', expectedFlag: 'SupremeGrandstanding' },
+      { line: 'Commissioned 12000 coins to commemorate Caspiro', keystone: 'Supreme Ostentation', expectedFlag: 'SupremeOstentation' },
+      { line: 'Remembrancing 1525 songworthy deeds by the line of Vorana', keystone: 'Black Scythe Training', expectedFlag: 'BlackScytheTraining' },
+    ];
+
+    for (const c of cases) {
+      const jewel = mkTimeless(`tl_${c.keystone}`, c.keystone, c.line);
+      const res = evaluateTimelessJewels([{ nodeId: 100, jewel }], tree, new Set([100, 101]));
+      expect(res.replacedKeystones[0]?.keystoneName).toBe(c.keystone);
+      expect(res.addedMods.some((m) => m.name === c.expectedFlag && m.type === 'FLAG' && m.value === true)).toBe(true);
+    }
+
+    // Verify PoE 1 3.30 Chainbreaker emits NoManaRegen (not stale +3 RageRegen) and Black Scythe Training removes stale +50% WardRestoration
+    const akoya = evaluateTimelessJewels(
+      [{ nodeId: 100, jewel: mkTimeless('akoya', 'Lethal Pride', 'Commanded leadership over 12000 warriors under Akoya') }],
+      tree,
+      new Set([100, 101]),
+    );
+    expect(akoya.addedMods.some((m) => m.name === 'NoManaRegen' && m.type === 'FLAG')).toBe(true);
+    expect(akoya.addedMods.some((m) => m.name === 'RageRegen')).toBe(false);
+
+    const vorana = evaluateTimelessJewels(
+      [{ nodeId: 100, jewel: mkTimeless('vorana', 'Heroic Tragedy', 'Remembrancing 1525 songworthy deeds by the line of Vorana') }],
+      tree,
+      new Set([100, 101]),
+    );
+    expect(vorana.replacedKeystones[0]?.descriptionLines[0]).toBe('Removes all Energy Shield');
+    expect(vorana.addedMods.some((m) => m.name === 'WardRestoration')).toBe(false);
+  });
 });

@@ -530,8 +530,8 @@ function getConquerorKeystoneSpec(
         return {
           keystoneName: 'Strength of Blood',
           descriptionLines: [
-            'Recovery from Life Leech is not applied',
-            '1% less Damage taken for every 2% Recovery per second from Life Leech',
+            'Life Recovery from Non-Instant Leech is not applied',
+            '2% additional Physical Damage Reduction for every 3% Life Recovery per second from Leech',
           ],
           buildMods: (src) => [mkMod('StrengthOfBlood', 'FLAG', true, src)],
         };
@@ -557,13 +557,14 @@ function getConquerorKeystoneSpec(
         return {
           keystoneName: 'Chainbreaker',
           descriptionLines: [
-            'Increases and Reductions to Mana Regeneration Rate instead apply to Rage Regeneration Rate',
-            '+3 to Rage Regeneration per second',
-            'Skills have +5 Rage Cost',
+            'Mana Recovery from Regeneration is not applied',
+            '1 Rage Regenerated for every 25 Mana Regeneration per Second',
+            'Does not delay Inherent Loss of Rage',
+            'Skills Cost +3 Rage',
           ],
           buildMods: (src) => [
             mkMod('Chainbreaker', 'FLAG', true, src),
-            mkMod('RageRegen', 'BASE', 3, src),
+            mkMod('NoManaRegen', 'FLAG', true, src),
           ],
         };
       }
@@ -574,7 +575,7 @@ function getConquerorKeystoneSpec(
         return {
           keystoneName: 'The Traitor',
           descriptionLines: [
-            'Flasks gain 4 Charges every 5 seconds for each empty Flask Slot',
+            'Flasks Gain 4 Charges per empty Flask Slot every 5 seconds',
           ],
           buildMods: (src) => [mkMod('TheTraitor', 'FLAG', true, src)],
         };
@@ -586,6 +587,7 @@ function getConquerorKeystoneSpec(
             "Can't use Helmets",
             'Your Critical Strike Chance is Lucky',
             'Your Damage with Critical Strikes is Lucky',
+            "Enemies' Damage with Critical Strikes against you is Lucky",
           ],
           buildMods: (src) => [
             mkMod('DanceWithDeath', 'FLAG', true, src),
@@ -682,6 +684,7 @@ function getConquerorKeystoneSpec(
           keystoneName: 'Supreme Grandstanding',
           descriptionLines: [
             'Nearby Allies and Enemies Share Charges with you',
+            'Enemies Hitting you have 10% chance to gain an Endurance, Frenzy or Power Charge',
           ],
           buildMods: (src) => [mkMod('SupremeGrandstanding', 'FLAG', true, src)],
         };
@@ -725,11 +728,12 @@ function getConquerorKeystoneSpec(
         }
         return {
           keystoneName: 'Black Scythe Training',
-          descriptionLines: ['Ward does not break on Hit', '50% faster Restoration of Ward'],
-          buildMods: (src) => [
-            mkMod('BlackScytheTraining', 'FLAG', true, src),
-            mkMod('WardRestoration', 'INC', 50, src),
+          descriptionLines: [
+            'Removes all Energy Shield',
+            'Chance to Evade Hits is based off of 200% of your Ward instead of your Evasion Rating',
+            'Physical Damage Reduction from Hits is based off of 200% of your Ward instead of your Armour',
           ],
+          buildMods: (src) => [mkMod('BlackScytheTraining', 'FLAG', true, src)],
         };
       }
       if (c === 'uhtred') {
