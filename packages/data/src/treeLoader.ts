@@ -509,18 +509,30 @@ function hydrateCompiledMods(
   if (!Array.isArray(cmods) || cmods.length === 0) return undefined;
   return cmods.map((m) => {
     // Upstream PoB SkillStatMap defines `base_number_of_projectiles` / `base_number_of_arrows`
-    // with a `-1` base offset (for the implicit 1st projectile). Compact quality-mod export applied
-    // that `-1` offset to per-quality values (`0.1 -> -0.9`, `0.05 -> -0.95`, `0.2 -> -0.8`),
-    // causing 39 PoE 1 + 9 PoE 2 projectile gems to lose projectiles with quality. Restore `v + 1`.
-    const value =
+    // with a `-1` base offset (for the implicit 1st projectile), and `ScorchingRayAltX`'s
+    // `fire_beam_additional_stack_damage_+%_final` with a `base = 100` offset. Compact quality-mod
+    // export applied those offsets to per-quality values (`0.1 -> -0.9`, `0.2 -> 100.2`). Restore them.
+    let value = m.v;
+    if (
       isQuality &&
       m.n === 'ProjectileCount' &&
       m.t === 'BASE' &&
       typeof m.v === 'number' &&
       m.v < 0 &&
       m.v > -1
-        ? Math.round((m.v + 1) * 1000) / 1000
-        : m.v;
+    ) {
+      value = Math.round((m.v + 1) * 1000) / 1000;
+    } else if (
+      isQuality &&
+      m.n === 'Damage' &&
+      m.t === 'MORE' &&
+      typeof m.v === 'number' &&
+      m.v >= 100 &&
+      m.v < 105 &&
+      m.tags?.some((t) => t.type === 'Multiplier' && t.var === 'ScorchingRayofImmolationStageAfterFirst')
+    ) {
+      value = Math.round((m.v - 100) * 1000) / 1000;
+    }
     return {
       name: m.n,
       type: m.t,

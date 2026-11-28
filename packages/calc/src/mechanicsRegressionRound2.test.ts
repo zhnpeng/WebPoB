@@ -1844,6 +1844,31 @@ Gain 5% of Maximum Mana as Extra Maximum Energy Shield
 
         const crushingFist = hydrated.find((g) => g.id === 'poe1_crushingfist')!;
         expect(crushingFist.skillData?.cannotBeExerted).toBe(1);
+
+        // Wave 6B: Scorching Ray of Immolation `base = 100` quality offset restoration (100.2 -> 0.2)
+        const srHydrated = registerGemsData('poe1', {
+          game: 'poe1',
+          count: 1,
+          gems: [
+            {
+              id: 'poe1_scorchingrayaltx',
+              en: 'Scorching Ray of Immolation',
+              cat: 'active',
+              color: 'blue',
+              tags: ['Spell', 'Fire', 'Channelling', 'Duration'],
+              qmods: [
+                {
+                  n: 'Damage',
+                  t: 'MORE',
+                  v: 100.2,
+                  tags: [{ type: 'Multiplier', var: 'ScorchingRayofImmolationStageAfterFirst' }],
+                },
+              ],
+            },
+          ],
+        });
+        const srGem = srHydrated.find((g) => g.id === 'poe1_scorchingrayaltx')!;
+        expect(srGem.qualityCompiledMods?.[0]?.value).toBe(0.2);
       } finally {
         setRegisteredGems('poe1', prevPoe1);
       }
