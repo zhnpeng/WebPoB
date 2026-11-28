@@ -167,15 +167,17 @@ function evalSingleConditionVar(varExpr: string, ctx?: ModEvalContext): boolean 
     const parts = varExpr.split(':');
     const name = parts[1] ?? '';
     const thresh = Number(parts[2] ?? 0);
-    const val = ctx.multipliers[name] ?? ctx.stats[name] ?? 0;
-    return val >= thresh;
+    const upper = parts[3] === 'upper';
+    const val = resolveThresholdValue(name, ctx, false);
+    return upper ? val <= thresh : val >= thresh;
   }
   if (varExpr.startsWith('StatThreshold:')) {
     const parts = varExpr.split(':');
     const name = parts[1] ?? '';
     const thresh = Number(parts[2] ?? 0);
-    const val = ctx.stats[name] ?? ctx.multipliers[name] ?? 0;
-    return val >= thresh;
+    const upper = parts[3] === 'upper';
+    const val = resolveThresholdValue(name, ctx, true);
+    return upper ? val <= thresh : val >= thresh;
   }
   if (varExpr.startsWith('AffectedByHeraldOf')) {
     const alt = `AffectedByHeraldof${varExpr.slice('AffectedByHeraldOf'.length)}`;
@@ -372,6 +374,18 @@ function resolveMultiplierValue(varName: string, ctx?: ModEvalContext): number {
   return 0;
 }
 
+function resolveThresholdValue(name: string, ctx: ModEvalContext, preferStat: boolean): number {
+  if (preferStat) {
+    if (ctx.stats[name] !== undefined) return ctx.stats[name];
+    if (ctx.multipliers[name] !== undefined) return ctx.multipliers[name];
+    return resolveMultiplierValue(name, ctx);
+  }
+  if (ctx.multipliers[name] !== undefined) return ctx.multipliers[name];
+  const resolved = resolveMultiplierValue(name, ctx);
+  if (resolved !== 0) return resolved;
+  return ctx.stats[name] ?? 0;
+}
+
 function evalConditionVar(varExpr: string, ctx?: ModEvalContext): boolean {
   if (varExpr.includes('|')) {
     return varExpr.split('|').some((part) => evalSingleConditionVar(part.trim(), ctx));
@@ -389,11 +403,16 @@ export function evaluateModTags(mod: Mod, ctx?: ModEvalContext): ModTagEvalResul
   let offset = 0;
 
   for (const tag of tags) {
-    // Support runtime PoB-style `{ type: 'DistanceRamp', ramp: [[d, m], ...] }` tags even if
-    // not yet present in the narrow `@webpob/core` ModTag union.
+    // Support runtime PoB-style `{ type: 'DistanceRamp' | 'MultiplierThreshold' | 'StatThreshold', ... }`
+    // tags even if not yet present in the narrow `@webpob/core` ModTag union.
     const runtimeTag = tag as unknown as {
       type: string;
       ramp?: ReadonlyArray<readonly [number, number]>;
+      var?: string;
+      stat?: string;
+      threshold?: number;
+      upper?: boolean;
+      neg?: boolean;
     };
     if (runtimeTag.type === 'DistanceRamp') {
       const ramp =
@@ -406,6 +425,28 @@ export function evaluateModTags(mod: Mod, ctx?: ModEvalContext): ModTagEvalResul
       }
       scale *= factor;
       if (offset !== 0) offset *= factor;
+      continue;
+    }
+    if (runtimeTag.type === 'MultiplierThreshold') {
+      const name = runtimeTag.var ?? '';
+      const thresh = runtimeTag.threshold ?? 0;
+      const val = ctx ? resolveThresholdValue(name, ctx, false) : 0;
+      let match = runtimeTag.upper ? val <= thresh : val >= thresh;
+      if (runtimeTag.neg) match = !match;
+      if (!match) {
+        return { active: false, scale: 0 };
+      }
+      continue;
+    }
+    if (runtimeTag.type === 'StatThreshold') {
+      const name = runtimeTag.stat ?? runtimeTag.var ?? '';
+      const thresh = runtimeTag.threshold ?? 0;
+      const val = ctx ? resolveThresholdValue(name, ctx, true) : 0;
+      let match = runtimeTag.upper ? val <= thresh : val >= thresh;
+      if (runtimeTag.neg) match = !match;
+      if (!match) {
+        return { active: false, scale: 0 };
+      }
       continue;
     }
 
@@ -509,7 +550,9 @@ export function evaluateModTags(mod: Mod, ctx?: ModEvalContext): ModTagEvalResul
           tag.stat === 'ShieldArmourAndEvasion'
             ? (ctx?.stats.ShieldArmourAndEvasion ??
                 (ctx?.stats.ShieldArmour ?? 0) + (ctx?.stats.ShieldEvasion ?? 0))
-            : (ctx?.stats[tag.stat] ?? ctx?.multipliers[tag.stat] ?? 0);
+            : ctx
+              ? resolveThresholdValue(tag.stat, ctx, true)
+              : 0;
         const div = tag.div > 0 ? tag.div : 1;
         let mult = Math.floor(statVal / div + 0.0001);
         const runtimeLimit = tag as {

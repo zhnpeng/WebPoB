@@ -1161,4 +1161,82 @@ describe('parseConditionalSuffix', () => {
       evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'CritInPast8Sec' }] }), ctxCrit).active,
     ).toBe(true);
   });
+
+  it('evaluates Wave 4U Bloodline/Threshold tags (string & structured MultiplierThreshold/StatThreshold, upper/neg, PerStat dual-source)', () => {
+    const ctx = createEmptyEvalContext();
+    ctx.multipliers.CorruptedItem = 4;
+    ctx.multipliers.GhastlyEyeJewel = 3;
+    ctx.multipliers.Rage = 12;
+    ctx.multipliers.ActiveTotem = 2;
+    ctx.multipliers.ActiveTotemLimit = 3;
+    ctx.stats.ActiveZombieLimit = 8;
+    ctx.multipliers.ActiveRagingSpiritLimit = 20;
+
+    // String-encoded Condition thresholds
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'MultiplierThreshold:CorruptedItem:4' }] }), ctx).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'MultiplierThreshold:CorruptedItem:5' }] }), ctx).active,
+    ).toBe(false);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'MultiplierThreshold:GhastlyEyeJewel:3' }] }), ctx).active,
+    ).toBe(true);
+    // Aliased multiplier resolution inside MultiplierThreshold
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'MultiplierThreshold:SummonedTotem:2' }] }), ctx).active,
+    ).toBe(true);
+    // Upper-bound threshold
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'MultiplierThreshold:Rage:15:upper' }] }), ctx).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'Condition', var: 'MultiplierThreshold:Rage:10:upper' }] }), ctx).active,
+    ).toBe(false);
+
+    // Structured runtime MultiplierThreshold & StatThreshold tags
+    expect(
+      evaluateModTags(
+        makeMod({
+          tags: [{ type: 'MultiplierThreshold', var: 'CorruptedItem', threshold: 4 } as unknown as ModTag],
+        }),
+        ctx,
+      ).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(
+        makeMod({
+          tags: [{ type: 'MultiplierThreshold', var: 'Rage', threshold: 10, upper: true } as unknown as ModTag],
+        }),
+        ctx,
+      ).active,
+    ).toBe(false);
+    expect(
+      evaluateModTags(
+        makeMod({
+          tags: [{ type: 'StatThreshold', stat: 'ActiveZombieLimit', threshold: 8 } as unknown as ModTag],
+        }),
+        ctx,
+      ).active,
+    ).toBe(true);
+    expect(
+      evaluateModTags(
+        makeMod({
+          tags: [{ type: 'StatThreshold', stat: 'ActiveZombieLimit', threshold: 8, neg: true } as unknown as ModTag],
+        }),
+        ctx,
+      ).active,
+    ).toBe(false);
+
+    // PerStat dual-source fallback (ctx.stats and ctx.multipliers)
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'PerStat', stat: 'ActiveZombieLimit', div: 1 }] }), ctx).scale,
+    ).toBe(8);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'PerStat', stat: 'ActiveRagingSpiritLimit', div: 2 }] }), ctx).scale,
+    ).toBe(10);
+    expect(
+      evaluateModTags(makeMod({ tags: [{ type: 'PerStat', stat: 'ActiveTotemLimit', div: 1 }] }), ctx).scale,
+    ).toBe(3);
+  });
 });

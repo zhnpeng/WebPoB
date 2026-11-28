@@ -1762,5 +1762,80 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
         expect.objectContaining({ name: 'MaxLightningInfusions', type: 'BASE', value: 1 }),
       ]);
     });
+
+    it('parses Wave 4U PoE 2 Gem Studded thresholds, Grand Spectrum Spirit, Block overrides, ES bypass & gemBonus plural filters', () => {
+      expect(
+        parseModLine(
+          '5% increased Maximum Life if you have at least 10 Red Support Gems Socketed',
+          'Tree: Gem Studded',
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'Life',
+          type: 'INC',
+          value: 5,
+          tags: [{ type: 'Condition', var: 'MultiplierThreshold:StrengthMoteSkillCount:10' }],
+        }),
+      ]);
+      expect(
+        parseModLine(
+          '5% increased Maximum Mana if you have at least 10 Blue Support Gems Socketed',
+          'Tree: Gem Studded',
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'Mana',
+          type: 'INC',
+          value: 5,
+          tags: [{ type: 'Condition', var: 'MultiplierThreshold:IntelligenceMoteSkillCount:10' }],
+        }),
+      ]);
+      expect(
+        parseModLine(
+          '5% increased Movement Speed if you have at least 10 Green Support Gems Socketed',
+          'Tree: Gem Studded',
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          name: 'MovementSpeed',
+          type: 'INC',
+          value: 5,
+          tags: [{ type: 'Condition', var: 'MultiplierThreshold:DexterityMoteSkillCount:10' }],
+        }),
+      ]);
+      expect(parseModLine('2% increased Spirit per socketed Grand Spectrum', 'Item: Grand Spectrum')).toEqual([
+        expect.objectContaining({
+          name: 'Spirit',
+          type: 'INC',
+          value: 2,
+          tags: [{ type: 'Multiplier', var: 'GrandSpectrum' }],
+        }),
+      ]);
+      expect(parseModLine('Maximum Block chance is 75%', 'Tree: Turtle Charm')).toEqual([
+        expect.objectContaining({ name: 'BlockChanceMax', type: 'OVERRIDE', value: 75 }),
+      ]);
+      expect(
+        parseModLine(
+          "Gain 35% Base Chance to Block from Equipped Shield instead of the Shield's value",
+          'Tree: Turtle Charm',
+        ),
+      ).toEqual([expect.objectContaining({ name: 'ShieldBlockChanceOverride', type: 'OVERRIDE', value: 35 })]);
+      expect(parseModLine('5% of Damage taken bypasses Energy Shield', 'Tree: Heavy Buffer')).toEqual([
+        expect.objectContaining({ name: 'DamageTakenBypassesES', type: 'BASE', value: 5 }),
+      ]);
+      expect(parseModLine('No inherent Mana Regeneration', 'Tree')).toEqual([
+        expect.objectContaining({ name: 'NoInherentManaRegen', type: 'FLAG', value: true }),
+      ]);
+      expect(parseModLine('Regenerate Mana equal to 6% of maximum Life per second', 'Tree')).toEqual([
+        expect.objectContaining({ name: 'ManaRegenFromLifePct', type: 'BASE', value: 6 }),
+      ]);
+
+      // gemBonus.ts plural & spelling normalization (Warcries/Totems/Minions/Golems/Channelled)
+      expect(normalizeGemFilterTokens('Warcries')).toBe('warcry');
+      expect(normalizeGemFilterTokens('Minions')).toBe('minion');
+      expect(normalizeGemFilterTokens('Totems')).toBe('totem');
+      expect(normalizeGemFilterTokens('Golems')).toBe('golem');
+      expect(normalizeGemFilterTokens('Channelled Fire Skills')).toBe('channelling+fire');
+    });
   });
 });

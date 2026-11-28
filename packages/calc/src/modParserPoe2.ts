@@ -2726,6 +2726,66 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
     pattern: /^Transforms all Cold and Lightning modifiers on (?:this|the) item into equivalent Fire modifiers$/i,
     build: (_, src) => [mkMod('ItemTransformsColdLightToFire', 'FLAG', true, src)],
   },
+  // Gemling Legionnaire (Gem Studded): "5% increased Maximum Life/Mana/Movement Speed if you have at least 10 Red/Blue/Green Support Gems Socketed"
+  {
+    pattern: /^(\d+)% increased Maximum Life if you have at least (\d+) Red Support Gems Socketed$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Life', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: `MultiplierThreshold:StrengthMoteSkillCount:${m[2]}` }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased Maximum Mana if you have at least (\d+) Blue Support Gems Socketed$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Mana', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: `MultiplierThreshold:IntelligenceMoteSkillCount:${m[2]}` }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% increased Movement Speed if you have at least (\d+) Green Support Gems Socketed$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('MovementSpeed', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Condition', var: `MultiplierThreshold:DexterityMoteSkillCount:${m[2]}` }],
+      },
+    ],
+  },
+  // Grand Spectrum Spirit jewel: "2% increased Spirit per socketed Grand Spectrum"
+  {
+    pattern: /^(\d+)% increased Spirit per socketed Grand Spectrum$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Spirit', 'INC', Number(m[1]), src),
+        tags: [{ type: 'Multiplier', var: 'GrandSpectrum' }],
+      },
+    ],
+  },
+  // Warbringer Turtle Charm / Block cap & Shield Base Block overrides
+  {
+    pattern: /^Maximum Block [Cc]hance is (\d+)%$/i,
+    build: (m, src) => [mkMod('BlockChanceMax', 'OVERRIDE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Gain (\d+)% Base Chance to Block from Equipped Shield instead of the Shield's value$/i,
+    build: (m, src) => [mkMod('ShieldBlockChanceOverride', 'OVERRIDE', Number(m[1]), src)],
+  },
+  // PoE 2 ES bypass & Mana regeneration overrides (e.g. Heavy Buffer, Eternal Youth / Lich / Blood Magic)
+  {
+    pattern: /^(\d+)% of Damage taken bypasses Energy Shield$/i,
+    build: (m, src) => [mkMod('DamageTakenBypassesES', 'BASE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^No inherent Mana Regeneration$/i,
+    build: (_, src) => [mkMod('NoInherentManaRegen', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Regenerate Mana equal to (\d+(?:\.\d+)?)% of maximum Life per second$/i,
+    build: (m, src) => [mkMod('ManaRegenFromLifePct', 'BASE', Number(m[1]), src)],
+  },
 
   // =========================================================================
   // 5. PoE 2 Skill-Specific & Tag Gem Level Scaling (+X to Level of all <SkillName|Nova|...> Skills)
