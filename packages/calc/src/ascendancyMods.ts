@@ -1123,6 +1123,14 @@ function applyPoe1PreStatAscendancies(
     addMod(db, 'AggravatedBleeding', 'FLAG', true, src);
   }
 
+  if (nodes.has('determined survivor')) {
+    const src = 'Ascendancy: Determined Survivor';
+    if (!hasRawSourceMod(db, 'ShieldBlockOverride', 'determined survivor')) {
+      addMod(db, 'ShieldBlockOverride', 'OVERRIDE', 50, src);
+    }
+    addMod(db, 'DualWieldBonusesDoubled', 'FLAG', true, src);
+  }
+
   // --- PoE 1 Pathfinder ---
   if (nodes.has("nature's boon")) {
     addMod(db, 'FlaskEffect', 'INC', 30, "Ascendancy: Nature's Boon");

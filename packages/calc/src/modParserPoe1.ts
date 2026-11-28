@@ -93,6 +93,11 @@ function resourceModName(raw: string): string {
   return raw;
 }
 
+function makeSocketedInTag(src: string): { type: 'SocketedIn'; slotName?: string } {
+  const m = src.match(/^Item \(([^)]+)\)/i);
+  return m?.[1] ? { type: 'SocketedIn', slotName: m[1] } : { type: 'SocketedIn' };
+}
+
 function capFirst(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 }
@@ -658,14 +663,14 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
   },
   {
     pattern: /^Socketed (?:Gems|Skills) deal Double Damage$/i,
-    build: (_, src) => [{ ...mkMod('DoubleDamageChance', 'BASE', 100, src), tags: [{ type: 'SocketedIn' }] }],
+    build: (_, src) => [{ ...mkMod('DoubleDamageChance', 'BASE', 100, src), tags: [makeSocketedInTag(src)] }],
   },
   {
     pattern: /^Socketed Vaal (?:Gems|Skills) (?:deal|have) (\d+)% (more|less) Damage$/i,
     build: (m, src) => [
       {
         ...mkMod('Damage', 'MORE', (m[2]!.toLowerCase() === 'less' ? -1 : 1) * Number(m[1]), src),
-        tags: [{ type: 'SocketedIn' }],
+        tags: [makeSocketedInTag(src), { type: 'SkillType' as const, skillType: 'Vaal' }],
       },
     ],
   },
@@ -697,7 +702,7 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
       } else if (kind === 'area') {
         flag |= ModFlag.Area;
       }
-      return [{ ...mkMod(statName, 'MORE', val, src, flag), tags: [{ type: 'SocketedIn' }] }];
+      return [{ ...mkMod(statName, 'MORE', val, src, flag), tags: [makeSocketedInTag(src)] }];
     },
   },
 
@@ -1658,6 +1663,71 @@ export const POE1_EXTRA_MOD_RULES: ModRule[] = [
       {
         ...mkMod('EnemyDamageTaken', 'INC', Number(m[1]), src),
         tags: [{ type: 'Condition' as const, var: 'EnemyPacified' }],
+      },
+    ],
+  },
+  // Wave 4U: Gladiator Determined Survivor, War of Attrition & Weapon Master
+  {
+    pattern: /^Gain (\d+)% Chance to Block from Equipped Shield instead of the Shield's value$/i,
+    build: (m, src) => [mkMod('ShieldBlockOverride', 'OVERRIDE', Number(m[1]), src)],
+  },
+  {
+    pattern: /^Inherent Bonuses from Dual Wielding are doubled$/i,
+    build: (_, src) => [mkMod('DualWieldBonusesDoubled', 'FLAG', true, src)],
+  },
+  {
+    pattern: /^Deal (\d+)% more Damage with Hits and Ailments to Rare and Unique Enemies for each second they've ever been in your Presence, up to a maximum of (\d+)%$/i,
+    build: (m, src) => {
+      const perSec = Number(m[1]);
+      const maxPct = Number(m[2]);
+      const tags = [
+        { type: 'Condition' as const, var: 'EnemyRareOrUnique' },
+        { type: 'Multiplier' as const, var: 'PresenceSeconds', limit: Math.floor(maxPct / Math.max(1, perSec)) },
+      ];
+      return [
+        { ...mkMod('Damage', 'MORE', perSec, src, ModFlag.Hit), tags },
+        { ...mkMod('Damage', 'MORE', perSec, src, ModFlag.Ailment), tags },
+      ];
+    },
+  },
+  {
+    pattern: /^(\d+)% more Damage with Hits and Ailments against Enemies that are on Low Life while you are wielding an Axe$/i,
+    build: (m, src) => {
+      const val = Number(m[1]);
+      const tags = [
+        { type: 'Condition' as const, var: 'EnemyLowLife' },
+        { type: 'Condition' as const, var: 'UsingAxe' },
+      ];
+      return [
+        { ...mkMod('Damage', 'MORE', val, src, ModFlag.Hit), tags },
+        { ...mkMod('Damage', 'MORE', val, src, ModFlag.Ailment), tags },
+      ];
+    },
+  },
+  {
+    pattern: /^(\d+)% more Accuracy Rating while wielding a Sword$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('Accuracy', 'MORE', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'UsingSword' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% more Area of Effect while wielding a Mace or Sceptre$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('AreaOfEffect', 'MORE', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'UsingMace' }],
+      },
+    ],
+  },
+  {
+    pattern: /^(\d+)% more Critical Strike Chance while wielding a Dagger$/i,
+    build: (m, src) => [
+      {
+        ...mkMod('CritChance', 'MORE', Number(m[1]), src),
+        tags: [{ type: 'Condition' as const, var: 'UsingDagger' }],
       },
     ],
   },

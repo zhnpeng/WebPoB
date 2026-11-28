@@ -561,7 +561,7 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
         name: 'Damage',
         type: 'MORE',
         value: 150,
-        tags: [{ type: 'SocketedIn' }],
+        tags: [{ type: 'SocketedIn' }, { type: 'SkillType', skillType: 'Vaal' }],
       }),
     ]);
 
@@ -1170,5 +1170,35 @@ describe('modParserPoe1 — PoE 1 High-Coverage ModParser Expansion', () => {
         tags: [{ type: 'Condition', var: 'MultiplierThreshold:CorruptedItem:6' }],
       }),
     ]);
+  });
+
+  it('Wave 4U: SocketedIn slotName binding + Gladiator Determined Survivor, War of Attrition & Weapon Master', () => {
+    expect(parseModLine('Socketed Skills deal 20% more Attack Damage', 'Item (Weapon 1)')).toEqual([
+      expect.objectContaining({
+        name: 'Damage',
+        type: 'MORE',
+        value: 20,
+        flags: ModFlag.Attack,
+        tags: [{ type: 'SocketedIn', slotName: 'Weapon 1' }],
+      }),
+    ]);
+    expect(
+      parseModLine("Gain 50% Chance to Block from Equipped Shield instead of the Shield's value", 'Tree: Determined Survivor'),
+    ).toEqual([expect.objectContaining({ name: 'ShieldBlockOverride', type: 'OVERRIDE', value: 50 })]);
+    expect(parseModLine('Inherent Bonuses from Dual Wielding are doubled', 'Tree: Determined Survivor')).toEqual([
+      expect.objectContaining({ name: 'DualWieldBonusesDoubled', type: 'FLAG', value: true }),
+    ]);
+    expect(
+      parseModLine(
+        "Deal 1% more Damage with Hits and Ailments to Rare and Unique Enemies for each second they've ever been in your Presence, up to a maximum of 100%",
+        'Tree: War of Attrition',
+      ),
+    ).toHaveLength(2);
+    expect(
+      parseModLine(
+        '30% more Damage with Hits and Ailments against Enemies that are on Low Life while you are wielding an Axe',
+        'Tree: Weapon Master',
+      ),
+    ).toHaveLength(2);
   });
 });
