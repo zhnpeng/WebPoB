@@ -2236,12 +2236,19 @@ describe('PoE 2 ModParser Expansion (modParserPoe2)', () => {
         ),
       ).toEqual([
         expect.objectContaining({
-          name: 'PhysicalGainAsFire',
+          name: 'PhysicalDamageGainAsFire',
           type: 'BASE',
           value: 25,
           tags: [{ type: 'Condition', var: 'EnemyHeavyStunned' }],
         }),
       ]);
+      // Wave 6O: PoE 2 custom-mod skill-prefixed Gain-as-Extra lines
+      expect(
+        parseModLine('*Supercharged Slam Gains 59% of damage as extra Fire damage', 'Custom Modifiers'),
+      ).toEqual([expect.objectContaining({ name: 'DamageGainAsFire', type: 'BASE', value: 59 })]);
+      expect(
+        parseModLine('*Supercharged Slam gains 25% of Physical damage as extra Cold damage', 'Custom Modifiers'),
+      ).toEqual([expect.objectContaining({ name: 'PhysicalDamageGainAsCold', type: 'BASE', value: 25 })]);
     });
   });
 });

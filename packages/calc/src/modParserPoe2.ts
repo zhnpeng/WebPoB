@@ -3277,10 +3277,21 @@ export const POE2_EXTRA_MOD_RULES: readonly Poe2ParserRule[] = [
       const to = m[3]!.charAt(0).toUpperCase() + m[3]!.slice(1).toLowerCase();
       return [
         {
-          ...mkMod(`${from}GainAs${to}`, 'BASE', Number(m[1]), src),
+          ...mkMod(`${from}DamageGainAs${to}`, 'BASE', Number(m[1]), src),
           tags: [{ type: 'Condition', var: 'EnemyHeavyStunned' }],
         },
       ];
+    },
+  },
+  // Wave 6O: PoE 2 custom-mod skill-prefixed Gain-as-Extra lines (e.g. "*Supercharged Slam Gains 59% of damage as extra Fire damage")
+  {
+    pattern: /^\*(?:[A-Za-z][A-Za-z' -]*?)\s+gains?\s+(\d+)%\s+of\s+(?:(Physical|Fire|Cold|Lightning|Chaos|Elemental)\s+)?damage\s+as\s+extra\s+(Fire|Cold|Lightning|Chaos|Physical)\s+damage$/i,
+    build: (m, src) => {
+      const from = m[2]
+        ? `${m[2].charAt(0).toUpperCase()}${m[2].slice(1).toLowerCase()}DamageGainAs`
+        : 'DamageGainAs';
+      const to = `${m[3]!.charAt(0).toUpperCase()}${m[3]!.slice(1).toLowerCase()}`;
+      return [mkMod(`${from}${to}`, 'BASE', Number(m[1]), src)];
     },
   },
 
